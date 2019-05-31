@@ -180,6 +180,9 @@ def X86retflag : SDNode<"X86ISD::RET_FLAG", SDTX86Ret,
 def X86iret : SDNode<"X86ISD::IRET", SDTX86Ret,
                         [SDNPHasChain, SDNPOptInGlue]>;
 
+def X86uliret : SDNode<"X86ISD::ULIRET", SDTX86Ret,
+                        [SDNPHasChain, SDNPOptInGlue]>;
+
 def X86vastart_save_xmm_regs :
                  SDNode<"X86ISD::VASTART_SAVE_XMM_REGS",
                         SDT_X86VASTART_SAVE_XMM_REGS,
@@ -3180,6 +3183,9 @@ include "X86InstrSystem.td"
 include "X86InstrCompiler.td"
 include "X86InstrVecCompiler.td"
 
+// ULI instructions and patterns
+include "X86InstrULI.td"
+
 //===----------------------------------------------------------------------===//
 // Assembler Mnemonic Aliases
 //===----------------------------------------------------------------------===//
@@ -3282,6 +3288,7 @@ def : MnemonicAlias<"iret",    "iretw",    "att">, Requires<[In16BitMode]>;
 def : MnemonicAlias<"iret",    "iretl",    "att">, Requires<[Not16BitMode]>;
 def : MnemonicAlias<"sysret",  "sysretl",  "att">;
 def : MnemonicAlias<"sysexit", "sysexitl", "att">;
+def : MnemonicAlias<"uliret",    "ULIRET",    "att">;
 
 def : MnemonicAlias<"lgdt", "lgdtw", "att">, Requires<[In16BitMode]>;
 def : MnemonicAlias<"lgdt", "lgdtl", "att">, Requires<[In32BitMode]>;

@@ -378,6 +378,31 @@ bool X86ExpandPseudo::ExpandMI(MachineBasicBlock &MBB,
     // The EH_RETURN pseudo is really removed during the MC Lowering.
     return true;
   }
+  case X86::ULIREPLYN: {
+    // Replace pseudo with machine iret
+    MachineOperand &SrcAddr = MBBI->getOperand(0);
+    printf("Ecountered ULIREPLYN, modify it to ULIREPLY\n");
+    BuildMI(MBB, MBBI, DL,
+            TII->get( X86::ULIREPLY ) ).addReg(SrcAddr.getReg());
+    MBB.erase(MBBI);
+    return true;
+
+  }
+  case X86::ULISENDN: {
+    // Replace pseudo with machine iret
+    MachineOperand &SrcAddr0 = MBBI->getOperand(0);
+    MachineOperand &SrcAddr1 = MBBI->getOperand(1);
+    printf("Ecountered ULIRSENDN, modify it to ULISEND\n");
+    MachineInstrBuilder MIB = BuildMI(MBB, MBBI, DL,
+		  TII->get( X86::ULISEND ) );
+
+    MIB.addReg(SrcAddr0.getReg());
+    MIB.addReg(SrcAddr1.getReg());
+
+    MBB.erase(MBBI);
+    return true;
+
+  }
   case X86::IRET: {
     // Adjust stack to erase error code
     int64_t StackAdj = MBBI->getOperand(0).getImm();
@@ -389,6 +414,16 @@ bool X86ExpandPseudo::ExpandMI(MachineBasicBlock &MBB,
         MBB.getParent()->getTarget().getCodeModel() != CodeModel::Kernel)
       RetOp = X86::UIRET;
     BuildMI(MBB, MBBI, DL, TII->get(RetOp));
+    MBB.erase(MBBI);
+    return true;
+  }
+  case X86::ULIRET: {
+    // Adjust stack to erase error code
+    int64_t StackAdj = MBBI->getOperand(0).getImm();
+    X86FL->emitSPUpdate(MBB, MBBI, StackAdj, true);
+    // Replace pseudo with machine iret
+    BuildMI(MBB, MBBI, DL,
+            TII->get(STI->is64Bit() ? X86::ULIRET64 : X86::ULIRET32));
     MBB.erase(MBBI);
     return true;
   }

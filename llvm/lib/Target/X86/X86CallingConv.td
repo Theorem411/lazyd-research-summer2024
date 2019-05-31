@@ -1136,6 +1136,13 @@ def CSR_64EHRet : CalleeSavedRegs<(add RAX, RDX, CSR_64)>;
 
 def CSR_Win64_NoSSE : CalleeSavedRegs<(add RBX, RBP, RDI, RSI, R12, R13, R14, R15)>;
 
+def CSR_Uli64_NoSSE : CalleeSavedRegs<(add RSI, RBX, RAX, RCX, RDX, RBP, R8, R9, R10, R11, R12, R13, R14, R15)>;
+def CSR_Uli64 : CalleeSavedRegs<(add CSR_Uli64_NoSSE,
+                                     (sequence "XMM%u", 0, 15))>;
+
+def CSR_Uli32_NoSSE : CalleeSavedRegs<(add RSI, RBX, RAX, RCX, RDX, RBP)>;
+def CSR_Uli32 : CalleeSavedRegs<(add CSR_Uli32_NoSSE,
+                                     (sequence "XMM%u", 0, 7))>;
 def CSR_Win64 : CalleeSavedRegs<(add CSR_Win64_NoSSE,
                                      (sequence "XMM%u", 6, 15))>;
 

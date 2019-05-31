@@ -21,6 +21,7 @@ set(LLVM_LINK_COMPONENTS
   Target
   TransformUtils
   Vectorize
+  UserLevelInterrupt
   )
 
 add_llvm_tool(bugpoint

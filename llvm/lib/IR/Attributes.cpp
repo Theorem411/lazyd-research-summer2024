@@ -407,6 +407,18 @@ std::string Attribute::getAsString(bool InAttrGrp) const {
   if (hasAttribute(Attribute::DereferenceableOrNull))
     return AttrWithBytesToString("dereferenceable_or_null");
 
+  if (hasAttribute(Attribute::Forkable))
+    return "forkable";
+
+  if (hasAttribute(Attribute::ULINoPolling))
+    return "uli_no_polling";
+
+  if (hasAttribute(Attribute::UserLevelInterrupt))
+    return "user_level_interrupt";
+
+  if (hasAttribute(Attribute::NoStackletCheck))
+    return "no_stacklet_check";
+
   if (hasAttribute(Attribute::AllocSize)) {
     unsigned ElemSize;
     Optional<unsigned> NumElems;

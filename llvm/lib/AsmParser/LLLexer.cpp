@@ -614,6 +614,7 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(preserve_allcc);
   KEYWORD(ghccc);
   KEYWORD(x86_intrcc);
+  KEYWORD(x86_ulircc);
   KEYWORD(hhvmcc);
   KEYWORD(hhvm_ccc);
   KEYWORD(cxx_fast_tlscc);
@@ -717,6 +718,10 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(hyper_token);
   KEYWORD(reducer_register);
   KEYWORD(reducer_unregister);
+  KEYWORD(forkable);
+  KEYWORD(uli_no_polling);
+  KEYWORD(user_level_interrupt);
+  KEYWORD(no_stacklet_check);
 
   KEYWORD(type);
   KEYWORD(opaque);

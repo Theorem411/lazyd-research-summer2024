@@ -161,6 +161,7 @@ enum Kind {
   kw_preserve_allcc,
   kw_ghccc,
   kw_x86_intrcc,
+  kw_x86_ulircc,
   kw_hhvmcc,
   kw_hhvm_ccc,
   kw_cxx_fast_tlscc,
@@ -261,6 +262,10 @@ enum Kind {
   kw_byref,
   kw_mustprogress,
   kw_injective,
+  kw_forkable,
+  kw_uli_no_polling,
+  kw_user_level_interrupt,
+  kw_no_stacklet_check,
 
   kw_type,
   kw_opaque,

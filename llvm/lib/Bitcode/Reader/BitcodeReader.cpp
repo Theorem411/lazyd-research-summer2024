@@ -1267,6 +1267,33 @@ static uint64_t getRawAttributeMask(Attribute::AttrKind Val) {
     // Other attributes are not supported in the raw format,
     // as we ran out of space.
     return 0;
+
+  case Attribute::SanitizeCilk:    return 1ULL << 57;
+  case Attribute::Stealable:       return 1ULL << 58;
+  case Attribute::UserLevelInterrupt:
+    llvm_unreachable("Should never get here: UserLevelInterrupt");
+    break;
+  case Attribute::ULINoPolling:
+    llvm_unreachable("Should never get here: ULINoPolling");
+    break;
+  case Attribute::Forkable:
+    llvm_unreachable("Should never get here: Forkable");
+    break;
+#if 0
+  case Attribute::Dereferenceable:
+    llvm_unreachable("dereferenceable attribute not supported in raw format");
+    break;
+  case Attribute::DereferenceableOrNull:
+    llvm_unreachable("dereferenceable_or_null attribute not supported in raw "
+                     "format");
+    break;
+  case Attribute::ArgMemOnly:
+    llvm_unreachable("argmemonly attribute not supported in raw format");
+    break;
+  case Attribute::AllocSize:
+    llvm_unreachable("allocsize not supported in raw format");
+    break;
+#endif
   }
   llvm_unreachable("Unsupported attribute type");
 }
@@ -1523,6 +1550,7 @@ static Attribute::AttrKind getAttrFromCode(uint64_t Code) {
     return Attribute::WriteOnly;
   case bitc::ATTR_KIND_Z_EXT:
     return Attribute::ZExt;
+<<<<<<< HEAD
   case bitc::ATTR_KIND_IMMARG:
     return Attribute::ImmArg;
   case bitc::ATTR_KIND_SANITIZE_MEMTAG:
@@ -1547,6 +1575,12 @@ static Attribute::AttrKind getAttrFromCode(uint64_t Code) {
     return Attribute::ReducerRegister;
   case bitc::ATTR_KIND_REDUCER_UNREGISTER:
     return Attribute::ReducerUnregister;
+=======
+  case bitc::ATTR_KIND_FORKABLE:
+    return Attribute::Forkable;
+  case bitc::ATTR_KIND_ULI_NO_POLLING:
+    return Attribute::ULINoPolling;
+>>>>>>> LLVM ULI changes 2017-10-18 to 2019-05-27
   }
 }
 

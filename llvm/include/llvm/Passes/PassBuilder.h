@@ -311,6 +311,13 @@ public:
   ModulePassManager buildO0DefaultPipeline(OptimizationLevel Level,
                                            bool LTOPreLink = false,
                                            bool LowerTapir = false);
+  /// Build an ULI rewriting pipeline.
+  ModulePassManager buildDefaultULIRewritePipeline(OptimizationLevel Level,
+                                                   bool DebugLogging = false);
+
+  /// Build an ULI send reply uli handler pipeline
+  ModulePassManager buildDefaultULITransformPipeline(OptimizationLevel Level,
+                                                   bool DebugLogging = false);
 
   /// Build the default `AAManager` with the default alias analysis pipeline
   /// registered.

@@ -1,0 +1,98 @@
+//===-- X86InstrULI.td - ULI Extensions ----*- tablegen -*-===//
+//
+//                     The LLVM Compiler Infrastructure
+//
+// This file is distributed under the University of Illinois Open Source
+// License. See LICENSE.TXT for details.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file describes the ULI related instructions
+//
+//===----------------------------------------------------------------------===//
+//let Uses = [RAX, RCX] in
+
+
+def ULISEND   : I   <0x3e, MRMSrcReg, (outs), (ins GR64:$src0, GR64:$src1),
+                               "ulisend\t{$src0, $src1}",
+                           [], IIC_ALU_NONMEM>, TB, Requires<[In64BitMode]>;
+
+def ULISENDN   : PseudoI<(outs), (ins GR64:$src0, GR64:$src1, GR32:$src2),
+                   [(int_x86_uli_send0cN GR64:$src0, GR64:$src1, GR32:$src2)]>;
+
+def ULIREPLY   : I   <0x39, MRM2r, (outs), (ins GR64:$src0),
+                                   "ulireply\t {$src0}",
+                           [], IIC_ALU_NONMEM>, TB, Requires<[In64BitMode]>;
+
+def ULIREPLYN   : PseudoI<(outs), (ins GR64:$src0, GR32:$src1),
+                       [(int_x86_uli_reply0cN GR64:$src0,GR32:$src1)]>;
+
+
+
+def ULITOIREG   : I   <0x3c, MRMSrcReg, (outs), (ins GR32:$src0, GR64:$src1),
+                                   "ulitoireg\t{$src0, $src1}",
+                           [(int_x86_uli_toireg GR32:$src0, GR64:$src1)],
+                           IIC_ALU_NONMEM>, TB, Requires<[In64BitMode]>;
+
+
+def ULIFROMIREG : I <0x3b, MRMDestReg, (outs GR64:$dest), (ins GR32:$src),
+                                   "ulifromireg\t{$src, $dest}",
+                [(set GR64:$dest, (int_x86_uli_fromireg GR32:$src))],
+                IIC_ALU_NONMEM>, TB, Requires<[In64BitMode]>;
+
+// old definition
+// dest and src registers are the same for this instruction.  Not sure how to specify
+//let Constraints = "$src = $dest" in {
+//def ULIFROMIREG   : I   <0x3b, MRM2r, (outs GR64:$dest), (ins GR64:$src),
+//                                   "ulifromireg\t$dest",
+//                [(set GR64:$dest, (int_x86_uli_fromireg GR64:$src))],
+//                IIC_ALU_NONMEM>, TB, Requires<[In64BitMode]>;
+//}
+
+
+def GETCPU   : I   <0x3d, MRM2r, (outs GR32:$dest), (ins),
+                                   "ulitoireg\t{$dest}",
+                [(set GR32:$dest, (int_x86_uli_getcpu))],
+                IIC_ALU_NONMEM>, TB, Requires<[In64BitMode]>;
+
+// TB : Two bytes, don't use your instruction is one-byte opcode
+
+// Enable uli mask,(based on replyuli)
+def ULIENA   : I   <0x06, MRM2r, (outs), (ins GR64:$src0),
+                                   "uliena\t{$src0}",
+                [(int_x86_uli_enable GR64:$src0)],
+                IIC_ALU_NONMEM>, OpSize32, Requires<[In64BitMode]>;
+
+// Disable uli mask
+def ULIDIS  : I <0x07, MRM2r, (outs), (ins GR64:$src0),
+                                   "ulidis\t{$src0}",
+                  [(int_x86_uli_disable GR64:$src0)],
+                  IIC_ALU_NONMEM>, OpSize32, Requires<[In64BitMode]>;
+// Based on POP
+// Error: Primary decode conflict: ULIRD would overwrite PUSHSS32
+def ULIRD : I<0x16, MRM2r, (outs GR64:$reg), (ins),
+                           "ulird\t{$reg}",
+                   [(set GR64:$reg, (int_x86_uli_read))],
+                   IIC_ALU_NONMEM>, OpSize32, Requires<[In64BitMode]>;
+
+// Write to register
+def ULIWR : I <0x17, MRM2r, (outs), (ins GR64:$src0),
+                               "uliwr\t{$src0}",
+                 [(int_x86_uli_set GR64:$src0)],
+                 IIC_ALU_NONMEM>, OpSize32, Requires<[In64BitMode]>;
+
+//===----------------------------------------------------------------------===//
+// Help stuff for stacklets
+
+let usesCustomInserter = 1, isPseudo = 1, Uses = [RSP]
+in {
+   def READSP64 : PseudoI<(outs GR64:$dst), (ins),
+                      [(set GR64:$dst, (int_x86_read_sp))]>,
+                    Requires<[In64BitMode]>;
+}
+
+let isPseudo = 1
+in {
+   def GETFRAMESIZE : PseudoI<(outs GR64:$dst), (ins),
+                      [(set GR64:$dst, (int_x86_get_frame_size))]>;
+}

@@ -1375,7 +1375,6 @@ bool LLParser::parseFnAttributeValuePairs(AttrBuilder &B,
       Lex.Lex();
       continue;
     }
-
     SMLoc Loc = Lex.getLoc();
     if (Token == lltok::kw_builtin)
       BuiltinLoc = Loc;
@@ -1385,6 +1384,89 @@ bool LLParser::parseFnAttributeValuePairs(AttrBuilder &B,
       if (!InAttrGrp)
         return HaveError;
       return error(Lex.getLoc(), "unterminated attribute group");
+#if 0
+    case lltok::kw_alwaysinline: B.addAttribute(Attribute::AlwaysInline); break;
+    case lltok::kw_argmemonly: B.addAttribute(Attribute::ArgMemOnly); break;
+    case lltok::kw_builtin: B.addAttribute(Attribute::Builtin); break;
+    case lltok::kw_cold: B.addAttribute(Attribute::Cold); break;
+    case lltok::kw_convergent: B.addAttribute(Attribute::Convergent); break;
+    case lltok::kw_inaccessiblememonly:
+      B.addAttribute(Attribute::InaccessibleMemOnly); break;
+    case lltok::kw_inaccessiblemem_or_argmemonly:
+      B.addAttribute(Attribute::InaccessibleMemOrArgMemOnly); break;
+    case lltok::kw_inlinehint: B.addAttribute(Attribute::InlineHint); break;
+    case lltok::kw_jumptable: B.addAttribute(Attribute::JumpTable); break;
+    case lltok::kw_minsize: B.addAttribute(Attribute::MinSize); break;
+    case lltok::kw_naked: B.addAttribute(Attribute::Naked); break;
+    case lltok::kw_nobuiltin: B.addAttribute(Attribute::NoBuiltin); break;
+    case lltok::kw_noduplicate: B.addAttribute(Attribute::NoDuplicate); break;
+    case lltok::kw_noimplicitfloat:
+      B.addAttribute(Attribute::NoImplicitFloat); break;
+    case lltok::kw_noinline: B.addAttribute(Attribute::NoInline); break;
+    case lltok::kw_nonlazybind: B.addAttribute(Attribute::NonLazyBind); break;
+    case lltok::kw_noredzone: B.addAttribute(Attribute::NoRedZone); break;
+    case lltok::kw_noreturn: B.addAttribute(Attribute::NoReturn); break;
+    case lltok::kw_norecurse: B.addAttribute(Attribute::NoRecurse); break;
+    case lltok::kw_nounwind: B.addAttribute(Attribute::NoUnwind); break;
+    case lltok::kw_optnone: B.addAttribute(Attribute::OptimizeNone); break;
+    case lltok::kw_optsize: B.addAttribute(Attribute::OptimizeForSize); break;
+    case lltok::kw_readnone: B.addAttribute(Attribute::ReadNone); break;
+    case lltok::kw_readonly: B.addAttribute(Attribute::ReadOnly); break;
+    case lltok::kw_returns_twice:
+      B.addAttribute(Attribute::ReturnsTwice); break;
+    case lltok::kw_speculatable: B.addAttribute(Attribute::Speculatable); break;
+    case lltok::kw_ssp: B.addAttribute(Attribute::StackProtect); break;
+    case lltok::kw_sspreq: B.addAttribute(Attribute::StackProtectReq); break;
+    case lltok::kw_sspstrong:
+      B.addAttribute(Attribute::StackProtectStrong); break;
+    case lltok::kw_safestack: B.addAttribute(Attribute::SafeStack); break;
+    case lltok::kw_sanitize_address:
+      B.addAttribute(Attribute::SanitizeAddress); break;
+    case lltok::kw_sanitize_cilk:
+      B.addAttribute(Attribute::SanitizeCilk); break;
+    case lltok::kw_sanitize_hwaddress:
+      B.addAttribute(Attribute::SanitizeHWAddress); break;
+    case lltok::kw_sanitize_thread:
+      B.addAttribute(Attribute::SanitizeThread); break;
+    case lltok::kw_sanitize_memory:
+      B.addAttribute(Attribute::SanitizeMemory); break;
+    case lltok::kw_stealable: B.addAttribute(Attribute::Stealable); break;
+    case lltok::kw_strictfp: B.addAttribute(Attribute::StrictFP); break;
+    case lltok::kw_uwtable: B.addAttribute(Attribute::UWTable); break;
+    case lltok::kw_writeonly: B.addAttribute(Attribute::WriteOnly); break;
+    case lltok::kw_forkable: B.addAttribute(Attribute::Forkable); break;
+    case lltok::kw_uli_no_polling:
+      B.addAttribute(Attribute::ULINoPolling); break;
+    case lltok::kw_user_level_interrupt:
+      B.addAttribute(Attribute::UserLevelInterrupt); break;
+    case lltok::kw_no_stacklet_check:
+      B.addAttribute(Attribute::NoStackletCheck); break;
+
+    // Error handling.
+    case lltok::kw_inreg:
+    case lltok::kw_signext:
+    case lltok::kw_zeroext:
+      HaveError |=
+        Error(Lex.getLoc(),
+              "invalid use of attribute on a function");
+      break;
+    case lltok::kw_byval:
+    case lltok::kw_dereferenceable:
+    case lltok::kw_dereferenceable_or_null:
+    case lltok::kw_inalloca:
+    case lltok::kw_nest:
+    case lltok::kw_noalias:
+    case lltok::kw_nocapture:
+    case lltok::kw_nonnull:
+    case lltok::kw_returned:
+    case lltok::kw_sret:
+    case lltok::kw_swifterror:
+    case lltok::kw_swiftself:
+      HaveError |=
+        Error(Lex.getLoc(),
+              "invalid use of parameter-only attribute on a function");
+      break;
+#endif
     }
 
     if (parseEnumAttribute(Attr, B, InAttrGrp))
@@ -1860,6 +1942,7 @@ bool LLParser::parseOptionalCallingConv(unsigned &CC) {
   case lltok::kw_swiftcc:        CC = CallingConv::Swift; break;
   case lltok::kw_swifttailcc:    CC = CallingConv::SwiftTail; break;
   case lltok::kw_x86_intrcc:     CC = CallingConv::X86_INTR; break;
+  case lltok::kw_x86_ulircc:     CC = CallingConv::X86_ULI; break;
   case lltok::kw_hhvmcc:         CC = CallingConv::HHVM; break;
   case lltok::kw_hhvm_ccc:       CC = CallingConv::HHVM_C; break;
   case lltok::kw_cxx_fast_tlscc: CC = CallingConv::CXX_FAST_TLS; break;

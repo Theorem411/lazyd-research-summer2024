@@ -273,12 +273,25 @@ def PUSHCS16 : I<0x0E, RawFrm, (outs), (ins), "push{w}\t{%cs|cs}", []>,
                  OpSize16, Requires<[Not64BitMode]>;
 def PUSHCS32 : I<0x0E, RawFrm, (outs), (ins), "push{l}\t{%cs|cs}", []>,
                  OpSize32, Requires<[Not64BitMode]>;
+
 def PUSHSS16 : I<0x16, RawFrm, (outs), (ins), "push{w}\t{%ss|ss}", []>,
                  OpSize16, Requires<[Not64BitMode]>;
 def PUSHSS32 : I<0x16, RawFrm, (outs), (ins), "push{l}\t{%ss|ss}", []>,
                  OpSize32, Requires<[Not64BitMode]>;
 def PUSHDS16 : I<0x1E, RawFrm, (outs), (ins), "push{w}\t{%ds|ds}", []>,
                  OpSize16, Requires<[Not64BitMode]>;
+// Chrisma
+// Error: Primary decode conflict: ULIRD would overwrite PUSHSS32
+// Unimplemented, now use for ulird
+
+//def PUSHSS16 : I<0x16, RawFrm, (outs), (ins),
+//                 "push{w}\t{%ss|ss}", [], IIC_PUSH_SR>,
+//                 OpSize16, Requires<[Not64BitMode]>;
+//def PUSHSS32 : I<0x16, RawFrm, (outs), (ins),
+//                 "push{l}\t{%ss|ss}", [], IIC_PUSH_SR>,
+//                 OpSize32, Requires<[Not64BitMode]>;
+
+
 def PUSHDS32 : I<0x1E, RawFrm, (outs), (ins), "push{l}\t{%ds|ds}", []>,
                  OpSize32, Requires<[Not64BitMode]>;
 def PUSHES16 : I<0x06, RawFrm, (outs), (ins), "push{w}\t{%es|es}", []>,

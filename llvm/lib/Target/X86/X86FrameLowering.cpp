@@ -1716,6 +1716,31 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
   // the callee has more arguments then the caller.
   NumBytes -= mergeSPUpdates(MBB, MBBI, true);
 
+  // Total frame size including the subq and all pushqs in the prologue
+  uint64_t FrameSize = NumBytes;
+
+  for (auto it = MBB.begin(); it != MBB.end(); ++it) {
+    if (!it->getFlag(MachineInstr::FrameSetup))
+      continue;
+    if (it->getOpcode() == X86::PUSH64r)
+      FrameSize += 8;
+    if (it->getOpcode() == X86::PUSH32r)
+      FrameSize += 4;
+    if (it->getOpcode() == X86::PUSH16r)
+      FrameSize += 2;
+  }
+
+  std::vector<llvm::MachineBasicBlock::iterator> framesize_instructions_to_delete;
+  for (auto mb = MF.begin(); mb != MF.end(); ++mb) {
+    for (auto inst = mb->begin(); inst != mb->end(); ++inst) {
+      if (inst->getOpcode() == X86::GETFRAMESIZE) {
+        BuildMI(*mb, inst, DL, TII.get(X86::MOV64ri), inst->getOperand(0).getReg())
+          .addImm(FrameSize);
+        framesize_instructions_to_delete.push_back(inst);
+      }
+    }
+  }
+
   // Adjust stack pointer: ESP -= numbytes.
 
   // Windows and cygwin/mingw require a prologue helper routine when allocating
@@ -1779,6 +1804,97 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
                           StackPtr, false, NumBytes - 4);
       MI->setFlag(MachineInstr::FrameSetup);
       MBB.insert(MBBI, MI);
+    }
+  } else if (FrameSize) {
+    uint64_t stacklet_size_log2 = MF.getTarget().Options.ULIStackletOverflowCheckSize;
+    if (stacklet_size_log2 && !MF.getFunction()->hasFnAttribute(Attribute::NoStackletCheck)) {
+      // Add a stacklet overflow check, detecting if the adjusted stack pointer
+      // for this stack frame points to memory beyond the stacklet.
+      // If so, call the overflow handler hardcoded to `__stacklet_overflow`
+      // The code assumes that stacklets are STACKLET_SIZE aligned.
+
+      uint64_t stacklet_size = 1 << stacklet_size_log2;
+
+      DL.print(errs());
+      errs() << "Adding stacklet check to fxn '" << Fn->getName() << "' with stacklet size '" << stacklet_size << "'\n";
+
+      const BasicBlock *LLVM_BB = MBB.getBasicBlock();
+
+      // Assert that the function does not contain `alloca`
+      assert(!MFI.hasVarSizedObjects());
+
+      // Assert that the function does not have additional arguments passed on
+      // the stack which would disturb our stacklet overflow checking
+      for (int i = MFI.getObjectIndexBegin(); i < MFI.getObjectIndexEnd(); i++) {
+        assert(MFI.getObjectOffset(i) < 0);
+      }
+
+      // CheckMBB:
+      //   newrsp = rsp - framesize
+      //   newrsp = (newrsp ^ rsp) >> alignment
+      //   jz MBB
+      // OverflowMBB:
+      //   call __stacklet_overflow
+      // MBB:
+      //   # emitted by regular emitSPUpdate()
+      //   rbp = rsp
+      //   rsp = rsp - framesize
+
+      MachineBasicBlock *CheckMBB = MF.CreateMachineBasicBlock(LLVM_BB);
+      MachineBasicBlock *OverflowMBB = MF.CreateMachineBasicBlock(LLVM_BB);
+
+      MachineFunction::iterator MBBIter = std::prev(MBB.getIterator());
+      MF.insert(MBBIter, CheckMBB);
+      MF.insert(MBBIter, OverflowMBB);
+      CheckMBB->moveBefore(&MBB);
+      OverflowMBB->moveAfter(CheckMBB);
+
+      // R12 is caller saved
+      auto NewRSP = X86::R12;
+
+      BuildMI(CheckMBB, DL, TII.get(X86::MOV64rr), NewRSP)
+        .addReg(StackPtr);
+
+      // 2 * 8 bytes: needed to store pushq %rip of callee and in case we need
+      //              to pushq %rip again to call the overflow handler
+      // 0x20: frame size of overflow handler
+      uint64_t FrameSizeAndSlop = FrameSize + 2 * 8 + 0x20;
+
+      // Assert that the frame size for the sub is not too large
+      assert(FrameSizeAndSlop <= stacklet_size);
+
+      unsigned Opc = getSUBriOpcode(Uses64BitFramePtr, FrameSizeAndSlop);
+      BuildMI(CheckMBB, DL, TII.get(Opc), NewRSP)
+        .addReg(NewRSP)
+        .addImm(FrameSizeAndSlop);
+      BuildMI(CheckMBB, DL, TII.get(X86::XOR64rr), NewRSP)
+        .addReg(NewRSP)
+        .addReg(StackPtr);
+      BuildMI(CheckMBB, DL, TII.get(X86::SHR64ri), NewRSP)
+        .addReg(NewRSP)
+        .addImm(stacklet_size_log2);
+
+      BuildMI(CheckMBB, DL, TII.get(X86::JE_1)).addMBB(&MBB);
+
+      BuildMI(OverflowMBB, DL, TII.get(X86::CALL64pcrel32))
+        // TODO: hardcoded
+        .addExternalSymbol("__stacklet_overflow");
+
+      CheckMBB->addSuccessor(&MBB);
+      CheckMBB->addSuccessor(OverflowMBB);
+      OverflowMBB->addSuccessor(&MBB);
+
+      // Mark all instructions as frame setup
+      for (MachineInstr &MI : *CheckMBB) {
+        MI.setFlag(MachineInstr::FrameSetup);
+      }
+      for (MachineInstr &MI : *OverflowMBB) {
+        MI.setFlag(MachineInstr::FrameSetup);
+      }
+    }
+
+    if (NumBytes) {
+      emitSPUpdate(MBB, MBBI, -(int64_t)NumBytes, /*InEpilogue=*/false);
     }
   } else if (NumBytes) {
     emitSPUpdate(MBB, MBBI, DL, -(int64_t)NumBytes, /*InEpilogue=*/false);
@@ -1919,7 +2035,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
 
   // We already dealt with stack realignment and funclets above.
   if (IsFunclet && STI.is32Bit())
-    return;
+    goto end;
 
   // If we need a base pointer, set it up here. It's whatever the value
   // of the stack pointer is at this point. Any variable size objects
@@ -1986,6 +2102,11 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
 
   // At this point we know if the function has WinCFI or not.
   MF.setHasWinCFI(HasWinCFI);
+
+end:
+  for (auto &it : framesize_instructions_to_delete) {
+    it->eraseFromParent();
+  }
 }
 
 bool X86FrameLowering::canUseLEAForSPInEpilogue(

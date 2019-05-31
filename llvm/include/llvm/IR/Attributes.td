@@ -314,6 +314,18 @@ def ZExt : EnumAttr<"zeroext", [ParamAttr, RetAttr]>;
 /// Function is required to make Forward Progress.
 def MustProgress : EnumAttr<"mustprogress", [FnAttr]>;
 
+/// this function is a forkable function
+def Forkable : EnumAttr<"forkable">;
+
+/// Function cannot has ULI polling.
+def ULINoPolling : EnumAttr<"uli_no_polling">;
+
+/// this function is a user_level_interrupt
+def UserLevelInterrupt : EnumAttr<"user_level_interrupt">;
+
+/// disable stacklet checking for this function
+def NoStackletCheck : EnumAttr<"no_stacklet_check">;
+
 /// Target-independent string attributes.
 def LessPreciseFPMAD : StrBoolAttr<"less-precise-fpmad">;
 def NoInfsFPMath : StrBoolAttr<"no-infs-fp-math">;

@@ -252,6 +252,11 @@ namespace CallingConv {
     /// M68k_INTR - Calling convention used for M68k interrupt routines.
     M68k_INTR = 101,
 
+    /// X86_ULI - x86 user-level interrupt context. Callee may take
+    /// multiple arguments which are accessed by the FROMULI
+    /// instructions
+    X86_ULI = 102,
+
     /// The highest possible calling convention ID. Must be some 2^k - 1.
     MaxID = 1023
   };

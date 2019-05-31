@@ -54,6 +54,11 @@
 #include "llvm/Transforms/Scalar/Scalarizer.h"
 #include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/Tapir.h"
+#include "llvm/Transforms/ULI/ULIPollingInsertion.h"
+#include "llvm/Transforms/ULI/ULIIntrinsicToExternCall.h"
+#include "llvm/Transforms/ULI/SendUli.h"
+#include "llvm/Transforms/ULI/HandleUli.h"
+#include "llvm/Transforms/ULI/HandleInlets.h"
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
 #include "llvm/Transforms/Utils/UnifyFunctionExitNodes.h"
 #include "llvm/Transforms/Vectorize.h"
@@ -236,16 +241,30 @@ namespace {
       (void) llvm::createMustBeExecutedContextPrinter();
       (void) llvm::createFloat2IntPass();
       (void) llvm::createEliminateAvailableExternallyPass();
-      (void)llvm::createScalarizeMaskedMemIntrinLegacyPass();
+      (void) llvm::createScalarizeMaskedMemIntrinLegacyPass();
       (void) llvm::createWarnMissedTransformationsPass();
       (void) llvm::createHardwareLoopsPass();
       (void) llvm::createInjectTLIMappingsLegacyPass();
       (void) llvm::createUnifyLoopExitsPass();
       (void) llvm::createFixIrreduciblePass();
-      (void)llvm::createFunctionSpecializationPass();
+      (void) llvm::createFunctionSpecializationPass();
       (void) llvm::createTaskCanonicalizePass();
+#if 0
+      (void) llvm::createScalarizeMaskedMemIntrinPass();
+#endif
+      (void) llvm::createSmallBlockPass();
+      (void) llvm::createRedundantSpawnPass();
+      (void) llvm::createSpawnRestructurePass();
+      (void) llvm::createSyncEliminationPass();
+      (void) llvm::createSpawnUnswitchPass();
+#if 0
       (void) llvm::createTaskSimplifyPass();
-
+#endif
+      (void) llvm::createULIPollingInsertionPass();
+      (void) llvm::createULIIntrinsicToExternCallPass();
+      (void) llvm::createSendUliPass();
+      (void) llvm::createHandleUliPass();
+      (void) llvm::createHandleInletsPass();
       (void)new llvm::IntervalPartition();
       (void)new llvm::ScalarEvolutionWrapperPass();
       llvm::Function::Create(nullptr, llvm::GlobalValue::ExternalLinkage)->viewCFGOnly();

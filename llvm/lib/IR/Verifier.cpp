@@ -1678,6 +1678,59 @@ Verifier::visitModuleFlag(const MDNode *Op,
   }
 }
 
+#if 0
+/// Return true if this attribute kind only applies to functions.
+static bool isFuncOnlyAttr(Attribute::AttrKind Kind) {
+  switch (Kind) {
+  case Attribute::NoReturn:
+  case Attribute::NoUnwind:
+  case Attribute::NoInline:
+  case Attribute::AlwaysInline:
+  case Attribute::OptimizeForSize:
+  case Attribute::StackProtect:
+  case Attribute::StackProtectReq:
+  case Attribute::StackProtectStrong:
+  case Attribute::SafeStack:
+  case Attribute::NoRedZone:
+  case Attribute::NoImplicitFloat:
+  case Attribute::Naked:
+  case Attribute::InlineHint:
+  case Attribute::StackAlignment:
+  case Attribute::UWTable:
+  case Attribute::NonLazyBind:
+  case Attribute::ReturnsTwice:
+  case Attribute::SanitizeAddress:
+  case Attribute::SanitizeCilk:
+  case Attribute::SanitizeHWAddress:
+  case Attribute::SanitizeThread:
+  case Attribute::SanitizeMemory:
+  case Attribute::MinSize:
+  case Attribute::NoDuplicate:
+  case Attribute::Builtin:
+  case Attribute::NoBuiltin:
+  case Attribute::Cold:
+  case Attribute::OptimizeNone:
+  case Attribute::JumpTable:
+  case Attribute::Convergent:
+  case Attribute::ArgMemOnly:
+  case Attribute::NoRecurse:
+  case Attribute::InaccessibleMemOnly:
+  case Attribute::InaccessibleMemOrArgMemOnly:
+  case Attribute::AllocSize:
+  case Attribute::Speculatable:
+  case Attribute::StrictFP:
+  case Attribute::Stealable:
+  case Attribute::Forkable:
+  case Attribute::ULINoPolling:
+  case Attribute::UserLevelInterrupt:
+  case Attribute::NoStackletCheck:
+    return true;
+  default:
+    break;
+  }
+}
+#endif
+
 void Verifier::visitModuleFlagCGProfileEntry(const MDOperand &MDO) {
   auto CheckFunction = [&](const MDOperand &FuncMDO) {
     if (!FuncMDO)

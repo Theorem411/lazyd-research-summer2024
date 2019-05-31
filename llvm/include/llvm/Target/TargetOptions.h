@@ -292,6 +292,8 @@ namespace llvm {
 
     /// Emit section containing metadata on function stack sizes.
     unsigned EmitStackSizeSection : 1;
+    /// This flag enables ULI stacklet overflow checks in function prologues
+    unsigned ULIStackletOverflowCheckSize : 8;
 
     /// Enables the MachineOutliner pass.
     unsigned EnableMachineOutliner : 1;

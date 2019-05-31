@@ -1,0 +1,16 @@
+# build the basic compiler container.  Use Dockerfile in this directory to install the actual compiler
+FROM ubuntu:latest
+
+LABEL maintainer "ULI group"
+
+# Install packages for minimal useful image.
+RUN apt-get update && \
+    apt-get install -y  libstdc++-4.9-dev binutils make && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN adduser --disabled-password --gecos "" userincontainer
+
+# Unpack clang installation into this image.
+#ADD clang.tar.gz /usr/local/
+
+#CMD ["/bin/bash"]

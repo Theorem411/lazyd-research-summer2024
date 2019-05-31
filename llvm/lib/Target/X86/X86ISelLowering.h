@@ -23,6 +23,7 @@ namespace llvm {
 
   namespace X86ISD {
     // X86 Specific DAG Nodes
+<<<<<<< HEAD
   enum NodeType : unsigned {
     // Start the numbering where the builtin ops leave off.
     FIRST_NUMBER = ISD::BUILTIN_OP_END,
@@ -73,6 +74,245 @@ namespace llvm {
     ///     #2 - The second register result value (optional)
     ///
     CALL,
+=======
+    enum NodeType : unsigned {
+      // Start the numbering where the builtin ops leave off.
+      FIRST_NUMBER = ISD::BUILTIN_OP_END,
+
+      /// Bit scan forward.
+      BSF,
+      /// Bit scan reverse.
+      BSR,
+
+      /// Double shift instructions. These correspond to
+      /// X86::SHLDxx and X86::SHRDxx instructions.
+      SHLD,
+      SHRD,
+
+      /// Bitwise logical AND of floating point values. This corresponds
+      /// to X86::ANDPS or X86::ANDPD.
+      FAND,
+
+      /// Bitwise logical OR of floating point values. This corresponds
+      /// to X86::ORPS or X86::ORPD.
+      FOR,
+
+      /// Bitwise logical XOR of floating point values. This corresponds
+      /// to X86::XORPS or X86::XORPD.
+      FXOR,
+
+      ///  Bitwise logical ANDNOT of floating point values. This
+      /// corresponds to X86::ANDNPS or X86::ANDNPD.
+      FANDN,
+
+      /// These operations represent an abstract X86 call
+      /// instruction, which includes a bunch of information.  In particular the
+      /// operands of these node are:
+      ///
+      ///     #0 - The incoming token chain
+      ///     #1 - The callee
+      ///     #2 - The number of arg bytes the caller pushes on the stack.
+      ///     #3 - The number of arg bytes the callee pops off the stack.
+      ///     #4 - The value to pass in AL/AX/EAX (optional)
+      ///     #5 - The value to pass in DL/DX/EDX (optional)
+      ///
+      /// The result values of these nodes are:
+      ///
+      ///     #0 - The outgoing token chain
+      ///     #1 - The first register result value (optional)
+      ///     #2 - The second register result value (optional)
+      ///
+      CALL,
+
+      /// This operation implements the lowering for readcyclecounter.
+      RDTSC_DAG,
+
+      /// X86 Read Time-Stamp Counter and Processor ID.
+      RDTSCP_DAG,
+
+      /// X86 Read Performance Monitoring Counters.
+      RDPMC_DAG,
+
+      /// X86 compare and logical compare instructions.
+      CMP, COMI, UCOMI,
+
+      /// X86 bit-test instructions.
+      BT,
+
+      /// X86 SetCC. Operand 0 is condition code, and operand 1 is the EFLAGS
+      /// operand, usually produced by a CMP instruction.
+      SETCC,
+
+      /// X86 Select
+      SELECT, SELECTS,
+
+      // Same as SETCC except it's materialized with a sbb and the value is all
+      // one's or all zero's.
+      SETCC_CARRY,  // R = carry_bit ? ~0 : 0
+
+      /// X86 FP SETCC, implemented with CMP{cc}SS/CMP{cc}SD.
+      /// Operands are two FP values to compare; result is a mask of
+      /// 0s or 1s.  Generally DTRT for C/C++ with NaNs.
+      FSETCC,
+
+      /// X86 FP SETCC, similar to above, but with output as an i1 mask and
+      /// with optional rounding mode.
+      FSETCCM, FSETCCM_RND,
+
+      /// X86 conditional moves. Operand 0 and operand 1 are the two values
+      /// to select from. Operand 2 is the condition code, and operand 3 is the
+      /// flag operand produced by a CMP or TEST instruction. It also writes a
+      /// flag result.
+      CMOV,
+
+      /// X86 conditional branches. Operand 0 is the chain operand, operand 1
+      /// is the block to branch if condition is true, operand 2 is the
+      /// condition code, and operand 3 is the flag operand produced by a CMP
+      /// or TEST instruction.
+      BRCOND,
+
+      /// Return with a flag operand. Operand 0 is the chain operand, operand
+      /// 1 is the number of bytes of stack to pop.
+      RET_FLAG,
+
+      /// Return from interrupt. Operand 0 is the number of bytes to pop.
+      IRET,
+
+      /// Return from user-level interrupt. No operands
+      ULIRET,
+
+      /// Repeat fill, corresponds to X86::REP_STOSx.
+      REP_STOS,
+
+      /// Repeat move, corresponds to X86::REP_MOVSx.
+      REP_MOVS,
+
+      /// On Darwin, this node represents the result of the popl
+      /// at function entry, used for PIC code.
+      GlobalBaseReg,
+
+      /// A wrapper node for TargetConstantPool, TargetJumpTable,
+      /// TargetExternalSymbol, TargetGlobalAddress, TargetGlobalTLSAddress,
+      /// MCSymbol and TargetBlockAddress.
+      Wrapper,
+
+      /// Special wrapper used under X86-64 PIC mode for RIP
+      /// relative displacements.
+      WrapperRIP,
+
+      /// Copies a 64-bit value from the low word of an XMM vector
+      /// to an MMX vector.
+      MOVDQ2Q,
+
+      /// Copies a 32-bit value from the low word of a MMX
+      /// vector to a GPR.
+      MMX_MOVD2W,
+
+      /// Copies a GPR into the low 32-bit word of a MMX vector
+      /// and zero out the high word.
+      MMX_MOVW2D,
+
+      /// Extract an 8-bit value from a vector and zero extend it to
+      /// i32, corresponds to X86::PEXTRB.
+      PEXTRB,
+
+      /// Extract a 16-bit value from a vector and zero extend it to
+      /// i32, corresponds to X86::PEXTRW.
+      PEXTRW,
+
+      /// Insert any element of a 4 x float vector into any element
+      /// of a destination 4 x floatvector.
+      INSERTPS,
+
+      /// Insert the lower 8-bits of a 32-bit value to a vector,
+      /// corresponds to X86::PINSRB.
+      PINSRB,
+
+      /// Insert the lower 16-bits of a 32-bit value to a vector,
+      /// corresponds to X86::PINSRW.
+      PINSRW,
+
+      /// Shuffle 16 8-bit values within a vector.
+      PSHUFB,
+
+      /// Compute Sum of Absolute Differences.
+      PSADBW,
+      /// Compute Double Block Packed Sum-Absolute-Differences
+      DBPSADBW,
+
+      /// Bitwise Logical AND NOT of Packed FP values.
+      ANDNP,
+
+      /// Blend where the selector is an immediate.
+      BLENDI,
+
+      /// Dynamic (non-constant condition) vector blend where only the sign bits
+      /// of the condition elements are used. This is used to enforce that the
+      /// condition mask is not valid for generic VSELECT optimizations.
+      SHRUNKBLEND,
+
+      /// Combined add and sub on an FP vector.
+      ADDSUB,
+
+      //  FP vector ops with rounding mode.
+      FADD_RND, FADDS_RND,
+      FSUB_RND, FSUBS_RND,
+      FMUL_RND, FMULS_RND,
+      FDIV_RND, FDIVS_RND,
+      FMAX_RND, FMAXS_RND,
+      FMIN_RND, FMINS_RND,
+      FSQRT_RND, FSQRTS_RND,
+
+      // FP vector get exponent.
+      FGETEXP_RND, FGETEXPS_RND,
+      // Extract Normalized Mantissas.
+      VGETMANT, VGETMANT_RND, VGETMANTS, VGETMANTS_RND,
+      // FP Scale.
+      SCALEF,
+      SCALEFS,
+
+      // Integer add/sub with unsigned saturation.
+      ADDUS,
+      SUBUS,
+
+      // Integer add/sub with signed saturation.
+      ADDS,
+      SUBS,
+
+      // Unsigned Integer average.
+      AVG,
+
+      /// Integer horizontal add/sub.
+      HADD,
+      HSUB,
+
+      /// Floating point horizontal add/sub.
+      FHADD,
+      FHSUB,
+
+      // Detect Conflicts Within a Vector
+      CONFLICT,
+
+      /// Floating point max and min.
+      FMAX, FMIN,
+
+      /// Commutative FMIN and FMAX.
+      FMAXC, FMINC,
+
+      /// Scalar intrinsic floating point max and min.
+      FMAXS, FMINS,
+
+      /// Floating point reciprocal-sqrt and reciprocal approximation.
+      /// Note that these typically require refinement
+      /// in order to obtain suitable precision.
+      FRSQRT, FRCP,
+
+      // AVX-512 reciprocal approximations with a little more precision.
+      RSQRT14, RSQRT14S, RCP14, RCP14S,
+
+      // Thread Local Storage.
+      TLSADDR,
+>>>>>>> LLVM ULI changes 2017-10-18 to 2019-05-27
 
     /// Same as call except it adds the NoTrack prefix.
     NT_CALL,

@@ -362,6 +362,20 @@ X86RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
     if (CallsEHReturn)
       return CSR_64EHRet_SaveList;
     return CSR_64_SaveList;
+  case CallingConv::X86_ULI:
+    if (Is64Bit) {
+      if(HasSSE) {
+	return CSR_Uli64_SaveList;
+      } else {
+	return CSR_Uli64_NoSSE_SaveList;
+      }
+    } else {
+      if(HasSSE) {
+	return CSR_Uli32_SaveList;
+      } else {
+	return CSR_Uli32_NoSSE_SaveList;
+      }
+    }
   case CallingConv::X86_INTR:
     if (Is64Bit) {
       if (HasAVX512)

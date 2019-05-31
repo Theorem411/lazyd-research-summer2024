@@ -5865,4 +5865,65 @@ let TargetPrefix = "x86" in {
                   [ llvm_v4f32_ty, llvm_v4f32_ty, llvm_v4f32_ty, llvm_i8_ty,
                     llvm_i32_ty ],
                   [ IntrNoMem, ImmArg<ArgIndex<4>> ]>;
+} 
+
+// Send instructions
+let TargetPrefix = "x86" in {
+  def int_x86_uli_send :
+			  Intrinsic<[], [llvm_i32_ty, llvm_i32_ty, llvm_ptr_ty, llvm_vararg_ty], []>;
+  def int_x86_uli_send0 : GCCBuiltin<"__builtin_uli_send0">,
+              Intrinsic<[], [llvm_i64_ty, llvm_i64_ty, llvm_ptr_ty], []>;
+  def int_x86_uli_send0c : GCCBuiltin<"__builtin_uli_send0c">,
+              Intrinsic<[], [llvm_i64_ty, llvm_ptr_ty], []>;
+  // first arg is dest proc and interrupt number, second is handler to be called, third is number of arguments being sent to handler
+  def int_x86_uli_send0cN : GCCBuiltin<"__builtin_uli_send0cN">,
+              Intrinsic<[], [llvm_i64_ty, llvm_ptr_ty, llvm_i32_ty], []>;
+
+  /* GCCBuiltin<"__builtin_uli_reply"> cause error when using llvm_vararg_ty during runtime */
+  def int_x86_uli_reply :
+              Intrinsic<[], [llvm_ptr_ty, llvm_vararg_ty], []>;
+
+  // first arg is handler to be called, second arg is number of arguments being sent to handler
+  def int_x86_uli_reply0c : GCCBuiltin<"__builtin_uli_reply0c">,
+              Intrinsic<[], [llvm_ptr_ty], []>;
+
+  // first arg is handler to be called, second arg is number of arguments being sent to handler
+  def int_x86_uli_reply0cN : GCCBuiltin<"__builtin_uli_reply0cN">,
+              Intrinsic<[], [llvm_ptr_ty, llvm_i32_ty], []>;
+
+  //def int_x86_uli_fromireg : GCCBuiltin<"__builtin_uli_fromireg">, -- old definition
+  //            Intrinsic<[llvm_i64_ty], [llvm_i64_ty], []>;
+
+  def int_x86_uli_fromireg : GCCBuiltin<"__builtin_uli_fromireg">,
+              Intrinsic<[llvm_i64_ty], [llvm_i32_ty], []>;
+  def int_x86_uli_toireg : GCCBuiltin<"__builtin_uli_toireg">,
+              Intrinsic<[], [llvm_i32_ty, llvm_i64_ty], []>;
+
+  def int_x86_uli_getcpu : GCCBuiltin<"__builtin_uli_getcpu">,
+              Intrinsic<[llvm_i32_ty], [], []>;
+}
+
+//===----------------------------------------------------------------------===//
+// Misc ULI management functions
+let TargetPrefix = "x86" in {
+  def int_x86_uli_disable : GCCBuiltin<"__builtin_uli_disable">,
+       Intrinsic<[], [llvm_i64_ty], []>;
+  def int_x86_uli_enable : GCCBuiltin<"__builtin_uli_enable">,
+       Intrinsic<[], [llvm_i64_ty], []>;
+  def int_x86_uli_read : GCCBuiltin<"__builtin_uli_read">,
+    Intrinsic<[llvm_i64_ty], [], []>;
+  def int_x86_uli_set : GCCBuiltin<"__builtin_uli_set">,
+    Intrinsic<[], [llvm_i64_ty], []>;
+  // Uli return builtin
+  def int_x86_uli_retq : GCCBuiltin<"__builtin_uli_retq">,
+    Intrinsic<[], [], []>;
+}
+
+//===----------------------------------------------------------------------===//
+// Misc functions that are helpers for stacklets
+let TargetPrefix = "x86" in {
+  def int_x86_read_sp : GCCBuiltin<"__builtin_read_sp">,
+       Intrinsic<[llvm_i64_ty], [], [IntrNoMem]>;
+  def int_x86_get_frame_size : GCCBuiltin<"__builtin_get_frame_size">,
+       Intrinsic<[llvm_i64_ty], [], [IntrNoMem]>;
 }
