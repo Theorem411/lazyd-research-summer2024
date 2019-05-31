@@ -7255,6 +7255,60 @@ handleWebAssemblyImportNameAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   FD->addAttr(::new (S.Context) WebAssemblyImportNameAttr(S.Context, AL, Str));
 }
 
+// must be on a function, otherwise any is ok
+static void handleForkableAttr(Sema &S, Decl *D,
+			     const AttributeList &Attr) {
+  if (!isFunctionOrMethod(D)) {
+    S.Diag(D->getLocation(), diag::warn_attribute_wrong_decl_type)
+        << "'forkable'" << ExpectedFunctionOrMethod;
+    return;
+  }
+  //fprintf(stderr, "setting forkable\n");
+  handleSimpleAttribute<ForkableAttr>(S, D, Attr);
+}
+
+// must be on a function, otherwise any is ok
+static void handleULINoPollingAttr(Sema &S, Decl *D,
+			     const AttributeList &Attr) {
+  if (!isFunctionOrMethod(D)) {
+    S.Diag(D->getLocation(), diag::warn_attribute_wrong_decl_type)
+        << "'uli-no-polling'" << ExpectedFunctionOrMethod;
+    return;
+  }
+  handleSimpleAttribute<ULINoPollingAttr>(S, D, Attr);
+}
+
+static void handleUserLevelInterruptAttr(Sema &S, Decl *D,
+                                      const AttributeList &Attr) {
+  // Semantic checks for a function with the 'interrupt' attribute.
+  // a) Must be a function.
+  // b) Must have the 'void' return type.
+
+  if (!isFunctionOrMethod(D)) {
+    S.Diag(D->getLocation(), diag::warn_attribute_wrong_decl_type)
+        << "'user-level-interrupt'" << ExpectedFunctionOrMethod;
+    return;
+  }
+
+  if (!getFunctionOrMethodResultType(D)->isVoidType()) {
+    S.Diag(D->getLocation(), diag::err_user_level_interrupt_attribute)
+        << 1;
+    return;
+  }
+  handleSimpleAttribute<UserLevelInterruptAttr>(S, D, Attr);
+}
+
+// must be on a function, otherwise any is ok
+static void handleNoStackletCheckAttr(Sema &S, Decl *D,
+			     const AttributeList &Attr) {
+  if (!isFunctionOrMethod(D)) {
+    S.Diag(D->getLocation(), diag::warn_attribute_wrong_decl_type)
+        << "'no_stacklet_check'" << ExpectedFunctionOrMethod;
+    return;
+  }
+  handleSimpleAttribute<NoStackletCheckAttr>(S, D, Attr);
+}
+
 static void handleRISCVInterruptAttr(Sema &S, Decl *D,
                                      const ParsedAttr &AL) {
   // Warn about repeated attributes.
@@ -8170,6 +8224,18 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case ParsedAttr::AT_Interrupt:
     handleInterruptAttr(S, D, AL);
+    break;
+  case AttributeList::AT_Forkable:
+    handleForkableAttr(S, D, Attr);
+    break;
+  case AttributeList::AT_ULINoPolling:
+    handleULINoPollingAttr(S, D, Attr);
+    break;
+  case AttributeList::AT_UserLevelInterrupt:
+    handleUserLevelInterruptAttr(S, D, Attr);
+    break;
+  case AttributeList::AT_NoStackletCheck:
+    handleNoStackletCheckAttr(S, D, Attr);
     break;
   case ParsedAttr::AT_X86ForceAlignArgPointer:
     handleX86ForceAlignArgPointerAttr(S, D, AL);

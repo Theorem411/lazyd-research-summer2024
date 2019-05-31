@@ -32,6 +32,7 @@
 #include "clang/Basic/DiagnosticSema.h"
 #include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/SourceManager.h"
+#include "clang/Basic/TargetBuiltins.h" // Used for X86::BI__*
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/LiteralSupport.h"
 #include "clang/Lex/Preprocessor.h"
@@ -52,6 +53,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/SaveAndRestore.h"
+
 
 using namespace clang;
 using namespace sema;
@@ -6840,7 +6842,7 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
   unsigned BuiltinID = (FDecl ? FDecl->getBuiltinID() : 0);
 
   // Functions with 'interrupt' attribute cannot be called directly.
-  if (FDecl && FDecl->hasAttr<AnyX86InterruptAttr>()) {
+  if (FDecl && (FDecl->hasAttr<AnyX86InterruptAttr>() || FDecl->hasAttr<UserLevelInterruptAttr>())) {
     Diag(Fn->getExprLoc(), diag::err_anyx86_interrupt_called);
     return ExprError();
   }
@@ -6853,6 +6855,18 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
   // no_caller_saved_registers since there is no efficient way to
   // save and restore the non-GPR state.
   if (auto *Caller = getCurFunctionDecl()) {
+    // Handle the builtin_uli_send and builtin_uli_reply
+    if (Caller->hasAttr<UserLevelInterruptAttr>()) {
+      // If user implements a send in the uli handler interrupt, issue a warning
+      if( BuiltinID == X86::BI__builtin_uli_send ) {
+        Diag(Fn->getExprLoc(), diag::warn_ulisend_called_in_ulihandler);
+      }
+    } else {
+      // If user implements a reply not in the uli handler interrupt, issue an error
+      if(BuiltinID == X86::BI__builtin_uli_reply) {
+        Diag(Fn->getExprLoc(), diag::err_ulireply_called_not_in_ulihandler);
+      }
+    }
     if (Caller->hasAttr<ARMInterruptAttr>()) {
       bool VFP = Context.getTargetInfo().hasFeature("vfp");
       if (VFP && (!FDecl || !FDecl->hasAttr<ARMInterruptAttr>())) {

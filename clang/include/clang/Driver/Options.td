@@ -2961,6 +2961,7 @@ def fdebug_prefix_map_EQ
   : Joined<["-"], "fdebug-prefix-map=">, Group<f_Group>,
     Flags<[CC1Option,CC1AsOption]>,
     HelpText<"remap file source paths in debug info">;
+
 def fcoverage_prefix_map_EQ
   : Joined<["-"], "fcoverage-prefix-map=">, Group<f_Group>,
     Flags<[CC1Option]>,
@@ -2974,6 +2975,19 @@ def fmacro_prefix_map_EQ
 defm force_dwarf_frame : BoolFOption<"force-dwarf-frame",
   CodeGenOpts<"ForceDwarfFrameSection">, DefaultFalse,
   PosFlag<SetTrue, [CC1Option], "Always emit a debug frame section">, NegFlag<SetFalse>>;
+
+def fuli_fsim : Flag<["-"], "fuli-fsim">, Group<f_Group>,
+  HelpText<"Turn on ULI rewriter for simulation">, Flags<[CC1Option]>;
+def fno_uli_fsim : Flag<["-"], "fno-uli-fsim">, Group<f_Group>,
+  Flags<[CC1Option]>;
+
+def fuli_stacklet_overflow_size : Joined<["-"], "fuli-stacklet-overflow-size=">,
+  HelpText<"Enable stacklet overflow checks with the given stacklet size (log2)">;
+def fenable_uli_transform : Joined<["-"], "fenable-uli-transform">,
+  HelpText<"Enable ULI for send, reply, and handleuli transformation">;
+def fenable_uli_rewrite : Flag<["-"], "fenable-uli-rewrite">,
+  HelpText<"Enable ULI rewriting for simulation">;
+
 def g_Flag : Flag<["-"], "g">, Group<g_Group>,
   HelpText<"Generate source-level debug information">;
 def gline_tables_only : Flag<["-"], "gline-tables-only">, Group<gN_Group>,

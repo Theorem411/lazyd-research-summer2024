@@ -1929,6 +1929,34 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     }
   }
 
+  // we check for forkable attribute on functions
+  if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
+    if (FD->hasAttr<ForkableAttr>()) {
+      B.addAttribute(llvm::Attribute::Forkable);
+    }
+  }
+
+  // we check for no ULI polling attribute on functions
+  if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
+    if (FD->hasAttr<ULINoPollingAttr>()) {
+      B.addAttribute(llvm::Attribute::ULINoPolling);
+    }
+  }
+
+  // we check for user_level_interrupt attribute on functions
+  if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
+    if (FD->hasAttr<UserLevelInterruptAttr>()) {
+      B.addAttribute(llvm::Attribute::UserLevelInterrupt);
+    }
+  }
+
+  // we check for no_stacklet_check attribute on functions
+  if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
+    if (FD->hasAttr<NoStackletCheckAttr>()) {
+      B.addAttribute(llvm::Attribute::NoStackletCheck);
+    }
+  }
+
   // Add other optimization related attributes if we are optimizing this
   // function.
   if (!D->hasAttr<OptimizeNoneAttr>()) {

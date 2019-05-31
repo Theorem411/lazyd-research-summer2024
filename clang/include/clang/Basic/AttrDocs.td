@@ -2025,6 +2025,42 @@ Below are some example usages of the likelihood attributes and their effects:
   }                   // Clang elides the comparison and generates an infinite
                       // loop
 
+def ForkableDocs : Documentation {
+  let Category = DocCatFunction;
+  let Heading = "Parallel Ready Sequential Calls";
+  let Content = [{
+Clang supports the GNU style ``__attribute__((forkable))`` attribute on
+functions which can invoked as parallel ready sequential calls.
+  }];
+}
+
+def NoStackletCheckDocs : Documentation {
+  let Category = DocCatFunction;
+  let Heading = "Emit stacklet overflow checks";
+  let Content = [{
+Clang supports the GNU style ``__attribute__((no_stacklet_check))`` attribute on
+functions which disables the generation of stacklet overflow checks for that
+function when the -Xclang -fuli-stacklet-overflow is passed.
+  }];
+}
+
+def ULINoPollingDocs : Documentation {
+  let Category = DocCatFunction;
+  let Heading = "Disable ULI polling (x86)";
+  let Content = [{
+Clang supports the GNU style ``__attribute__((uli_no_polling))`` attribute on
+functions which should not have ULI polling.
+  }];
+}
+
+def ULInterruptDocs  : Documentation {
+  let Category = DocCatFunction;
+  let Heading = "user-level interrupt (x86)";
+  let Content = [{
+Clang supports the GNU style ``__attribute__((user_level_interrupt))`` attribute on
+x86 targets. This attribute may be attached to a function definition and
+instructs the backend to generate appropriate function entry/exit code so that
+it can be used directly as a user-level interrupt service routine.
   }];
 }
 

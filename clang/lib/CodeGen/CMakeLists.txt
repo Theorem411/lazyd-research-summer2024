@@ -25,6 +25,7 @@ set(LLVM_LINK_COMPONENTS
   Support
   Target
   TransformUtils
+  UserLevelInterrupt
   )
 
 add_clang_library(clangCodeGen

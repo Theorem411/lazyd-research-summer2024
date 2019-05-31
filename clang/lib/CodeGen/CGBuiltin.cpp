@@ -1,4 +1,4 @@
-//===---- CGBuiltin.cpp - Emit LLVM Code for builtins ---------------------===//
+////===---- CGBuiltin.cpp - Emit LLVM Code for builtins ---------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -15344,6 +15344,47 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
     Value *Call = Builder.CreateCall(CGM.getIntrinsic(IID), Ops);
     static constexpr int Mask[] = {0, 5, 6, 7};
     return Builder.CreateShuffleVector(Call, Ops[2], Mask);
+  }
+  case X86::BI__builtin_uli_send: { // custom emitting for uli_send intrinsic
+    SmallVector<Value *, 4> arg_vector; // expect 4 arguments
+    Value *proc, *intr, *handle, *tmparg;
+    Value *F = CGM.getIntrinsic(Intrinsic::x86_uli_send);
+
+    proc = EmitScalarExpr(E->getArg(0));
+    intr = EmitScalarExpr(E->getArg(1));
+    handle = EmitScalarExpr(E->getArg(2));
+    arg_vector.push_back(proc);
+    arg_vector.push_back(intr);
+    arg_vector.push_back(handle);
+
+    for (unsigned int i = 3; i < E->getNumArgs(); i++ ) { // 3 is first "variadic" arg, 8 is last since max 6 args
+      tmparg = EmitScalarExpr(E->getArg(i));
+      arg_vector.push_back(tmparg);
+    }
+
+    // we can count these later.
+    // arg_vector.push_back(llvm::ConstantInt::get(Int32Ty,E->getNumArgs())); // store num args
+
+    return Builder.CreateCall(F, arg_vector);
+  }
+
+  case X86::BI__builtin_uli_reply : { // custom emitting for uli_reply intrinsic
+    SmallVector<Value *, 4> arg_vector; // expects 4 arguments
+    Value * handle, *tmparg;
+    Value * F = CGM.getIntrinsic(Intrinsic::x86_uli_reply);
+
+    handle = EmitScalarExpr(E->getArg(0));
+    arg_vector.push_back(handle);
+
+    for (unsigned int i = 1; i< E->getNumArgs(); i++) { // 1 is first variadic arg,
+      tmparg = EmitScalarExpr(E->getArg(i));
+      arg_vector.push_back(tmparg);
+    }
+
+    //arg_vector.push_back(llvm::ConstantInt::get(Int32Ty, E->getNumArgs()-1)); // store num args (don't count handler)
+
+    return Builder.CreateCall(F, arg_vector);
+
   }
   }
 }

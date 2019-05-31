@@ -291,6 +291,15 @@ def err_bad_parameter_name_template_id : Error<
 def ext_parameter_name_omitted_c2x : ExtWarn<
   "omitting the parameter name in a function definition is a C2x extension">,
   InGroup<C2x>;
+def err_parameter_name_omitted : Error<"parameter name omitted">;
+def err_user_level_interrupt_attribute : Error<
+    "'user_level_interrupt' attribute only applies to functions that have a 'void' return type">;
+def err_user_level_interrupt_called : Error<
+  "user-level interrupt service routine cannot be called directly">;
+def err_ulireply_called_not_in_ulihandler : Error<
+   "uli-reply must only be called within a uli handler function">;
+def warn_ulisend_called_in_ulihandler : Warning<
+  "uli-send is called within a ulihandler. Potential deadlock.">;
 def err_anyx86_interrupt_attribute : Error<
   "%select{x86|x86-64}0 'interrupt' attribute only applies to functions that "
   "have %select{a 'void' return type|"

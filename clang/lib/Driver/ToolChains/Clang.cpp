@@ -6721,6 +6721,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-stripmine-loops");
 
   ParseMPreferVectorWidth(D, Args, CmdArgs);
+  if (Args.hasFlag(options::OPT_fuli_fsim, options::OPT_fno_uli_fsim, false))
+    CmdArgs.push_back("-uli-rewrite");
+
+  ParseMPreferVectorWidth(D, Args, CmdArgs);
 
   Args.AddLastArg(CmdArgs, options::OPT_fshow_overloads_EQ);
   Args.AddLastArg(CmdArgs,

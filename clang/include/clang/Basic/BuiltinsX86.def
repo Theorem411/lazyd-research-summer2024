@@ -2114,6 +2114,7 @@ TARGET_HEADER_BUILTIN(__readgsword,  "UsUNi", "nh", "intrin.h", ALL_MS_LANGUAGES
 TARGET_HEADER_BUILTIN(__readgsdword, "UNiUNi", "nh", "intrin.h", ALL_MS_LANGUAGES, "")
 TARGET_HEADER_BUILTIN(__readgsqword, "ULLiUNi", "nh", "intrin.h", ALL_MS_LANGUAGES, "")
 
+
 TARGET_HEADER_BUILTIN(_InterlockedAnd64,         "WiWiD*Wi", "nh", "intrin.h", ALL_MS_LANGUAGES, "")
 TARGET_HEADER_BUILTIN(_InterlockedDecrement64,   "WiWiD*",   "nh", "intrin.h", ALL_MS_LANGUAGES, "")
 TARGET_HEADER_BUILTIN(_InterlockedExchange64,    "WiWiD*Wi", "nh", "intrin.h", ALL_MS_LANGUAGES, "")
@@ -2122,6 +2123,47 @@ TARGET_HEADER_BUILTIN(_InterlockedExchangeSub64, "WiWiD*Wi", "nh", "intrin.h", A
 TARGET_HEADER_BUILTIN(_InterlockedIncrement64,   "WiWiD*",   "nh", "intrin.h", ALL_MS_LANGUAGES, "")
 TARGET_HEADER_BUILTIN(_InterlockedOr64,          "WiWiD*Wi", "nh", "intrin.h", ALL_MS_LANGUAGES, "")
 TARGET_HEADER_BUILTIN(_InterlockedXor64,         "WiWiD*Wi", "nh", "intrin.h", ALL_MS_LANGUAGES, "")
+// The format of this database matches clang/Basic/Builtins.def.
+
+// The send functions: 0 args, 1 arg, varargs
+BUILTIN(__builtin_uli_send, "viiv*.", "")
+BUILTIN(__builtin_uli_send0, "viiv*", "")
+BUILTIN(__builtin_uli_send0c, "vLLiv*", "")
+//BUILTIN(__builtin_uli_send0cN, "vLLiv*i", "")
+
+
+BUILTIN(__builtin_uli_reply, "vv*.", "")
+BUILTIN(__builtin_uli_reply0c, "vv*i", "")
+//BUILTIN(__builtin_uli_reply0cN, "vv*i", "")
+
+
+//BUILTIN(__builtin_uli_fromireg, "ULLiULLi", "") -- old definition
+BUILTIN(__builtin_uli_fromireg, "ULLiUi", "")
+
+BUILTIN(__builtin_uli_toireg, "vUiULLi", "")
+
+BUILTIN(__builtin_uli_getcpu, "Ui", "")
+
+// disable and enable
+BUILTIN(__builtin_uli_disable, "vULLi", "")
+BUILTIN(__builtin_uli_enable, "vULLi", "")
+
+// Chrisma
+// Return integer argument void?
+//BUILTIN(__builtin_uli_read, "iv", "")
+// Return unsigned integer?
+BUILTIN(__builtin_uli_read, "ULLi", "")
+
+BUILTIN(__builtin_uli_set, "vULLi", "")
+
+// read the SP
+BUILTIN(__builtin_read_sp, "ULLi", "")
+
+// return the frame size
+BUILTIN(__builtin_get_frame_size, "ULLi", "")
+
+// return from uli interrup
+BUILTIN(__builtin_uli_retq, "v", "")
 
 #undef BUILTIN
 #undef TARGET_BUILTIN

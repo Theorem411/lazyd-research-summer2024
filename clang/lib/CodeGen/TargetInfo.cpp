@@ -2170,6 +2170,12 @@ void X86_32TargetCodeGenInfo::setTargetAttributes(
       llvm::Function *Fn = cast<llvm::Function>(GV);
       Fn->addFnAttr("stackrealign");
     }
+    if (FD->hasAttr<AnyX86InterruptAttr>() || FD->hasAttr<UserLevelInterruptAttr>()) {
+      llvm::Function *Fn = cast<llvm::Function>(GV);
+      Fn->setCallingConv(FD->hasAttr<AnyX86InterruptAttr>()
+          ? llvm::CallingConv::X86_INTR
+          : llvm::CallingConv::X86_ULI);
+    }
 
     addX86InterruptAttrs(FD, GV, CGM);
   }
@@ -2536,6 +2542,12 @@ public:
         llvm::Function *Fn = cast<llvm::Function>(GV);
         Fn->addFnAttr("stackrealign");
       }
+      if (FD->hasAttr<AnyX86InterruptAttr>()  || FD->hasAttr<UserLevelInterruptAttr>()) {
+        llvm::Function *Fn = cast<llvm::Function>(GV);
+        Fn->setCallingConv(FD->hasAttr<AnyX86InterruptAttr>()
+            ? llvm::CallingConv::X86_INTR
+            : llvm::CallingConv::X86_ULI);
+      }
 
       addX86InterruptAttrs(FD, GV, CGM);
     }
@@ -2746,6 +2758,12 @@ void WinX86_64TargetCodeGenInfo::setTargetAttributes(
     if (FD->hasAttr<X86ForceAlignArgPointerAttr>()) {
       llvm::Function *Fn = cast<llvm::Function>(GV);
       Fn->addFnAttr("stackrealign");
+    }
+    if (FD->hasAttr<AnyX86InterruptAttr>()  || FD->hasAttr<UserLevelInterruptAttr>()) {
+      llvm::Function *Fn = cast<llvm::Function>(GV);
+      Fn->setCallingConv(FD->hasAttr<AnyX86InterruptAttr>()
+          ? llvm::CallingConv::X86_INTR
+          : llvm::CallingConv::X86_ULI);
     }
 
     addX86InterruptAttrs(FD, GV, CGM);

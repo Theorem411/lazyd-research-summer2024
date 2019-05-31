@@ -3774,6 +3774,7 @@ def InternalLinkage : InheritableAttr {
   let Subjects = SubjectList<[Var, Function, CXXRecord]>;
   let Documentation = [InternalLinkageDocs];
 }
+
 def : MutualExclusions<[Common, InternalLinkage]>;
 
 def ExcludeFromExplicitInstantiation : InheritableAttr {
@@ -3971,4 +3972,28 @@ def ReducerUnregister : InheritableAttr {
   let Spellings = [Clang<"reducer_unregister">];
   let Subjects = SubjectList<[FunctionLike]>;
   let Documentation = [StrandMallocDocs];
+
+def NoStackletCheck : InheritableAttr, TargetSpecificAttr<TargetAnyX86> {
+  let Spellings = [GNU<"no_stacklet_check">];
+  let Subjects = SubjectList<[Function]>;
+  let Documentation = [NoStackletCheckDocs];
+}
+
+def UserLevelInterrupt : InheritableAttr, TargetSpecificAttr<TargetAnyX86> {
+  let Spellings = [GNU<"user_level_interrupt">];
+  let Subjects = SubjectList<[Function]>;
+  let Documentation = [ULInterruptDocs];
+}
+
+// mark functions which can be called as a PRSC
+def Forkable : InheritableAttr {
+  let Spellings = [GNU<"forkable">];
+  let Subjects = SubjectList<[Function]>;
+  let Documentation = [ForkableDocs];
+}
+
+def ULINoPolling : InheritableAttr, TargetSpecificAttr<TargetAnyX86> {
+  let Spellings = [GNU<"uli_no_polling">];
+  let Subjects = SubjectList<[Function]>;
+  let Documentation = [ULINoPollingDocs];
 }

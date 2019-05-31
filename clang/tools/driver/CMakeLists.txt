@@ -16,6 +16,7 @@ set( LLVM_LINK_COMPONENTS
   TapirOpts
   TransformUtils
   Vectorize
+  UserLevelInterrupt
   )
 
 # Support plugins.

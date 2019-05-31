@@ -90,6 +90,11 @@
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 #include "llvm/Transforms/Utils/NameAnonGlobals.h"
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
+#include "llvm/Transforms/ULI/ULIPollingInsertion.h"
+#include "llvm/Transforms/ULI/ULIIntrinsicToExternCall.h"
+#include "llvm/Transforms/ULI/SendUli.h"
+#include "llvm/Transforms/ULI/HandleUli.h"
+#include "llvm/Transforms/ULI/HandleInlets.h"
 #include <memory>
 using namespace clang;
 using namespace llvm;
@@ -410,6 +415,24 @@ static void
 addPostInlineEntryExitInstrumentationPass(const PassManagerBuilder &Builder,
                                           legacy::PassManagerBase &PM) {
   PM.add(createPostInlineEntryExitInstrumenterPass());
+}
+
+static void addHandleInletsPass(const PassManagerBuilder &Builder,
+                                   legacy::PassManagerBase &PM) {
+  PM.add(createHandleInletsPass());
+}
+
+static void addEfficiencySanitizerPass(const PassManagerBuilder &Builder,
+                                       legacy::PassManagerBase &PM) {
+  const PassManagerBuilderWrapper &BuilderWrapper =
+      static_cast<const PassManagerBuilderWrapper&>(Builder);
+  const LangOptions &LangOpts = BuilderWrapper.getLangOpts();
+  EfficiencySanitizerOptions Opts;
+  if (LangOpts.Sanitize.has(SanitizerKind::EfficiencyCacheFrag))
+    Opts.ToolType = EfficiencySanitizerOptions::ESAN_CacheFrag;
+  else if (LangOpts.Sanitize.has(SanitizerKind::EfficiencyWorkingSet))
+    Opts.ToolType = EfficiencySanitizerOptions::ESAN_WorkingSet;
+  PM.add(createEfficiencySanitizerPass(Opts));
 }
 
 static void addCilkSanitizerPass(const PassManagerBuilder &Builder,
@@ -800,17 +823,15 @@ static bool initTargetOptions(DiagnosticsEngine &Diags,
   Options.EnableAIXExtendedAltivecABI = CodeGenOpts.EnableAIXExtendedAltivecABI;
   Options.XRayOmitFunctionIndex = CodeGenOpts.XRayOmitFunctionIndex;
   Options.LoopAlignment = CodeGenOpts.LoopAlignment;
-
+  Options.ULIStackletOverflowCheckSize = CodeGenOpts.ULIStackletOverflowCheckSize;
   switch (CodeGenOpts.getSwiftAsyncFramePointer()) {
   case CodeGenOptions::SwiftAsyncFramePointerKind::Auto:
     Options.SwiftAsyncFramePointer =
         SwiftAsyncFramePointerMode::DeploymentBased;
     break;
-
   case CodeGenOptions::SwiftAsyncFramePointerKind::Always:
     Options.SwiftAsyncFramePointer = SwiftAsyncFramePointerMode::Always;
     break;
-
   case CodeGenOptions::SwiftAsyncFramePointerKind::Never:
     Options.SwiftAsyncFramePointer = SwiftAsyncFramePointerMode::Never;
     break;
@@ -1114,6 +1135,21 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   FPM.add(new TargetLibraryInfoWrapperPass(*TLII));
   if (CodeGenOpts.VerifyModule)
     FPM.add(createVerifierPass());
+
+  PMBuilder.addExtension(PassManagerBuilder::EP_EarlyAsPossible,
+      addHandleInletsPass);
+
+  if (CodeGenOpts.EnableULITransform) {
+    MPM.add(createSendUliPass());
+    MPM.add(createHandleUliPass());
+  }
+
+  if (CodeGenOpts.EnableULIRewrite) {
+    PassRegistry &Registry = *PassRegistry::getPassRegistry();
+    initializeAnalysis(Registry);
+    MPM.add(createULIIntrinsicToExternCallPass());
+    MPM.add(createULIPollingInsertionPass());
+  }
 
   // Set up the per-module pass manager.
   if (!CodeGenOpts.RewriteMapFiles.empty())
