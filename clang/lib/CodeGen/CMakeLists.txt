@@ -23,6 +23,7 @@ set(LLVM_LINK_COMPONENTS
   Remarks
   ScalarOpts
   Support
+  TapirOpts
   Target
   TransformUtils
   UserLevelInterrupt
