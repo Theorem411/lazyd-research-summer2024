@@ -1551,6 +1551,24 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     if (TRI->hasStackRealignment(MF) && !IsWin64Prologue)
       NumBytes = alignTo(NumBytes, MaxAlign);
 
+    // Get the offset of the stack slot for the EBP register, which is
+    // guaranteed to be the last slot by processFunctionBeforeFrameFinalized.
+    // Update the frame offset adjustment.
+    if (!IsFunclet)
+      MFI.setOffsetAdjustment(-NumBytes);
+    else
+      assert(MFI.getOffsetAdjustment() == -(int)NumBytes &&
+             "should calculate same local variable offset for funclets");
+
+    // User Level Interrupts can fire at any time. However, according to the
+    // Linux x86 calling convention, interrupts cannot modify the "red-zone" of
+    // 128 bytes below the stack. Therefore, we adjust the stack pointer before
+    // running any of the interrupt code.
+    // This doesn't need to be done on windows, which has no red zone.
+    if (Fn.hasFnAttribute(Attribute::UserLevelInterrupt) && !IsWin64CC)  {
+      emitSPUpdate(MBB, MBBI, -128, false);
+    }
+
     // Save EBP/RBP into the appropriate stack slot.
     BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64r : X86::PUSH32r))
       .addReg(MachineFramePtr, RegState::Kill)
@@ -2279,6 +2297,14 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
       }
       --MBBI;
     }
+  }
+
+  // Undo the user level interrupt frame adjustment to avoid red zone on linux
+  const auto &Fn = MF.getFunction();
+  bool IsWin64CC = STI.isCallingConvWin64(Fn.getCallingConv());
+  if (Fn.hasFnAttribute(Attribute::UserLevelInterrupt) && !IsWin64CC)  {
+    emitSPUpdate(MBB, MBBI, 128, false);
+    --MBBI;
   }
 
   MachineBasicBlock::iterator FirstCSPop = MBBI;
