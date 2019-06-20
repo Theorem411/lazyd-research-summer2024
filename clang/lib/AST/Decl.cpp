@@ -4754,6 +4754,29 @@ const FieldDecl *RecordDecl::findFirstNamedDataMember() const {
   return nullptr;
 }
 
+void FunctionDecl::inletSetCaptures(ASTContext &Context, ArrayRef<VarDecl*> Captures) {
+  // assert(containsInlet());
+  this->NumCaptures = Captures.size();
+
+  if (Captures.empty()) {
+    this->Captures = nullptr;
+    return;
+  }
+
+  this->Captures = Captures.copy(Context).data();
+}
+
+int FunctionDecl::inletCaptureEnvironmentFieldIndex(const VarDecl *variable) const {
+  // assert(isInletSpecified());
+  int i = 0;
+  for (const VarDecl *I : inletCaptures()) {
+    if (I ==  variable)
+      return i;
+    i++;
+  }
+  return -1;
+}
+
 //===----------------------------------------------------------------------===//
 // BlockDecl Implementation
 //===----------------------------------------------------------------------===//

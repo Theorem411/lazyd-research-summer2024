@@ -1826,6 +1826,7 @@ bool Parser::MightBeDeclarator(DeclaratorContext Context) {
   case tok::annot_cxxscope:
   case tok::annot_template_id:
   case tok::caret:
+  case tok::kw_inlet:
   case tok::code_completion:
   case tok::coloncolon:
   case tok::ellipsis:
@@ -2073,6 +2074,19 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
           SkipMalformedDecl();
           return nullptr;
         }
+      }
+    } else {
+      // ULI: allow parsing function within function (for inlets)
+      if (isStartOfFunctionDefinition(D)) {
+        assert(DS.isInletSpecified() && "Nested functions must be inlets");
+        if (DS.getStorageClassSpec() == DeclSpec::SCS_typedef) {
+          Diag(Tok, diag::err_function_declared_typedef);
+          // Recover by treating the 'typedef' as spurious
+          DS.ClearStorageClassSpecs();
+        }
+
+        Decl *TheDecl = ParseFunctionDefinition(D, ParsedTemplateInfo(), &LateParsedAttrs);
+        return Actions.ConvertDeclToDeclGroup(TheDecl);
       }
     }
   }
@@ -3878,6 +3892,12 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
       isInvalid = DS.SetTypeSpecType(DeclSpec::TST_void, Loc, PrevSpec,
                                      DiagID, Policy);
       break;
+    case tok::kw_inlet: {
+      isInvalid = DS.SetTypeSpecType(DeclSpec::TST_void, Loc, PrevSpec,
+                                     DiagID, Policy);
+      isInvalid = isInvalid || DS.setFunctionSpecInlet(Loc, PrevSpec, DiagID);
+      break;
+    }
     case tok::kw_char:
       isInvalid = DS.SetTypeSpecType(DeclSpec::TST_char, Loc, PrevSpec,
                                      DiagID, Policy);
@@ -5015,6 +5035,7 @@ bool Parser::isKnownToBeTypeSpecifier(const Token &Tok) const {
   case tok::kw__Complex:
   case tok::kw__Imaginary:
   case tok::kw_void:
+  case tok::kw_inlet:
   case tok::kw_char:
   case tok::kw_wchar_t:
   case tok::kw_char8_t:
@@ -5271,6 +5292,7 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::kw__Complex:
   case tok::kw__Imaginary:
   case tok::kw_void:
+  case tok::kw_inlet:
   case tok::kw_char:
   case tok::kw_wchar_t:
   case tok::kw_char8_t:

@@ -5426,7 +5426,6 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     Value *ArgPtr = Builder.CreateLoad(SrcAddr, "ap.val");
     return RValue::get(Builder.CreateStore(ArgPtr, DestAddr));
   }
-
   case Builtin::BI__builtin_get_device_side_mangled_name: {
     auto Name = CGM.getCUDARuntime().getDeviceSideName(
         cast<DeclRefExpr>(E->getArg(0)->IgnoreImpCasts())->getDecl());
@@ -5440,6 +5439,12 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
   case Builtin::BI__hyper_lookup: {
     Function *F = CGM.getIntrinsic(Intrinsic::hyper_lookup);
     return RValue::get(Builder.CreateCall(F, {EmitScalarExpr(E->getArg(0))}));
+  }
+  case X86::BI__builtin_inlet_get_env: {
+    assert(InletEnvAlloca.isValid());
+
+    llvm::Value *EnvVoidPtr = Builder.CreateBitCast(InletEnvAlloca.getPointer(), VoidPtrTy, "env");
+    return RValue::get(EnvVoidPtr);
   }
   }
   IsSpawnedScope SpawnedScp(this);

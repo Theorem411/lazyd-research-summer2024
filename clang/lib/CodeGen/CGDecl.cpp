@@ -129,6 +129,15 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
   case Decl::RequiresExprBody:
     // None of these decls require codegen support.
     return;
+  case Decl::Function:  // void X();
+    {
+      // ULI: Emit IR of a function within a function (for inlets)
+      const FunctionDecl *FD = D.getAsFunction();
+      if (!FD) return;
+      GlobalDecl GD(FD);
+      CGM.EmitGlobal(GD);
+      return;
+    }
 
   case Decl::NamespaceAlias:
     if (CGDebugInfo *DI = getDebugInfo())
@@ -2557,6 +2566,22 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
                            : Arg.getDirectValue();
       setBlockContextParameter(IPD, ArgNo, V);
       return;
+    }
+  }
+
+  if (isa<FunctionDecl>(CurCodeDecl) && cast<FunctionDecl>(CurCodeDecl)->isInletSpecified()) {
+    if (ArgNo == 1) {
+      // We are inside of an inlet. Hold onto the first argument (the
+      // environment struct pointer) so we can use it when emitting references
+      // to captured variables.
+
+      const FunctionDecl *FD = cast<FunctionDecl>(CurCodeDecl);
+
+      llvm::Type *Ty = InletGetEnvironmentType(FD->inletContainingFunction());
+      CharUnits EnvAlign = CharUnits::fromQuantity(CGM.getDataLayout().getPrefTypeAlignment(Ty));
+      llvm::Value *Env = Builder.CreatePointerCast(Arg.getDirectValue(), Ty->getPointerTo(), "inlet");
+
+      InletEnvArgValue = Address(Env, EnvAlign);
     }
   }
 

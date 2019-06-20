@@ -19,6 +19,7 @@
 #include "CGOpenMPRuntime.h"
 #include "CodeGenModule.h"
 #include "CodeGenPGO.h"
+#include "ConstantEmitter.h"
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTLambda.h"
@@ -1028,6 +1029,29 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
   AllocaInsertPt = new llvm::BitCastInst(Undef, Int32Ty, "allocapt", EntryBB);
 
   ReturnBlock = getJumpDestInCurrentScope("return");
+
+  if (D) {
+    const FunctionDecl * FD = cast<FunctionDecl>(D);
+
+    FunctionDecl *ContainedInlet = nullptr;
+    for (auto &decl : FD->decls()) {
+      if (isa<FunctionDecl>(decl) && cast<FunctionDecl>(decl)->doesThisDeclarationHaveABody()) {
+        ContainedInlet = cast<FunctionDecl>(decl);
+      }
+    }
+    if (ContainedInlet) {
+      assert(!FD->isInletSpecified());
+      assert(ContainedInlet->isInletSpecified());
+
+      llvm::Type *Ty = InletGetEnvironmentType(FD);
+
+      // TODO: handle/test NRVO?
+
+      CharUnits alignment = CharUnits::fromQuantity(CGM.getDataLayout().getPrefTypeAlignment(Ty));
+
+      InletEnvAlloca = CreateTempAlloca(Ty, alignment, "inlet.env");
+    }
+  }
 
   Builder.SetInsertPoint(EntryBB);
 

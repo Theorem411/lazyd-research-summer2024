@@ -17700,12 +17700,14 @@ static bool isVariableAlreadyCapturedInScopeInfo(CapturingScopeInfo *CSI, VarDec
   return false;
 }
 
-// Only block literals, captured statements, and lambda expressions can
+// Only block literals, captured statements, inlets, and lambda expressions can
 // capture; other scopes don't work.
 static DeclContext *getParentOfCapturingContextOrNull(DeclContext *DC, VarDecl *Var,
                                  SourceLocation Loc,
                                  const bool Diagnose, Sema &S) {
-  if (isa<BlockDecl>(DC) || isa<CapturedDecl>(DC) || isLambdaCallOperator(DC))
+  bool FunctionDeclIsInlet = isa<FunctionDecl>(DC) && cast<FunctionDecl>(DC)->isInletSpecified();
+  if (isa<BlockDecl>(DC) || FunctionDeclIsInlet
+      || isa<CapturedDecl>(DC) || isLambdaCallOperator(DC))
     return getLambdaAwareParentOfDeclContext(DC);
   else if (Var->hasLocalStorage()) {
     if (Diagnose)
@@ -18315,6 +18317,11 @@ bool Sema::tryCaptureVariable(
       Invalid = !captureInCapturedRegion(
           RSI, Var, ExprLoc, BuildAndDiagnose, CaptureType, DeclRefType, Nested,
           Kind, /*IsTopScope*/ I == N - 1, *this, Invalid);
+      Nested = true;
+    } else if (InletScopeInfo *ISI = dyn_cast<InletScopeInfo>(CSI)) {
+      CaptureType = CaptureType.getNonReferenceType();
+      Expr *Cpy = nullptr;
+      ISI->addCapture(Var, /*isBlock=*/false, /*isByref=*/false, Nested, ExprLoc, ExprLoc, CaptureType, Cpy);
       Nested = true;
     } else {
       LambdaScopeInfo *LSI = cast<LambdaScopeInfo>(CSI);

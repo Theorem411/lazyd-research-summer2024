@@ -40,6 +40,7 @@
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/iterator_range.h"
+#include "llvm/IR/Type.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/TrailingObjects.h"
@@ -1901,6 +1902,7 @@ private:
   /// no formals.
   ParmVarDecl **ParamInfo = nullptr;
 
+
   /// The active member of this union is determined by
   /// FunctionDeclBits.HasDefaultedFunctionInfo.
   union {
@@ -1909,6 +1911,14 @@ private:
     /// Information about a future defaulted function definition.
     DefaultedFunctionInfo *DefaultedInfo;
   };
+
+  // Used if this FunctionDecl is an inlet
+  FunctionDecl * ContainingFunction = nullptr;
+
+  // Used if this FunctionDecl contains an inlet
+  const VarDecl * const *Captures = nullptr;
+  unsigned NumCaptures = 0;
+  unsigned IsInlet : 1;
 
   unsigned ODRHash;
 
@@ -2594,6 +2604,36 @@ public:
   /// Determine whether the "inline" keyword was specified for this
   /// function.
   bool isInlineSpecified() const { return FunctionDeclBits.IsInlineSpecified; }
+
+  /// \brief Determine whether the "inlet" keyword was specified for this
+  /// function.
+  bool isInletSpecified() const { return IsInlet; }
+
+  void setInletSpecified(bool I) {
+    IsInlet = I;
+  }
+
+  // Store the FunctionDecl that contains this inlet
+  void inletSetContainingFunction(FunctionDecl *FD) {
+    assert(isInletSpecified());
+    ContainingFunction = FD;
+  }
+
+  // Return the FunctionDecl that contains this inlet
+  FunctionDecl *inletContainingFunction() const {
+    assert(isInletSpecified());
+    assert(ContainingFunction);
+    return ContainingFunction;
+  }
+
+  // Record the variables that the inlets of this function capture
+  void inletSetCaptures(ASTContext &Context, ArrayRef<VarDecl*> Captures);
+  // Get the corresponding index into the environment struct for this variable
+  int inletCaptureEnvironmentFieldIndex(const VarDecl *variable) const;
+
+  ArrayRef<const VarDecl*> inletCaptures() const { 
+    return {Captures, NumCaptures};
+  }
 
   /// Set whether the "inline" keyword was specified for this function.
   void setInlineSpecified(bool I) {

@@ -2056,10 +2056,14 @@ Scope *Sema::getScopeForContext(DeclContext *Ctx) {
 
 /// Enter a new function scope
 void Sema::PushFunctionScope() {
+
   if (FunctionScopes.empty() && CachedFunctionScope) {
     // Use CachedFunctionScope to avoid allocating memory when possible.
     CachedFunctionScope->Clear();
     FunctionScopes.push_back(CachedFunctionScope.release());
+  } else if (FunctionScopes.size() > 1) {
+    InletScopeInfo *ISI = new InletScopeInfo(getDiagnostics());
+    FunctionScopes.push_back(ISI);
   } else {
     FunctionScopes.push_back(new FunctionScopeInfo(getDiagnostics()));
   }

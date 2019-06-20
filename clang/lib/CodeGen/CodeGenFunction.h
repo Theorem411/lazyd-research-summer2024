@@ -2444,6 +2444,14 @@ public:
   };
 
 private:
+  // The following are used when the current function contains a/an inlet(s)
+  // The inlet environment struct allocation
+  Address InletEnvAlloca = Address::invalid();
+
+  // Used when the current function is an inlet
+  // Refers to the implicit first argument to the inlet, the environment struct pointer
+  Address InletEnvArgValue = Address::invalid();
+
   /// CXXThisDecl - When generating code for a C++ member function,
   /// this will hold the implicit 'this' declaration.
   ImplicitParamDecl *CXXABIThisDecl = nullptr;
@@ -4463,6 +4471,9 @@ public:
   LValue EmitCallExprLValue(const CallExpr *E);
   // Note: only available for agg return types
   LValue EmitVAArgExprLValue(const VAArgExpr *E);
+
+  llvm::Type *InletGetEnvironmentType(const FunctionDecl *FunctionContainingInlet);
+
   LValue EmitDeclRefLValue(const DeclRefExpr *E);
   LValue EmitStringLiteralLValue(const StringLiteral *E);
   LValue EmitObjCEncodeExprLValue(const ObjCEncodeExpr *E);

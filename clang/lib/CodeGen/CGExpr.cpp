@@ -2682,6 +2682,19 @@ static bool canEmitSpuriousReferenceToVariable(CodeGenFunction &CGF,
   }
 }
 
+llvm::Type *CodeGenFunction::InletGetEnvironmentType(const FunctionDecl *FunctionContainingInlet) {
+  // assert(FunctionContainingInlet->containsInlet());
+  // Produce the type of the struct
+  SmallVector<llvm::Constant *, 8> Elements;
+  for (const VarDecl * Var : FunctionContainingInlet->inletCaptures()) {
+    ConstantEmitter Emitter(CGM);
+    llvm::Constant *EltInit = Emitter.emitNullForMemory(Var->getType());
+    Elements.push_back(EltInit);
+  }
+  return llvm::ConstantStruct::getTypeForElements(CGM.getLLVMContext(),
+            Elements, /*packed=*/false);
+}
+
 LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
   const NamedDecl *ND = E->getDecl();
   QualType T = E->getType();
@@ -2765,6 +2778,18 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
             CGM.getOpenMPRuntime().isNontemporalDecl(VD))
           CapLVal.setNontemporal(/*Value=*/true);
         return CapLVal;
+      } else if (isa<FunctionDecl>(CurCodeDecl) && cast<FunctionDecl>(CurCodeDecl)->isInletSpecified()) {
+        const FunctionDecl *FD = cast<FunctionDecl>(CurCodeDecl);
+        assert(InletEnvArgValue.isValid() && "InletEnvArgValue must be set");
+
+        VD = VD->getCanonicalDecl();
+        int EnvStructIndex = FD->inletContainingFunction()->inletCaptureEnvironmentFieldIndex(VD);
+
+        if (EnvStructIndex != -1) {
+          Address addr = Builder.CreateStructGEP(InletEnvArgValue, EnvStructIndex,
+              /*offset=*/CharUnits::fromQuantity(0), "inlet.capture.addr");
+          return MakeAddrLValue(addr, T, AlignmentSource::Decl);
+        }
       }
 
       assert(isa<BlockDecl>(CurCodeDecl));
@@ -2790,6 +2815,23 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
     // Check if this is a global variable.
     if (VD->hasLinkage() || VD->isStaticDataMember())
       return EmitGlobalVarDeclLValue(*this, E, VD);
+
+    // Check if this variable was enclosed over by an inlet
+    if (InletEnvAlloca.isValid()) {
+      const FunctionDecl *FD = cast<FunctionDecl>(CurCodeDecl);
+
+      VD = VD->getCanonicalDecl();
+
+      // Get the correct field of the environment struct
+      int EnvStructIndex = FD->inletCaptureEnvironmentFieldIndex(VD);
+      
+      if (EnvStructIndex != -1) {
+        Address addr = Builder.CreateStructGEP(InletEnvAlloca, EnvStructIndex, /*offset=*/CharUnits::fromQuantity(0), "inlet.localaccess.addr");
+
+        return MakeAddrLValue(addr, T, AlignmentSource::Decl);
+      }
+
+    }
 
     Address addr = Address::invalid();
 

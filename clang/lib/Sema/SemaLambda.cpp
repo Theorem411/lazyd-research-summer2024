@@ -1649,6 +1649,8 @@ mapImplicitCaptureStyle(CapturingScopeInfo::ImplicitCaptureStyle ICS) {
     return LCD_ByRef;
   case CapturingScopeInfo::ImpCap_Block:
     llvm_unreachable("block capture in lambda");
+  case CapturingScopeInfo::ImpCap_Inlet:
+    llvm_unreachable("inlet capture in lambda");
   }
   llvm_unreachable("Unknown implicit capture style");
 }

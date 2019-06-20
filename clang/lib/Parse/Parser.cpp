@@ -1280,6 +1280,7 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
   // Enter a scope for the function body.
   ParseScope BodyScope(this, Scope::FnScope | Scope::DeclScope |
                                  Scope::CompoundStmtScope);
+  bool isInlet =  D.getDeclSpec().isInletSpecified();
 
   // Tell the actions module that we have entered a function definition with the
   // specified Declarator for the function.
@@ -1288,7 +1289,7 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
                                               TemplateInfo.TemplateParams
                                                   ? *TemplateInfo.TemplateParams
                                                   : MultiTemplateParamsArg(),
-                                              &SkipBody);
+                                              &SkipBody, isInlet);
 
   if (SkipBody.ShouldSkip) {
     SkipFunctionBody();

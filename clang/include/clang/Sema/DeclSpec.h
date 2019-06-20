@@ -346,6 +346,7 @@ private:
   unsigned TypeQualifiers : 5;  // Bitwise OR of TQ.
 
   // function-specifier
+  unsigned FS_inlet_specified : 1;
   unsigned FS_inline_specified : 1;
   unsigned FS_forceinline_specified: 1;
   unsigned FS_virtual_specified : 1;
@@ -388,7 +389,8 @@ private:
   SourceRange TypeofParensRange;
   SourceLocation TQ_constLoc, TQ_restrictLoc, TQ_volatileLoc, TQ_atomicLoc,
       TQ_unalignedLoc;
-  SourceLocation FS_inlineLoc, FS_virtualLoc, FS_explicitLoc, FS_noreturnLoc;
+
+  SourceLocation FS_inlineLoc, FS_virtualLoc, FS_explicitLoc, FS_noreturnLoc, FS_inletLoc;
   SourceLocation FS_explicitCloseParenLoc;
   SourceLocation FS_forceinlineLoc;
   SourceLocation FriendLoc, ModulePrivateLoc, ConstexprLoc;
@@ -564,6 +566,9 @@ public:
   }
 
   // function-specifier
+  bool isInletSpecified() const {
+    return FS_inlet_specified;
+  }
   bool isInlineSpecified() const {
     return FS_inline_specified | FS_forceinline_specified;
   }
@@ -726,6 +731,8 @@ public:
   bool SetTypeQual(TQ T, SourceLocation Loc, const char *&PrevSpec,
                    unsigned &DiagID, const LangOptions &Lang);
 
+  bool setFunctionSpecInlet(SourceLocation Loc, const char *&PrevSpec,
+                             unsigned &DiagID);
   bool setFunctionSpecInline(SourceLocation Loc, const char *&PrevSpec,
                              unsigned &DiagID);
   bool setFunctionSpecForceInline(SourceLocation Loc, const char *&PrevSpec,

@@ -100,7 +100,8 @@ protected:
     SK_Function,
     SK_Block,
     SK_Lambda,
-    SK_CapturedRegion
+    SK_CapturedRegion,
+    SK_Inlet
   };
 
 public:
@@ -664,7 +665,7 @@ protected:
 public:
   enum ImplicitCaptureStyle {
     ImpCap_None, ImpCap_LambdaByval, ImpCap_LambdaByref, ImpCap_Block,
-    ImpCap_CapturedRegion
+    ImpCap_CapturedRegion, ImpCap_Inlet
   };
 
   ImplicitCaptureStyle ImpCaptureStyle;
@@ -740,7 +741,8 @@ public:
 
   static bool classof(const FunctionScopeInfo *FSI) {
     return FSI->Kind == SK_Block || FSI->Kind == SK_Lambda
-                                 || FSI->Kind == SK_CapturedRegion;
+                                 || FSI->Kind == SK_CapturedRegion
+                                 || FSI->Kind == SK_Inlet;
   }
 };
 
@@ -767,6 +769,31 @@ public:
 
   static bool classof(const FunctionScopeInfo *FSI) {
     return FSI->Kind == SK_Block;
+  }
+};
+
+/// \brief Retains information about an inlet that is currently being parsed.
+// TODO: do we even need this class? Or can we just use CapturingScopeInfo itself?
+class InletScopeInfo final : public CapturingScopeInfo {
+public:
+  /// TheScope - This is the scope for the block itself, which contains
+  /// arguments etc.
+  // Scope *TheScope;
+
+  /// BlockType - The function type of the block, if one was given.
+  /// Its return type may be BuiltinType::Dependent.
+  QualType FunctionType;
+
+  InletScopeInfo(DiagnosticsEngine &Diag)
+    : CapturingScopeInfo(Diag, ImpCap_Inlet)
+  {
+    Kind = SK_Inlet;
+  }
+
+  ~InletScopeInfo() override;
+
+  static bool classof(const FunctionScopeInfo *FSI) { 
+    return FSI->Kind == SK_Inlet; 
   }
 };
 

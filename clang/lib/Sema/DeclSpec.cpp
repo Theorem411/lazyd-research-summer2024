@@ -985,6 +985,14 @@ bool DeclSpec::SetTypeQual(TQ T, SourceLocation Loc) {
   llvm_unreachable("Unknown type qualifier!");
 }
 
+bool DeclSpec::setFunctionSpecInlet(SourceLocation Loc, const char *&PrevSpec,
+                                     unsigned &DiagID) {
+  assert(!FS_inlet_specified && "`inlet` specified multipled times?");
+  FS_inlet_specified = true;
+  FS_inletLoc = Loc;
+  return false;
+}
+
 bool DeclSpec::setFunctionSpecInline(SourceLocation Loc, const char *&PrevSpec,
                                      unsigned &DiagID) {
   // 'inline inline' is ok.  However, since this is likely not what the user

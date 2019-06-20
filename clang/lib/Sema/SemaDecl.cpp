@@ -8655,6 +8655,22 @@ static FunctionDecl *CreateNewFunctionDecl(Sema &SemaRef, Declarator &D,
         SemaRef.getCurFPFeatures().isFPConstrained(), isInline, HasPrototype,
         ConstexprSpecKind::Unspecified,
         /*TrailingRequiresClause=*/nullptr);
+
+    bool isInlet = D.getDeclSpec().isInletSpecified();
+    NewFD->setInletSpecified(isInlet);
+    if (isInlet) {
+      ASTContext &Context = SemaRef.getASTContext();
+      QualType EnvTy = Context.VoidPtrTy;
+
+      // Modify type to have void* as first argument
+      const FunctionProtoType *Proto = NewFD->getType()->getAs<FunctionProtoType>();
+      assert(Proto && "TODO: support FunctionNoProtoType");
+      ArrayRef<QualType> ParamTypes = Proto->getParamTypes();
+      SmallVector<QualType, 8> NewParamTypes(ParamTypes.begin(), ParamTypes.end());
+      NewParamTypes.insert(NewParamTypes.begin(), EnvTy);
+
+      NewFD->setType(Context.getFunctionType(Proto->getReturnType(), NewParamTypes, Proto->getExtProtoInfo()));
+    }
     if (D.isInvalidType())
       NewFD->setInvalidDecl();
 
@@ -9148,7 +9164,10 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   bool isVirtualOkay = false;
 
   DeclContext *OriginalDC = DC;
-  bool IsLocalExternDecl = adjustContextForLocalExternDecl(DC);
+  bool IsLocalExternDecl = false;
+  // Do not adjust context for inlets so captures are not looked up in parent scope
+  if (!D.getDeclSpec().isInletSpecified())
+    IsLocalExternDecl = adjustContextForLocalExternDecl(DC);
 
   FunctionDecl *NewFD = CreateNewFunctionDecl(*this, D, DC, R, TInfo, SC,
                                               isVirtualOkay);
@@ -9529,6 +9548,16 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   unsigned FTIIdx;
   if (D.isFunctionDeclarator(FTIIdx)) {
     DeclaratorChunk::FunctionTypeInfo &FTI = D.getTypeObject(FTIIdx).Fun;
+    if (D.getDeclSpec().isInletSpecified()) {
+      // Add implicit void * environment argument
+      QualType EnvTy = Context.VoidPtrTy;
+
+      ParmVarDecl *Env = ParmVarDecl::Create(Context, DC, 
+          SourceLocation(), SourceLocation(), /*Id=*/nullptr, EnvTy,
+          /*TInfo=*/nullptr, SC_None, /*DefArg=*/nullptr);
+      Env->setImplicit();
+      Params.push_back(Env);
+    }
 
     // Check for C99 6.7.5.3p10 - foo(void) is a non-varargs
     // function that takes no arguments, not a function that takes a
@@ -14168,8 +14197,9 @@ void Sema::ActOnFinishKNRParamDeclarations(Scope *S, Declarator &D,
 Decl *
 Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Declarator &D,
                               MultiTemplateParamsArg TemplateParameterLists,
-                              SkipBodyInfo *SkipBody) {
-  assert(getCurFunctionDecl() == nullptr && "Function parsing confused");
+                              SkipBodyInfo *SkipBody, bool isInlet) {
+  // ULI: remove assert to allow parsing nested functions
+  // assert((getCurFunctionDecl() == nullptr) && "Function parsing confused");
   assert(D.isFunctionDeclarator() && "Not a function declarator!");
   Scope *ParentScope = FnBodyScope->getParent();
 
@@ -14361,7 +14391,7 @@ static void RebuildLambdaScopeInfo(CXXMethodDecl *CallOperator,
 }
 
 Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D,
-                                    SkipBodyInfo *SkipBody) {
+                                    SkipBodyInfo *SkipBody, bool isInlet) {
   if (!D) {
     // Parsing the function declaration failed in some way. Push on a fake scope
     // anyway so we can try to parse the function body.
@@ -14377,12 +14407,19 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D,
   else
     FD = cast<FunctionDecl>(D);
 
+
   // Do not push if it is a lambda because one is already pushed when building
   // the lambda in ActOnStartOfLambdaDefinition().
   if (!isLambdaCallOperator(FD))
     PushExpressionEvaluationContext(
         FD->isConsteval() ? ExpressionEvaluationContext::ConstantEvaluated
                           : ExprEvalContexts.back().Context);
+
+  if (FD->isInletSpecified()) {
+    // getCurFunctionDecl() refers to the containing function since it is the
+    // function that we are currently inside of while parsing this inlet
+    FD->inletSetContainingFunction(getCurFunctionDecl());
+  }
 
   // Check for defining attributes before the check for redefinition.
   if (const auto *Attr = FD->getAttr<AliasAttr>()) {
@@ -15000,6 +15037,19 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
 
   if (!IsInstantiation)
     PopDeclContext();
+
+  if (FD->isInletSpecified()) {
+    assert(isa<InletScopeInfo>(FunctionScopes.back()));
+    InletScopeInfo *ISI = cast<InletScopeInfo>(FunctionScopes.back());
+
+    // Move the captures from the InletScopeInfo to the inlet's FunctionDecl
+    SmallVector<VarDecl*, 4> Captures;
+    for (CapturingScopeInfo::Capture Cap : ISI->Captures) {
+      assert(!Cap.isThisCapture() && "Inlets don't support capturing `this`");
+      Captures.push_back(Cap.getVariable());
+    }
+    FD->inletContainingFunction()->inletSetCaptures(Context, Captures);
+  }
 
   PopFunctionScopeInfo(ActivePolicy, dcl);
   // If any errors have occurred, clear out any temporaries that may have

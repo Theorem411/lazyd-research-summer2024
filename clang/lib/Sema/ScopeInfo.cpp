@@ -248,4 +248,5 @@ void LambdaScopeInfo::visitPotentialCaptures(
 
 FunctionScopeInfo::~FunctionScopeInfo() { }
 BlockScopeInfo::~BlockScopeInfo() { }
+InletScopeInfo::~InletScopeInfo() { }
 CapturedRegionScopeInfo::~CapturedRegionScopeInfo() { }
