@@ -2686,7 +2686,7 @@ llvm::Type *CodeGenFunction::InletGetEnvironmentType(const FunctionDecl *Functio
   // assert(FunctionContainingInlet->containsInlet());
   // Produce the type of the struct
   SmallVector<llvm::Constant *, 8> Elements;
-  for (const VarDecl * Var : FunctionContainingInlet->inletCaptures()) {
+  for (const VarDecl * Var : FunctionContainingInlet->Captures) {
     ConstantEmitter Emitter(CGM);
     llvm::Constant *EltInit = Emitter.emitNullForMemory(Var->getType());
     Elements.push_back(EltInit);

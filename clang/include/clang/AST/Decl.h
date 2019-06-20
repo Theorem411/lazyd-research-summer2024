@@ -39,6 +39,7 @@
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/Casting.h"
@@ -1915,9 +1916,9 @@ private:
   // Used if this FunctionDecl is an inlet
   FunctionDecl * ContainingFunction = nullptr;
 
+public:
   // Used if this FunctionDecl contains an inlet
-  const VarDecl * const *Captures = nullptr;
-  unsigned NumCaptures = 0;
+  llvm::SmallSet<const VarDecl *, 8> Captures;
   unsigned IsInlet : 1;
 
   unsigned ODRHash;
@@ -2627,13 +2628,9 @@ public:
   }
 
   // Record the variables that the inlets of this function capture
-  void inletSetCaptures(ASTContext &Context, ArrayRef<VarDecl*> Captures);
+  void inletAddCaptures(ASTContext &Context, ArrayRef<VarDecl*> Captures);
   // Get the corresponding index into the environment struct for this variable
   int inletCaptureEnvironmentFieldIndex(const VarDecl *variable) const;
-
-  ArrayRef<const VarDecl*> inletCaptures() const { 
-    return {Captures, NumCaptures};
-  }
 
   /// Set whether the "inline" keyword was specified for this function.
   void setInlineSpecified(bool I) {

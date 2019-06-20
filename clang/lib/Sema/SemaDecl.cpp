@@ -15048,7 +15048,7 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
       assert(!Cap.isThisCapture() && "Inlets don't support capturing `this`");
       Captures.push_back(Cap.getVariable());
     }
-    FD->inletContainingFunction()->inletSetCaptures(Context, Captures);
+    FD->inletContainingFunction()->inletAddCaptures(Context, Captures);
   }
 
   PopFunctionScopeInfo(ActivePolicy, dcl);
