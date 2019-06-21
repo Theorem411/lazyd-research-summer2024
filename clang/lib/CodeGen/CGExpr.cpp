@@ -2817,6 +2817,7 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
       return EmitGlobalVarDeclLValue(*this, E, VD);
 
     // Check if this variable was enclosed over by an inlet
+    // when we are in the enclosing function of an inlet
     if (InletEnvAlloca.isValid()) {
       const FunctionDecl *FD = cast<FunctionDecl>(CurCodeDecl);
 
