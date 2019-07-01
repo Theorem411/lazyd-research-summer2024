@@ -2686,7 +2686,7 @@ llvm::Type *CodeGenFunction::InletGetEnvironmentType(const FunctionDecl *Functio
   // assert(FunctionContainingInlet->containsInlet());
   // Produce the type of the struct
   SmallVector<llvm::Constant *, 8> Elements;
-  for (const VarDecl * Var : FunctionContainingInlet->Captures) {
+  for (const VarDecl * Var : FunctionContainingInlet->InletCaptures) {
     ConstantEmitter Emitter(CGM);
     llvm::Constant *EltInit = Emitter.emitNullForMemory(Var->getType());
     Elements.push_back(EltInit);
@@ -2779,6 +2779,7 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
           CapLVal.setNontemporal(/*Value=*/true);
         return CapLVal;
       } else if (isa<FunctionDecl>(CurCodeDecl) && cast<FunctionDecl>(CurCodeDecl)->isInletSpecified()) {
+        // We are in an inlet
         const FunctionDecl *FD = cast<FunctionDecl>(CurCodeDecl);
         assert(InletEnvArgValue.isValid() && "InletEnvArgValue must be set");
 

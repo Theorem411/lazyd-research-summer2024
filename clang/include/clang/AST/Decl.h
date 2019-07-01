@@ -1919,7 +1919,7 @@ private:
 public:
   // Used if this FunctionDecl contains an inlet
   // All variables that are captured by inlets contained in this function
-  llvm::SmallSet<const VarDecl *, 8> Captures;
+  llvm::SmallSet<const VarDecl *, 8> InletCaptures;
   unsigned IsInlet : 1;
 
   unsigned ODRHash;

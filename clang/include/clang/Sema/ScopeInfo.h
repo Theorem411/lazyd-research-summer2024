@@ -773,17 +773,8 @@ public:
 };
 
 /// \brief Retains information about an inlet that is currently being parsed.
-// TODO: do we even need this class? Or can we just use CapturingScopeInfo itself?
 class InletScopeInfo final : public CapturingScopeInfo {
 public:
-  /// TheScope - This is the scope for the block itself, which contains
-  /// arguments etc.
-  // Scope *TheScope;
-
-  /// BlockType - The function type of the block, if one was given.
-  /// Its return type may be BuiltinType::Dependent.
-  QualType FunctionType;
-
   InletScopeInfo(DiagnosticsEngine &Diag)
     : CapturingScopeInfo(Diag, ImpCap_Inlet)
   {

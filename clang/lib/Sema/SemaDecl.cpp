@@ -8664,7 +8664,7 @@ static FunctionDecl *CreateNewFunctionDecl(Sema &SemaRef, Declarator &D,
 
       // Modify type to have void* as first argument
       const FunctionProtoType *Proto = NewFD->getType()->getAs<FunctionProtoType>();
-      assert(Proto && "TODO: support FunctionNoProtoType");
+      assert(Proto && "If you want no arguments, put `inlet f(void) { ... }`");
       ArrayRef<QualType> ParamTypes = Proto->getParamTypes();
       SmallVector<QualType, 8> NewParamTypes(ParamTypes.begin(), ParamTypes.end());
       NewParamTypes.insert(NewParamTypes.begin(), EnvTy);
@@ -15046,6 +15046,8 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
     SmallVector<VarDecl*, 4> Captures;
     for (CapturingScopeInfo::Capture Cap : ISI->Captures) {
       assert(!Cap.isThisCapture() && "Inlets don't support capturing `this`");
+      assert(!isa<ParmVarDecl>(Cap.getVariable()) && "Inlets cannot capture arguments yet");
+      assert(!Cap.getVariable()->getAnyInitializer() && "Inlets cannot capture declarations with initializers yet. Write `int foo; foo = ...;` instead.");
       Captures.push_back(Cap.getVariable());
     }
     FD->inletContainingFunction()->inletAddCaptures(Context, Captures);
