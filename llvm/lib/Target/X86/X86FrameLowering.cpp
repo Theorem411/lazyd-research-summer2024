@@ -1535,6 +1535,15 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     MBB.addLiveIn(Establisher);
   }
 
+  // User Level Interrupts can fire at any time. However, according to the
+  // Linux x86 calling convention, interrupts cannot modify the "red-zone" of
+  // 128 bytes below the stack. Therefore, we adjust the stack pointer before
+  // running any of the interrupt code.
+  // This doesn't need to be done on windows, which has no red zone.
+  if (Fn.hasFnAttribute(Attribute::UserLevelInterrupt) && !IsWin64CC)  {
+    emitSPUpdate(MBB, MBBI, -128, false);
+  }
+
   if (HasFP) {
     assert(MF.getRegInfo().isReserved(MachineFramePtr) && "FP reserved");
 
@@ -1559,15 +1568,6 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     else
       assert(MFI.getOffsetAdjustment() == -(int)NumBytes &&
              "should calculate same local variable offset for funclets");
-
-    // User Level Interrupts can fire at any time. However, according to the
-    // Linux x86 calling convention, interrupts cannot modify the "red-zone" of
-    // 128 bytes below the stack. Therefore, we adjust the stack pointer before
-    // running any of the interrupt code.
-    // This doesn't need to be done on windows, which has no red zone.
-    if (Fn.hasFnAttribute(Attribute::UserLevelInterrupt) && !IsWin64CC)  {
-      emitSPUpdate(MBB, MBBI, -128, false);
-    }
 
     // Save EBP/RBP into the appropriate stack slot.
     BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64r : X86::PUSH32r))
