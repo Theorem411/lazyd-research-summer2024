@@ -8658,19 +8658,42 @@ static FunctionDecl *CreateNewFunctionDecl(Sema &SemaRef, Declarator &D,
 
     bool isInlet = D.getDeclSpec().isInletSpecified();
     NewFD->setInletSpecified(isInlet);
-    if (isInlet) {
+
+    // :CutNPaste ULI
+    bool isUserLevelInterrupt = false;
+    AttributeList *AttrListIt = D.getDeclSpec().getAttributes().getList();
+    while (AttrListIt) {
+      if (AttrListIt->getKind() == AttributeList::Kind::AT_UserLevelInterrupt) {
+        isUserLevelInterrupt = true;
+        break;
+      }
+      AttrListIt = AttrListIt->getNext();
+    }
+
+    if (isInlet || isUserLevelInterrupt) {
       ASTContext &Context = SemaRef.getASTContext();
-      QualType EnvTy = Context.VoidPtrTy;
 
       // Modify type to have void* as first argument
       const FunctionProtoType *Proto = NewFD->getType()->getAs<FunctionProtoType>();
       assert(Proto && "If you want no arguments, put `inlet f(void) { ... }`");
       ArrayRef<QualType> ParamTypes = Proto->getParamTypes();
       SmallVector<QualType, 8> NewParamTypes(ParamTypes.begin(), ParamTypes.end());
-      NewParamTypes.insert(NewParamTypes.begin(), EnvTy);
+
+      if (isInlet) {
+        QualType EnvTy = Context.VoidPtrTy;
+        NewParamTypes.insert(NewParamTypes.begin(), EnvTy);
+      }
+
+      // UserLevelInterrupt implicit argument `int from` goes before inlet environment arg
+      if (isUserLevelInterrupt) {
+        llvm::errs() << "We added the `int from` to " << Name << "\n";
+        QualType FromProcessorTy = Context.UnsignedIntTy;
+        NewParamTypes.insert(NewParamTypes.begin(), FromProcessorTy);
+      }
 
       NewFD->setType(Context.getFunctionType(Proto->getReturnType(), NewParamTypes, Proto->getExtProtoInfo()));
     }
+
     if (D.isInvalidType())
       NewFD->setInvalidDecl();
 
@@ -9548,6 +9571,29 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   unsigned FTIIdx;
   if (D.isFunctionDeclarator(FTIIdx)) {
     DeclaratorChunk::FunctionTypeInfo &FTI = D.getTypeObject(FTIIdx).Fun;
+
+    // :CutNPaste ULI
+    bool isUserLevelInterrupt = false;
+    AttributeList *AttrListIt = D.getDeclSpec().getAttributes().getList();
+    while (AttrListIt) {
+      if (AttrListIt->getKind() == AttributeList::Kind::AT_UserLevelInterrupt) {
+        isUserLevelInterrupt = true;
+        break;
+      }
+      AttrListIt = AttrListIt->getNext();
+    }
+
+    if (isUserLevelInterrupt) {
+      // Add implicit void * environment argument
+      QualType EnvTy = Context.UnsignedIntTy;
+
+      ParmVarDecl *ProcessorFrom = ParmVarDecl::Create(Context, DC, 
+          SourceLocation(), SourceLocation(), /*Id=*/nullptr, EnvTy,
+          /*TInfo=*/nullptr, SC_None, /*DefArg=*/nullptr);
+      ProcessorFrom->setImplicit();
+      Params.push_back(ProcessorFrom);
+    }
+
     if (D.getDeclSpec().isInletSpecified()) {
       // Add implicit void * environment argument
       QualType EnvTy = Context.VoidPtrTy;

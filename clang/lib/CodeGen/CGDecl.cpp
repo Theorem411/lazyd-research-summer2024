@@ -2570,12 +2570,20 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
   }
 
   if (isa<FunctionDecl>(CurCodeDecl) && cast<FunctionDecl>(CurCodeDecl)->isInletSpecified()) {
-    if (ArgNo == 1) {
-      // We are inside of an inlet. Hold onto the first argument (the
-      // environment struct pointer) so we can use it when emitting references
-      // to captured variables.
 
-      const FunctionDecl *FD = cast<FunctionDecl>(CurCodeDecl);
+    // We are inside of an inlet. Hold onto the first argument (the
+    // environment struct pointer) so we can use it when emitting references
+    // to captured variables.
+    // If the inlet is also a ULI, take the second argument instead (first arg
+    // is the processor id the message is coming from)
+    const FunctionDecl *FD = cast<FunctionDecl>(CurCodeDecl);
+
+    bool isUserLevelInterrupt = llvm::any_of(FD->attrs(), 
+        [](Attr *attr) { return attr->getKind() == attr::UserLevelInterrupt; }
+        );
+
+    unsigned EnvArgNo = isUserLevelInterrupt ? 2 : 1;
+    if (ArgNo == EnvArgNo) {
 
       llvm::Type *Ty = InletGetEnvironmentType(FD->inletContainingFunction());
       CharUnits EnvAlign = CharUnits::fromQuantity(CGM.getDataLayout().getPrefTypeAlignment(Ty));
