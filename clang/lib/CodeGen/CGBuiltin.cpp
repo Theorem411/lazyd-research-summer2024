@@ -5446,6 +5446,13 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     llvm::Value *EnvVoidPtr = Builder.CreateBitCast(InletEnvAlloca.getPointer(), VoidPtrTy, "env");
     return RValue::get(EnvVoidPtr);
   }
+  case X86::BI__builtin_uli_message_from: {
+    assert(!CurFn->arg_empty());
+
+    llvm::Value *FirstArg = CurFn->arg_begin();
+
+    return RValue::get(FirstArg);
+  }
   }
   IsSpawnedScope SpawnedScp(this);
 
