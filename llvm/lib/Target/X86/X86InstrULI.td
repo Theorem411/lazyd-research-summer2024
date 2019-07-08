@@ -81,6 +81,34 @@ def ULIWR : I <0x17, MRM2r, (outs), (ins GR64:$src0),
                  [(int_x86_uli_set GR64:$src0)],
                  IIC_ALU_NONMEM>, OpSize32, Requires<[In64BitMode]>;
 
+// Set/Clear Atomic ULI
+def ULIATOMIC : I <0x9A, MRM2r, (outs), (ins GR64:$src0),
+                                "uliatomic\t{$src0}",
+                [(int_x86_uli_atomic GR64:$src0)],
+                 IIC_ALU_NONMEM>, OpSize32, Requires<[In64BitMode]>;
+
+// Pop the ULI special register
+def POPULIRDI : I<0xC5, MRM_D8, (outs), (ins),
+                           "populirdi\t", [], IIC_ALU_NONMEM>, OpSize16, Requires<[In64BitMode]>;
+
+def POPULIFLAGS : I<0xC5, MRM_D9, (outs), (ins),
+                           "populiflags\t", [], IIC_ALU_NONMEM>, OpSize16, Requires<[In64BitMode]>;
+
+def POPULINEXTPC : I<0xC5, MRM_DA, (outs), (ins),
+                           "populinextpc\t", [], IIC_ALU_NONMEM>, OpSize16, Requires<[In64BitMode]>;
+
+// Push the ULI special register
+//let isCodeGenOnly = 1, ForceDisassemble = 1, hasSideEffects = 0 in {
+def PUSHULIRDI : I<0xC5, MRM_C8, (outs), (ins),
+                           "pushulirdi\t", [], IIC_ALU_NONMEM>, OpSize16, Requires<[In64BitMode]>;
+
+def PUSHULIFLAGS : I<0xC5, MRM_C9, (outs), (ins),
+                           "pushuliflags\t", [], IIC_ALU_NONMEM>, OpSize16, Requires<[In64BitMode]>;
+
+def PUSHULINEXTPC : I<0xC5, MRM_CA, (outs), (ins),
+                           "pushulinextpc\t", [], IIC_ALU_NONMEM>, OpSize16, Requires<[In64BitMode]>;
+//}
+
 //===----------------------------------------------------------------------===//
 // Help stuff for stacklets
 

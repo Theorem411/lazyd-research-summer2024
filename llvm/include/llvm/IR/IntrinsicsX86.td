@@ -5917,6 +5917,9 @@ let TargetPrefix = "x86" in {
   // Uli return builtin
   def int_x86_uli_retq : GCCBuiltin<"__builtin_uli_retq">,
     Intrinsic<[], [], []>;
+    
+  def int_x86_uli_atomic : GCCBuiltin<"__builtin_uli_atomic">,
+    Intrinsic<[], [llvm_i64_ty], []>;  
 }
 
 //===----------------------------------------------------------------------===//
