@@ -5448,6 +5448,13 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
   }
   case X86::BI__builtin_uli_message_from: {
     assert(!CurFn->arg_empty());
+    if (!CurFuncDecl->hasAttr<UserLevelInterruptAttr>()) {
+      auto &SM = getContext().getSourceManager();
+      llvm::errs() << "Trying to call __builtin_uli_message_from() in non-userlevelinterrupt '" << CurFn->getName() << "' ";
+      CurFuncDecl->getLocation().dump(SM);
+      llvm::errs() << "\n";
+    }
+    assert(CurFuncDecl->hasAttr<UserLevelInterruptAttr>());
 
     llvm::Value *FirstArg = CurFn->arg_begin();
 
