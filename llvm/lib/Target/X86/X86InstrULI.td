@@ -98,7 +98,6 @@ def POPULINEXTPC : I<0xC5, MRM_DA, (outs), (ins),
                            "populinextpc\t", [], IIC_ALU_NONMEM>, OpSize16, Requires<[In64BitMode]>;
 
 // Push the ULI special register
-//let isCodeGenOnly = 1, ForceDisassemble = 1, hasSideEffects = 0 in {
 def PUSHULIRDI : I<0xC5, MRM_C8, (outs), (ins),
                            "pushulirdi\t", [], IIC_ALU_NONMEM>, OpSize16, Requires<[In64BitMode]>;
 
@@ -107,7 +106,40 @@ def PUSHULIFLAGS : I<0xC5, MRM_C9, (outs), (ins),
 
 def PUSHULINEXTPC : I<0xC5, MRM_CA, (outs), (ins),
                            "pushulinextpc\t", [], IIC_ALU_NONMEM>, OpSize16, Requires<[In64BitMode]>;
-//}
+
+// Read ULI special register
+def ULIRDRDI : I<0x3E, MRM2r, (outs GR64:$reg), (ins),
+                           "ulirdrdi\t{$reg}",
+                   [(set GR64:$reg, (int_x86_uli_rdrdi))],
+                   IIC_ALU_NONMEM>, OpSize32, Requires<[In64BitMode]>;
+
+def ULIRDFLAGS : I<0x36, MRM2r, (outs GR64:$reg), (ins),
+                           "ulirdflags\t{$reg}",
+                   [(set GR64:$reg, (int_x86_uli_rdflags))],
+                   IIC_ALU_NONMEM>, OpSize32, Requires<[In64BitMode]>;
+
+def ULIRDRETADDR : I<0x26, MRM2r, (outs GR64:$reg), (ins),
+                           "ulirdRA\t{$reg}",
+                   [(set GR64:$reg, (int_x86_uli_rdRA))],
+                   IIC_ALU_NONMEM>, OpSize32, Requires<[In64BitMode]>;
+
+// Write ULI special register
+def ULIWRRDI : I <0x3F, MRM2r, (outs), (ins GR64:$src0),
+                               "uliwrrdi\t{$src0}",
+                 [(int_x86_uli_wrrdi GR64:$src0)],
+                 IIC_ALU_NONMEM>, OpSize32, Requires<[In64BitMode]>;
+
+def ULIWRFLAGS : I <0x37, MRM2r, (outs), (ins GR64:$src0),
+                               "uliwrflags\t{$src0}",
+                 [(int_x86_uli_wrflags GR64:$src0)],
+                 IIC_ALU_NONMEM>, OpSize32, Requires<[In64BitMode]>;
+
+
+def ULIWRRETADDR : I <0x2F, MRM2r, (outs), (ins GR64:$src0),
+                               "uliwrRA\t{$src0}",
+                 [(int_x86_uli_wrRA GR64:$src0)],
+                 IIC_ALU_NONMEM>, OpSize32, Requires<[In64BitMode]>;
+
 
 //===----------------------------------------------------------------------===//
 // Help stuff for stacklets

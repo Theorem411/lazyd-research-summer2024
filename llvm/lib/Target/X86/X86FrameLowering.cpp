@@ -1572,15 +1572,8 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     // Save EBP/RBP into the appropriate stack slot.
     BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64r : X86::PUSH32r))
       .addReg(MachineFramePtr, RegState::Kill)
-      .setMIFlag(MachineInstr::FrameSetup);
-   
-    // Push the special register (RDI, FLAGS, and RETURN Address)
-    if (Fn.hasFnAttribute(Attribute::UserLevelInterrupt))  {
-        BuildMI(MBB, MBBI, DL, TII.get(X86::PUSHULIRDI)).setMIFlag(MachineInstr::FrameSetup);
-        BuildMI(MBB, MBBI, DL, TII.get(X86::PUSHULIFLAGS)).setMIFlag(MachineInstr::FrameSetup);            
-        BuildMI(MBB, MBBI, DL, TII.get(X86::PUSHULINEXTPC)).setMIFlag(MachineInstr::FrameSetup);
-    }
-
+      .setMIFlag(MachineInstr::FrameSetup);   
+    
     if (NeedsDwarfCFI) {
       // Mark the place where EBP/RBP was saved.
       // Define the current CFA rule to use the provided offset.
@@ -2313,17 +2306,6 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
   if (Fn.hasFnAttribute(Attribute::UserLevelInterrupt) && !IsWin64CC)  {
     emitSPUpdate(MBB, MBBI, 128, false);
     --MBBI;
-  }
-
-  // Pop the special register (RDI, FLAGS, and RETURN
-  if (Fn.hasFnAttribute(Attribute::UserLevelInterrupt))  {
-      --MBBI;
-      BuildMI(MBB, MBBI, DL, TII.get(X86::POPULIRDI)).setMIFlag(MachineInstr::FrameDestroy);
-      --MBBI;
-      BuildMI(MBB, MBBI, DL, TII.get(X86::POPULIFLAGS)).setMIFlag(MachineInstr::FrameDestroy);
-      --MBBI;
-      BuildMI(MBB, MBBI, DL, TII.get(X86::POPULINEXTPC)).setMIFlag(MachineInstr::FrameDestroy);
-      --MBBI;
   }
 
   MachineBasicBlock::iterator FirstCSPop = MBBI;

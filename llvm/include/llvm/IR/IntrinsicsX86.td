@@ -5919,7 +5919,27 @@ let TargetPrefix = "x86" in {
     Intrinsic<[], [], []>;
     
   def int_x86_uli_atomic : GCCBuiltin<"__builtin_uli_atomic">,
-    Intrinsic<[], [llvm_i64_ty], []>;  
+    Intrinsic<[], [llvm_i64_ty], []>;
+   
+  // Read ULI special register
+  def int_x86_uli_rdrdi : GCCBuiltin<"__builtin_uli_rdrdi">,
+    Intrinsic<[llvm_i64_ty], [], []>;
+
+  def int_x86_uli_rdflags : GCCBuiltin<"__builtin_uli_rdflags">,
+    Intrinsic<[llvm_i64_ty], [], []>;
+
+  def int_x86_uli_rdRA : GCCBuiltin<"__builtin_uli_rdRA">,
+    Intrinsic<[llvm_i64_ty], [], []>;
+
+  // Write ULI special register
+  def int_x86_uli_wrrdi : GCCBuiltin<"__builtin_uli_wrrdi">,
+    Intrinsic<[], [llvm_i64_ty], []>;
+    
+  def int_x86_uli_wrflags : GCCBuiltin<"__builtin_uli_wrflags">,
+    Intrinsic<[], [llvm_i64_ty], []>;
+
+  def int_x86_uli_wrRA : GCCBuiltin<"__builtin_uli_wrRA">,
+    Intrinsic<[], [llvm_i64_ty], []>;
 }
 
 //===----------------------------------------------------------------------===//
