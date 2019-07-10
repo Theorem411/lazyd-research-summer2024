@@ -2173,6 +2173,19 @@ BUILTIN(__builtin_uli_retq, "v", "")
 // Turn on off atomic ULI (noninterruptable ULI)
 BUILTIN(__builtin_uli_atomic, "vULLi", "")
 
+// Return the special register 
+BUILTIN(__builtin_uli_rdrdi, "ULLi", "")
+BUILTIN(__builtin_uli_rdflags, "ULLi", "")
+BUILTIN(__builtin_uli_rdRA, "ULLi", "")
+
+// Write back to special register
+BUILTIN(__builtin_uli_wrrdi, "vULLi", "")
+BUILTIN(__builtin_uli_wrflags, "vULLi", "")
+BUILTIN(__builtin_uli_wrRA, "vULLi", "")
+
+
+
+
 #undef BUILTIN
 #undef TARGET_BUILTIN
 #undef TARGET_HEADER_BUILTIN
