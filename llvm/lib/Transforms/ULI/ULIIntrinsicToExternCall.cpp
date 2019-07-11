@@ -72,6 +72,13 @@ void ULIIntrinsicToExternCallPass::initializeIntrinsicExternMap(Module &M) {
       {Intrinsic::x86_uli_disable, "DISULI"},
       {Intrinsic::x86_uli_set, "SETULI"},
       {Intrinsic::x86_uli_read, "READULI"},
+      {Intrinsic::x86_uli_rdrdi, "RDULIRDI"},
+      {Intrinsic::x86_uli_rdflags, "RDULIFLAGS"},
+      {Intrinsic::x86_uli_rdRA, "RDULIRA"},
+      {Intrinsic::x86_uli_wrrdi, "WRULIRDI"},
+      {Intrinsic::x86_uli_wrflags, "WRULIFLAGS"},
+      {Intrinsic::x86_uli_wrRA, "WRULIRA"},
+      {Intrinsic::x86_uli_atomic, "SETULIATOMIC"},
       {Intrinsic::x86_uli_getcpu, "getpid"}};
   for (const auto &I : SameTypeIntrinsics) {
     const bool IsSameType  = true;
@@ -157,8 +164,6 @@ CallInst *ULIIntrinsicToExternCallPass::rewriteToExternDiffType(
   switch (Extern.ID) {
   case Intrinsic::x86_uli_send0c: {
     // Get the extern function.
-    printf("uli_send0c %s %s %d\n", __FILE__, __func__, __LINE__);
-
     SmallVector<Type *, 4> ArgsTy = {Int32Ty, Int8Ty, Int64Ty, Int32Ty};
     FunctionType *ExternTy = FunctionType::get(VoidTy, ArgsTy, false);
     Constant *ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
@@ -188,7 +193,6 @@ CallInst *ULIIntrinsicToExternCallPass::rewriteToExternDiffType(
   }
   case Intrinsic::x86_uli_send0cN: {
     // Get the extern function.
-    printf("uli_send0cN %s %s %d\n", __FILE__, __func__, __LINE__);
 
     SmallVector<Type *, 4> ArgsTy = {Int32Ty, Int8Ty, Int64Ty, Int32Ty};
     FunctionType *ExternTy = FunctionType::get(VoidTy, ArgsTy, false);
@@ -220,7 +224,6 @@ CallInst *ULIIntrinsicToExternCallPass::rewriteToExternDiffType(
   case Intrinsic::x86_uli_reply0c: {
     // Get the extern function.
     assert(0);			// we don't use this intrinsic anymore
-    printf("uli_reply0x %s %s %d\n", __FILE__, __func__, __LINE__);
     SmallVector<Type *, 2> ArgsTy = {Int64Ty, Int32Ty};
     FunctionType *ExternTy = FunctionType::get(VoidTy, ArgsTy, false);
     Constant *ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
@@ -242,7 +245,6 @@ CallInst *ULIIntrinsicToExternCallPass::rewriteToExternDiffType(
   }
   case Intrinsic::x86_uli_reply0cN: {
     // Get the extern function.
-    //printf("uli_reply0cN %s %s %d\n", __FILE__, __func__, __LINE__);
     SmallVector<Type *, 2> ArgsTy = {Int64Ty, Int32Ty};
     FunctionType *ExternTy = FunctionType::get(VoidTy, ArgsTy, false);
     Constant *ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
@@ -364,7 +366,6 @@ bool ULIIntrinsicToExternCallPass::runImpl(Function &F, DominatorTree *DT_) {
 
 PreservedAnalyses
 ULIIntrinsicToExternCallPass::run(Function &F, FunctionAnalysisManager &AM) {
-  //SCG printf(" %s %s %d\n", __FILE__, __func__, __LINE__);
   // Get required analysis.
   // We need dominator analysis because we need to find valid positions to
   // insert alloca instructions for storing return values of extern calls.

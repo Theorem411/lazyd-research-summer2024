@@ -56,7 +56,6 @@ bool HandleUliPass::runImpl(Function &F) {
     Function *fromireg = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_fromireg);
     unsigned int i = uliargindex_reply;
     Value * ret = nullptr;
-    Instruction *I = nullptr;
     // Instruction to delete
     SmallVector<Instruction *,2> del_instrs;
 
@@ -65,19 +64,34 @@ bool HandleUliPass::runImpl(Function &F) {
         return false;
     }
 
-    // Use to remove badref error, not sure why  builder.SetInsertPoint(I); works
-    for (Instruction &instr : F.front()){
-        I = &instr;
-        break;
-    }
-    builder.SetInsertPoint(I);
+    BasicBlock & bbFront = F.front();
+    Instruction & iiFront = bbFront.front();                
+    builder.SetInsertPoint(&iiFront);
 
+
+    Argument * arg_end = F.arg_end();
+    // The last 3 variable are used for storing the special register 
+    if(  (F.hasFnAttribute(Attribute::ULINonAtomic)) ){
+        arg_end = F.arg_end() - 3; 
+    }
+
+    // Generated code :
+    // ...
+    // Prologue
+    // ...
+    // first param = fromireg (0)
+    // second param = fromireg(1)
+    // ...
+    // ...
+    // (if Attr.ULINonAtomic == true) {
+    //   // Nothing
+    // else {
+    //   last param -2 = fromireg(n - 2)
+    //   last param -1 = fromireg(n - 1)
+    //   last param    = fromireg(n)
+    //}
 
     // loop through arguments to grab argument and use replaceAllUsesWith to set it to the value fromireg
-    Argument * arg_end = F.arg_end();
-    if(  (F.hasFnAttribute(Attribute::ULINonAtomic)) ){
-        arg_end = F.arg_end() - 3; // The last 3 variable are used for storing the special register 
-    }
     for (Argument *v = F.arg_begin()+1; v != arg_end; v++){
         ret = nullptr;
         changed=true;
@@ -139,13 +153,12 @@ bool HandleUliPass::runImpl(Function &F) {
         summary_changed |= changed;
 
     } // end args loop
-
-
+    
+    // ================================= ULI NON ATOMIC ===============================================
     // check for uli_non_atomic tag
     if ( (F.hasFnAttribute(Attribute::ULINonAtomic)) ) {
         // If a nonatomicpass attribute exists, the last three parameters store the special register
-        Function *rdulirdi =   Intrinsic::getDeclaration(M, Intrinsic::x86_uli_rdrdi);
-        
+        Function *rdulirdi =   Intrinsic::getDeclaration(M, Intrinsic::x86_uli_rdrdi);        
         Function *rduliflags = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_rdflags);
         Function *rduliRA = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_rdRA);
         Function *rduliregs[3] = {rdulirdi, rduliflags, rduliRA};
@@ -157,36 +170,71 @@ bool HandleUliPass::runImpl(Function &F) {
         
         Function *uliAtomic =  Intrinsic::getDeclaration(M, Intrinsic::x86_uli_atomic);
         
-        
 
-        errs() << "!------------------------------------\n";
+        
         // Insert restoring the uli special register before the prologue and an enable uli atomic before restoring the special register 
         BasicBlock & bbBack = F.back();
         Instruction & iiBack = bbBack.back();        
         BasicBlock::iterator bIt = builder.GetInsertPoint();
         builder.SetInsertPoint(&iiBack);
-
-        Argument *v = F.arg_end()-3;
-        builder.CreateCall( uliAtomic,  {builder.getInt64(1)} );
-        builder.CreateCall( wruliregs[0], {v++}   );
-        builder.CreateCall( wruliregs[1], {v++} );
-        builder.CreateCall( wruliregs[2], {v} );
         
+        //-------------------------------------------------------------
+        // Generated code :
+        // ...
+        // End user code 
+        // ...
+        // Set recursive uli / interruptable uli / nonatomic uli = false
+        // write to uli register rdi (last param - 2)
+        // write to uli register flags (last param -1)
+        // write to uli register return address (last param)
+        // ....
+        // Epilogue
+        // ...
+
+
+        
+        builder.CreateCall( uliAtomic,  {builder.getInt64(1)} );
+   
+        int ii = 0;
+        Argument * v = NULL;
+        for (v = F.arg_end()-3; v != F.arg_end(); v++){
+            // If parameters is a pointer, then convert it to long unsigned.        
+            if (v->getType()->isPointerTy()){
+                ret = builder.CreateCast(Instruction::PtrToInt, v, Type::getInt64Ty(ctx));
+                builder.CreateCall( wruliregs[ii], {ret}   );
+            } else {
+                builder.CreateCall( wruliregs[ii], {v}   );
+            }
+            ii++;
+        }
 
         builder.SetInsertPoint(&*bIt);
+        //-------------------------------------------------------------
 
 
-        int ii =0;
+        //-------------------------------------------------------------
+        // Generated code :
+        // ...
+        // Prologue
+        // ...
+        // first param = fromireg (0)
+        // second param = fromireg(1)
+        // ...
+        // ...
+        // last param -2 = read from uli register rdi
+        // last param -1 = read from uli register flags
+        // last param = read from uli register return address 
+
+
+        ii =0;
+        // Similiar to the ulifromireg code
         for (Argument *v = F.arg_end()-3; v != F.arg_end(); v++){
-            
-            v->dump();
-
             ret = nullptr;
             changed=true;
 
             if(v->getType()->isIntegerTy()){
                 // Handle integer
-                // Get the content of the argument from ulifromireg
+                // Get the content of the argument from uli special register
                 ret = builder.CreateCall( rduliregs[ii] );
                 
                 // Truncate the type if necessary
@@ -194,13 +242,11 @@ bool HandleUliPass::runImpl(Function &F) {
                     ret = builder.CreateCast(Instruction::Trunc, ret, v->getType());
                 }
 
-                ret->dump();
-
             } else if(v->getType()->isFloatingPointTy()) {
                 // Handle floating point argument
                 // Sort of "hack", there should be a better way to pass the value
 
-                // ret = ulifromireg(i)
+                // ret = read from uli special register
                 ret = builder.CreateCall( rduliregs[ii] );         
 
                 // Create : float * tmp_var
@@ -228,14 +274,14 @@ bool HandleUliPass::runImpl(Function &F) {
                 ret = builder.CreateCast(Instruction::IntToPtr, ret, v->getType());
                 changed=true;
             } else {
-                // Assert if argument passed is not supported by ulifromireg
+                // Assert if argument passed is not supported by read from uli special register
                 v->dump();
                 changed=false;
                 assert(true && "Type of v not supported as ulihandler's argument!");
             }
 
             if(changed){
-                // Replace the use of the argument (v) with the return value from ulifromireg
+                // Replace the use of the argument (v) with the return value from uli special register
                 v->replaceAllUsesWith(ret);
             }
 
@@ -244,19 +290,30 @@ bool HandleUliPass::runImpl(Function &F) {
             summary_changed |= changed;
 
         } // end args loop
+        //-------------------------------------------------------------
 
-        errs() << "-----------------------------------\n";
+        //-------------------------------------------------------------
+        
+        // Generate code :
+        // ...
+        // Saving uli register to last 3 parameters
+        // ...
+        // ...
+        // Set recursive uli / interruptable uli / nonatomic uli = true
+        // ...
+        // ...
+        // Begin User code 
+        // ...
+        
         // Insert a disable uli atomic after the uli_rdnextpc instruction
         Function::iterator b = F.begin();
         for (BasicBlock::iterator i = b->begin(); i != b->end(); ++i) {
-            i->dump();
             CallInst * call_inst = NULL;
             Function * fn = NULL;
             
             if((call_inst = dyn_cast<CallInst>(i))
                && (fn = call_inst->getCalledFunction())
                && (fn->getIntrinsicID() == Intrinsic::x86_uli_rdRA)){
-                errs() << "Insert uliatomic false after this instruction \n";
                 
                 builder.SetInsertPoint(i->getNextNode());
                 builder.CreateCall( uliAtomic,  {builder.getInt64(0)} );
@@ -265,9 +322,8 @@ bool HandleUliPass::runImpl(Function &F) {
 
             }
         }
-                  
+        //-------------------------------------------------------------          
     }
- 
     
     return summary_changed;
 
