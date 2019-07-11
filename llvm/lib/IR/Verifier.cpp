@@ -1723,6 +1723,7 @@ static bool isFuncOnlyAttr(Attribute::AttrKind Kind) {
   case Attribute::Forkable:
   case Attribute::ULINoPolling:
   case Attribute::UserLevelInterrupt:
+  case Attribute::ULINonAtomic:
   case Attribute::NoStackletCheck:
     return true;
   default:

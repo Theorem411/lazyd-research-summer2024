@@ -1441,7 +1441,9 @@ bool LLParser::parseFnAttributeValuePairs(AttrBuilder &B,
       B.addAttribute(Attribute::UserLevelInterrupt); break;
     case lltok::kw_no_stacklet_check:
       B.addAttribute(Attribute::NoStackletCheck); break;
-
+    case lltok::kw_uli_non_atomic:
+      B.addAttribute(Attribute::ULINonAtomic); break;  
+  
     // Error handling.
     case lltok::kw_inreg:
     case lltok::kw_signext:

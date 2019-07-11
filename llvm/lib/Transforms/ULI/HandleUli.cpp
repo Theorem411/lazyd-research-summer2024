@@ -24,22 +24,22 @@ const int uliargindex_reply = 16;
 using namespace llvm;
 
 namespace {
-  struct HandleUli : public FunctionPass {
+    struct HandleUli : public FunctionPass {
 
-    static char ID; // Pass identification
+        static char ID; // Pass identification
 
-    HandleUli() : FunctionPass(ID) {
-    }
+        HandleUli() : FunctionPass(ID) {
+        }
 
-    bool runOnFunction(Function &F) override {
-      return Impl.runImpl(F);
+        bool runOnFunction(Function &F) override {
+            return Impl.runImpl(F);
 
-    } // end runOnFunction
+        } // end runOnFunction
 
-  private:
-    HandleUliPass Impl;
+    private:
+        HandleUliPass Impl;
 
-  };
+    };
 
 }
 
@@ -47,115 +47,247 @@ namespace {
 
 bool HandleUliPass::runImpl(Function &F) {
 
-  Module *M = F.getParent();
-  LLVMContext &ctx = F.getContext();
-  bool changed = false;
-  bool summary_changed = false;
-  IRBuilder<> builder(ctx);
+    Module *M = F.getParent();
+    LLVMContext &ctx = F.getContext();
+    bool changed = false;
+    bool summary_changed = false;
+    IRBuilder<> builder(ctx);
 
-  Function *fromireg = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_fromireg);
-  unsigned int i = uliargindex_reply;
-  Value * ret = nullptr;
-  Instruction *I = nullptr;
-  // Instruction to delete
-  SmallVector<Instruction *,2> del_instrs;
+    Function *fromireg = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_fromireg);
+    unsigned int i = uliargindex_reply;
+    Value * ret = nullptr;
+    Instruction *I = nullptr;
+    // Instruction to delete
+    SmallVector<Instruction *,2> del_instrs;
 
-  // check for ulihandler tag
-  if (!(F.hasFnAttribute(Attribute::UserLevelInterrupt))) {
-    return false;
-  }
-
-  // Use to remove badref error, not sure why  builder.SetInsertPoint(I); works
-  for (Instruction &instr : F.front()){
-    I = &instr;
-    break;
-  }
-  builder.SetInsertPoint(I);
-
-
-  // loop through arguments to grab argument and use replaceAllUsesWith to set it to the value fromireg
-  for (Argument *v = F.arg_begin()+1; v != F.arg_end(); v++){
-
-    ret = nullptr;
-    changed=true;
-
-    if(v->getType()->isIntegerTy()){
-      // Handle integer
-      // Get the content of the argument from ulifromireg
-      ret = builder.CreateCall(fromireg, {builder.getInt32(i)});
-
-      // Truncate the type if necessary
-      if (!v->getType()->isIntegerTy(64)){
-	ret = builder.CreateCast(Instruction::Trunc, ret, v->getType());
-      }
-    } else if(v->getType()->isFloatingPointTy()) {
-      // Handle floating point argument
-      // Sort of "hack", there should be a better way to pass the value
-
-      // ret = ulifromireg(i)
-      ret = builder.CreateCall(fromireg, {builder.getInt32(i)});
-
-      // Create : float * tmp_var
-      Value * tmp_var = builder.CreateAlloca(Type::getDoubleTy(ctx)->getPointerTo());
-      // Create : Int64 tmp_var2
-      Value * tmp_var2 = builder.CreateAlloca(ret->getType());
-      // tmp_var2 = ret
-      builder.CreateStore(ret, tmp_var2);
-
-      // tmp_var = &tmp_var2
-      Value * ret_bitcast = builder.CreateBitCast(tmp_var2, Type::getDoubleTy(ctx)->getPointerTo());
-      builder.CreateStore(ret_bitcast, tmp_var);
-
-      // ret = *tmp_var (get the floating point number)
-      Value* tmp_addr = builder.CreateLoad(Type::getDoubleTy(ctx)->getPointerTo(), tmp_var);
-      ret =  builder.CreateLoad(Type::getDoubleTy(ctx), tmp_addr);
-
-      if(v->getType() != Type::getDoubleTy(ctx)) {
-	ret = builder.CreateCast(Instruction::FPTrunc, ret, v->getType());
-      }
-
-    } else if(v->getType()->isPointerTy()) {
-      // Handle pointer argument
-      ret = builder.CreateCall(fromireg, {builder.getInt32(i)});
-      ret = builder.CreateCast(Instruction::IntToPtr, ret, v->getType());
-      changed=true;
-    } else {
-      // Assert if argument passed is not supported by ulifromireg
-      v->dump();
-      changed=false;
-      assert(true && "Type of v not supported as ulihandler's argument!");
+    // check for ulihandler tag
+    if (!(F.hasFnAttribute(Attribute::UserLevelInterrupt))) {
+        return false;
     }
 
-    if(changed){
-      // Replace the use of the argument (v) with the return value from ulifromireg
-      v->replaceAllUsesWith(ret);
-      // Increment argument counter
-      i++;
+    // Use to remove badref error, not sure why  builder.SetInsertPoint(I); works
+    for (Instruction &instr : F.front()){
+        I = &instr;
+        break;
     }
+    builder.SetInsertPoint(I);
 
-    summary_changed |= changed;
 
-  } // end args loop
-  return summary_changed;
+    // loop through arguments to grab argument and use replaceAllUsesWith to set it to the value fromireg
+    Argument * arg_end = F.arg_end();
+    if(  (F.hasFnAttribute(Attribute::ULINonAtomic)) ){
+        arg_end = F.arg_end() - 3; // The last 3 variable are used for storing the special register 
+    }
+    for (Argument *v = F.arg_begin()+1; v != arg_end; v++){
+        ret = nullptr;
+        changed=true;
+
+        if(v->getType()->isIntegerTy()){
+            // Handle integer
+            // Get the content of the argument from ulifromireg
+            ret = builder.CreateCall(fromireg, {builder.getInt32(i)});
+
+            // Truncate the type if necessary
+            if (!v->getType()->isIntegerTy(64)){
+                ret = builder.CreateCast(Instruction::Trunc, ret, v->getType());
+            }
+        } else if(v->getType()->isFloatingPointTy()) {
+            // Handle floating point argument
+            // Sort of "hack", there should be a better way to pass the value
+
+            // ret = ulifromireg(i)
+            ret = builder.CreateCall(fromireg, {builder.getInt32(i)});
+
+            // Create : float * tmp_var
+            Value * tmp_var = builder.CreateAlloca(Type::getDoubleTy(ctx)->getPointerTo());
+            // Create : Int64 tmp_var2
+            Value * tmp_var2 = builder.CreateAlloca(ret->getType());
+            // tmp_var2 = ret
+            builder.CreateStore(ret, tmp_var2);
+
+            // tmp_var = &tmp_var2
+            Value * ret_bitcast = builder.CreateBitCast(tmp_var2, Type::getDoubleTy(ctx)->getPointerTo());
+            builder.CreateStore(ret_bitcast, tmp_var);
+
+            // ret = *tmp_var (get the floating point number)
+            Value* tmp_addr = builder.CreateLoad(Type::getDoubleTy(ctx)->getPointerTo(), tmp_var);
+            ret =  builder.CreateLoad(Type::getDoubleTy(ctx), tmp_addr);
+
+            if(v->getType() != Type::getDoubleTy(ctx)) {
+                ret = builder.CreateCast(Instruction::FPTrunc, ret, v->getType());
+            }
+
+        } else if(v->getType()->isPointerTy()) {
+            // Handle pointer argument
+            ret = builder.CreateCall(fromireg, {builder.getInt32(i)});
+            ret = builder.CreateCast(Instruction::IntToPtr, ret, v->getType());
+            changed=true;
+        } else {
+            // Assert if argument passed is not supported by ulifromireg
+            v->dump();
+            changed=false;
+            assert(true && "Type of v not supported as ulihandler's argument!");
+        }
+
+        if(changed){
+            // Replace the use of the argument (v) with the return value from ulifromireg
+            v->replaceAllUsesWith(ret);
+            // Increment argument counter
+            i++;
+        }
+
+        summary_changed |= changed;
+
+    } // end args loop
+
+
+    // check for uli_non_atomic tag
+    if ( (F.hasFnAttribute(Attribute::ULINonAtomic)) ) {
+        // If a nonatomicpass attribute exists, the last three parameters store the special register
+        Function *rdulirdi =   Intrinsic::getDeclaration(M, Intrinsic::x86_uli_rdrdi);
+        
+        Function *rduliflags = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_rdflags);
+        Function *rduliRA = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_rdRA);
+        Function *rduliregs[3] = {rdulirdi, rduliflags, rduliRA};
+
+        Function *wrulirdi =   Intrinsic::getDeclaration(M, Intrinsic::x86_uli_wrrdi);
+        Function *wruliflags = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_wrflags);
+        Function *wruliRA = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_wrRA);
+        Function *wruliregs[3] = {wrulirdi, wruliflags, wruliRA};
+        
+        Function *uliAtomic =  Intrinsic::getDeclaration(M, Intrinsic::x86_uli_atomic);
+        
+        
+
+        errs() << "!------------------------------------\n";
+        // Insert restoring the uli special register before the prologue and an enable uli atomic before restoring the special register 
+        BasicBlock & bbBack = F.back();
+        Instruction & iiBack = bbBack.back();        
+        BasicBlock::iterator bIt = builder.GetInsertPoint();
+        builder.SetInsertPoint(&iiBack);
+
+        Argument *v = F.arg_end()-3;
+        builder.CreateCall( uliAtomic,  {builder.getInt64(1)} );
+        builder.CreateCall( wruliregs[0], {v++}   );
+        builder.CreateCall( wruliregs[1], {v++} );
+        builder.CreateCall( wruliregs[2], {v} );
+        
+
+        builder.SetInsertPoint(&*bIt);
+
+
+        int ii =0;
+        for (Argument *v = F.arg_end()-3; v != F.arg_end(); v++){
+            
+            v->dump();
+
+            ret = nullptr;
+            changed=true;
+
+            if(v->getType()->isIntegerTy()){
+                // Handle integer
+                // Get the content of the argument from ulifromireg
+                ret = builder.CreateCall( rduliregs[ii] );
+                
+                // Truncate the type if necessary
+                if (!v->getType()->isIntegerTy(64)){
+                    ret = builder.CreateCast(Instruction::Trunc, ret, v->getType());
+                }
+
+                ret->dump();
+
+            } else if(v->getType()->isFloatingPointTy()) {
+                // Handle floating point argument
+                // Sort of "hack", there should be a better way to pass the value
+
+                // ret = ulifromireg(i)
+                ret = builder.CreateCall( rduliregs[ii] );         
+
+                // Create : float * tmp_var
+                Value * tmp_var = builder.CreateAlloca(Type::getDoubleTy(ctx)->getPointerTo());
+                // Create : Int64 tmp_var2
+                Value * tmp_var2 = builder.CreateAlloca(ret->getType());
+                // tmp_var2 = ret
+                builder.CreateStore(ret, tmp_var2);
+
+                // tmp_var = &tmp_var2
+                Value * ret_bitcast = builder.CreateBitCast(tmp_var2, Type::getDoubleTy(ctx)->getPointerTo());
+                builder.CreateStore(ret_bitcast, tmp_var);
+
+                // ret = *tmp_var (get the floating point number)
+                Value* tmp_addr = builder.CreateLoad(Type::getDoubleTy(ctx)->getPointerTo(), tmp_var);
+                ret =  builder.CreateLoad(Type::getDoubleTy(ctx), tmp_addr);
+
+                if(v->getType() != Type::getDoubleTy(ctx)) {
+                    ret = builder.CreateCast(Instruction::FPTrunc, ret, v->getType());
+                }
+
+            } else if(v->getType()->isPointerTy()) {
+                // Handle pointer argument
+                ret = builder.CreateCall( rduliregs[ii] );
+                ret = builder.CreateCast(Instruction::IntToPtr, ret, v->getType());
+                changed=true;
+            } else {
+                // Assert if argument passed is not supported by ulifromireg
+                v->dump();
+                changed=false;
+                assert(true && "Type of v not supported as ulihandler's argument!");
+            }
+
+            if(changed){
+                // Replace the use of the argument (v) with the return value from ulifromireg
+                v->replaceAllUsesWith(ret);
+            }
+
+            ii++;
+
+            summary_changed |= changed;
+
+        } // end args loop
+
+        errs() << "-----------------------------------\n";
+        // Insert a disable uli atomic after the uli_rdnextpc instruction
+        Function::iterator b = F.begin();
+        for (BasicBlock::iterator i = b->begin(); i != b->end(); ++i) {
+            i->dump();
+            CallInst * call_inst = NULL;
+            Function * fn = NULL;
+            
+            if((call_inst = dyn_cast<CallInst>(i))
+               && (fn = call_inst->getCalledFunction())
+               && (fn->getIntrinsicID() == Intrinsic::x86_uli_rdRA)){
+                errs() << "Insert uliatomic false after this instruction \n";
+                
+                builder.SetInsertPoint(i->getNextNode());
+                builder.CreateCall( uliAtomic,  {builder.getInt64(0)} );
+                
+                break;
+
+            }
+        }
+                  
+    }
+ 
+    
+    return summary_changed;
 
 }
 
+
 PreservedAnalyses
 HandleUliPass::run(Function &F, FunctionAnalysisManager &AM) {
-  //SCG printf(" %s %s %d\n", __FILE__, __func__, __LINE__);
-  // Get required analysis.
-  // We need dominator analysis because we need to find valid positions to
-  // insert alloca instructions for storing return values of extern calls.
+    // Get required analysis.
+    // We need dominator analysis because we need to find valid positions to
+    // insert alloca instructions for storing return values of extern calls.
 
+    // Run on function.
+    bool Changed = runImpl(F);
+    if (!Changed)
+        return PreservedAnalyses::all();
 
-  // Run on function.
-  bool Changed = runImpl(F);
-  if (!Changed)
-    return PreservedAnalyses::all();
-
-  PreservedAnalyses PA;
-  PA.preserveSet<CFGAnalyses>();
-  return PA;
+    PreservedAnalyses PA;
+    PA.preserveSet<CFGAnalyses>();
+    return PA;
 }
 
 
@@ -166,5 +298,5 @@ char HandleUli::ID = 0;
 static RegisterPass<HandleUli> X("handleuli", "Uli Handler Pass");
 
 Pass *llvm::createHandleUliPass() {
-  return new HandleUli();
+    return new HandleUli();
 }

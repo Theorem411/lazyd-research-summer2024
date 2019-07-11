@@ -265,6 +265,7 @@ enum Kind {
   kw_forkable,
   kw_uli_no_polling,
   kw_user_level_interrupt,
+  kw_uli_non_atomic,
   kw_no_stacklet_check,
 
   kw_type,

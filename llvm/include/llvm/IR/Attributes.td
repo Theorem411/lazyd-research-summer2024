@@ -323,6 +323,9 @@ def ULINoPolling : EnumAttr<"uli_no_polling">;
 /// this function is a user_level_interrupt
 def UserLevelInterrupt : EnumAttr<"user_level_interrupt">;
 
+// this function is a uli_non_atomic
+def ULINonAtomic : EnumAttr<"uli_non_atomic">;
+
 /// disable stacklet checking for this function
 def NoStackletCheck : EnumAttr<"no_stacklet_check">;
 

@@ -721,6 +721,7 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(forkable);
   KEYWORD(uli_no_polling);
   KEYWORD(user_level_interrupt);
+  KEYWORD(uli_non_atomic);
   KEYWORD(no_stacklet_check);
 
   KEYWORD(type);

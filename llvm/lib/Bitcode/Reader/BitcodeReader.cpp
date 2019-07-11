@@ -1279,6 +1279,9 @@ static uint64_t getRawAttributeMask(Attribute::AttrKind Val) {
   case Attribute::Forkable:
     llvm_unreachable("Should never get here: Forkable");
     break;
+  case Attribute::ULINonAtomic:
+    llvm_unreachable("Should never get here: ULINonAtomic");
+    break;  
 #if 0
   case Attribute::Dereferenceable:
     llvm_unreachable("dereferenceable attribute not supported in raw format");
@@ -1550,7 +1553,6 @@ static Attribute::AttrKind getAttrFromCode(uint64_t Code) {
     return Attribute::WriteOnly;
   case bitc::ATTR_KIND_Z_EXT:
     return Attribute::ZExt;
-<<<<<<< HEAD
   case bitc::ATTR_KIND_IMMARG:
     return Attribute::ImmArg;
   case bitc::ATTR_KIND_SANITIZE_MEMTAG:
@@ -1575,12 +1577,10 @@ static Attribute::AttrKind getAttrFromCode(uint64_t Code) {
     return Attribute::ReducerRegister;
   case bitc::ATTR_KIND_REDUCER_UNREGISTER:
     return Attribute::ReducerUnregister;
-=======
   case bitc::ATTR_KIND_FORKABLE:
     return Attribute::Forkable;
   case bitc::ATTR_KIND_ULI_NO_POLLING:
     return Attribute::ULINoPolling;
->>>>>>> LLVM ULI changes 2017-10-18 to 2019-05-27
   }
 }
 
