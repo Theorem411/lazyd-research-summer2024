@@ -1950,6 +1950,19 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     }
   }
 
+  // we check for uli_non_atomic attribute on functions
+  if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
+    if (FD->hasAttr<ULINonAtomicAttr>()) {
+      B.addAttribute(llvm::Attribute::ULINonAtomic);
+      
+      // Also add the user level interrupt if it was not declared
+      if (!FD->hasAttr<UserLevelInterruptAttr>()) {
+          B.addAttribute(llvm::Attribute::UserLevelInterrupt);
+      }
+
+    }
+  }
+
   // we check for no_stacklet_check attribute on functions
   if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
     if (FD->hasAttr<NoStackletCheckAttr>()) {

@@ -2034,6 +2034,14 @@ functions which can invoked as parallel ready sequential calls.
   }];
 }
 
+def ULINonAtomicDocs : Documentation {
+  let Category = DocCatFunction;
+  let Heading = "Create a nonatomic / interruptable / recursive uli handler";
+  let Content = [{
+Clang supports the GNU style ``__attribute__((uli_non_atomic))`` attribute to indicate that a uli handler is non atomic / can be interruptable by other ULI messages.
+  }];
+}
+
 def NoStackletCheckDocs : Documentation {
   let Category = DocCatFunction;
   let Heading = "Emit stacklet overflow checks";

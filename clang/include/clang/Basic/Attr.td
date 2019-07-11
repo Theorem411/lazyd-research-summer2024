@@ -3985,6 +3985,12 @@ def UserLevelInterrupt : InheritableAttr, TargetSpecificAttr<TargetAnyX86> {
   let Documentation = [ULInterruptDocs];
 }
 
+def ULINonAtomic : InheritableAttr, TargetSpecificAttr<TargetAnyX86> {
+  let Spellings = [GNU<"uli_non_atomic">];
+  let Subjects = SubjectList<[Function]>;
+  let Documentation = [ULINonAtomicDocs];
+} 
+
 // mark functions which can be called as a PRSC
 def Forkable : InheritableAttr {
   let Spellings = [GNU<"forkable">];

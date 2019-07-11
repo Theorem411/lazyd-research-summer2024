@@ -7298,6 +7298,27 @@ static void handleUserLevelInterruptAttr(Sema &S, Decl *D,
   handleSimpleAttribute<UserLevelInterruptAttr>(S, D, Attr);
 }
 
+static void handleULINonAtomicAttr(Sema &S, Decl *D,
+                                      const AttributeList &Attr) {
+  // Semantic checks for a function with the 'ULINonAtomic' attribute.
+  // Must be a function that returns void
+  // If it doesn't have a UserLevelInterrupt attribute, add it
+
+  if (!isFunctionOrMethod(D)) {
+    S.Diag(D->getLocation(), diag::warn_attribute_wrong_decl_type)
+        << "'uli_non_atomic'" << ExpectedFunctionOrMethod;
+    return;
+  }
+
+  if (!getFunctionOrMethodResultType(D)->isVoidType()) {
+    S.Diag(D->getLocation(), diag::err_user_level_interrupt_attribute)
+        << 1;
+    return;
+  }
+
+  handleSimpleAttribute<ULINonAtomicAttr>(S, D, Attr);
+}
+
 // must be on a function, otherwise any is ok
 static void handleNoStackletCheckAttr(Sema &S, Decl *D,
 			     const AttributeList &Attr) {
@@ -8233,6 +8254,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case AttributeList::AT_UserLevelInterrupt:
     handleUserLevelInterruptAttr(S, D, Attr);
+    break;
+  case AttributeList::AT_ULINonAtomic:
+    handleULINonAtomicAttr(S, D, Attr);
     break;
   case AttributeList::AT_NoStackletCheck:
     handleNoStackletCheckAttr(S, D, Attr);

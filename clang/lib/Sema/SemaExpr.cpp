@@ -6842,7 +6842,7 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
   unsigned BuiltinID = (FDecl ? FDecl->getBuiltinID() : 0);
 
   // Functions with 'interrupt' attribute cannot be called directly.
-  if (FDecl && (FDecl->hasAttr<AnyX86InterruptAttr>() || FDecl->hasAttr<UserLevelInterruptAttr>())) {
+  if (FDecl && (FDecl->hasAttr<AnyX86InterruptAttr>() || FDecl->hasAttr<UserLevelInterruptAttr>() || FDecl->hasAttr<ULINonAtomicAttr>()) ) {
     Diag(Fn->getExprLoc(), diag::err_anyx86_interrupt_called);
     return ExprError();
   }
@@ -6856,7 +6856,7 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
   // save and restore the non-GPR state.
   if (auto *Caller = getCurFunctionDecl()) {
     // Handle the builtin_uli_send and builtin_uli_reply
-    if (Caller->hasAttr<UserLevelInterruptAttr>()) {
+    if (Caller->hasAttr<UserLevelInterruptAttr>() || Caller->hasAttr<ULINonAtomicAttr>()) {
       // If user implements a send in the uli handler interrupt, issue a warning
       if( BuiltinID == X86::BI__builtin_uli_send ) {
         Diag(Fn->getExprLoc(), diag::warn_ulisend_called_in_ulihandler);
