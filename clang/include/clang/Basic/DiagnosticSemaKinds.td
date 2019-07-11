@@ -300,6 +300,8 @@ def err_ulireply_called_not_in_ulihandler : Error<
    "uli-reply must only be called within a uli handler function">;
 def warn_ulisend_called_in_ulihandler : Warning<
   "uli-send is called within a ulihandler. Potential deadlock.">;
+def err_uli_non_atomic_arguments : Error<
+    "'uli_non_atomic' attribute must have at least 4 arguments">;
 def err_anyx86_interrupt_attribute : Error<
   "%select{x86|x86-64}0 'interrupt' attribute only applies to functions that "
   "have %select{a 'void' return type|"

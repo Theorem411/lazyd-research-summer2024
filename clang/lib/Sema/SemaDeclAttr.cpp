@@ -7290,6 +7290,16 @@ static void handleUserLevelInterruptAttr(Sema &S, Decl *D,
     return;
   }
 
+  // Number of arguments must be at least 4 (from, rdi, flags, and RA)
+  // Later, this change in the future as from is implicit
+  FunctionDecl *FD = NULL; 
+  FD = dyn_cast<FunctionDecl>(D) ;
+  if (FD && FD->getNumParams() < 4) {
+      S.Diag(D->getLocation(), diag::err_uli_non_atomic_arguments)
+        << 1;
+      return;
+  }
+
   if (!getFunctionOrMethodResultType(D)->isVoidType()) {
     S.Diag(D->getLocation(), diag::err_user_level_interrupt_attribute)
         << 1;
