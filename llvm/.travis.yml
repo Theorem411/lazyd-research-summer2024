@@ -1,6 +1,9 @@
 language: cpp
 git:
     submodules: true
+cache:
+    directories:
+        - build
 
 install: sudo apt-get install ninja-build libsnappy-dev
 
