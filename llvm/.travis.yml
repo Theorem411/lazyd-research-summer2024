@@ -1,7 +1,8 @@
+language: cpp
 git:
     submodules: true
 
-install: sudo apt-get install ninja-build
+install: sudo apt-get install ninja-build libsnappy
 
 script:
     - mkdir build && cd build
