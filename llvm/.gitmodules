@@ -1,15 +1,15 @@
 [submodule "tools/clang"]
 	path = tools/clang
-	url = git@github.com:seth4618/uli-clang.git
+	url = git@github.com:user-level-interrupts/uli-clang.git
 	branch = uli-master
 [submodule "tools/polly"]
 	path = tools/polly
 	url = https://github.com/wsmoses/Parallel-Polly
 [submodule "projects/openmp"]
 	path = projects/openmp
-	url = git@github.com:seth4618/uli-openmp.git
+	url = git@github.com:user-level-interrupts/uli-openmp.git
 	branch = uli-master
 [submodule "projects/compiler-rt"]
 	path = projects/compiler-rt
-	url = git@github.com:seth4618/uli-compiler-rt.git
+	url = git@github.com:user-level-interrupts/uli-compiler-rt.git
 	branch = uli-master
