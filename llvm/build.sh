@@ -15,4 +15,10 @@ if [ ! -f build.ninja ]; then
     -DLLVM_CCACHE_BUILD=true \
     2>&1 | tee cmake.log
 fi
-ninja -j2
+timeout 1800 ninja
+if [ $? -eq 142 ]; then
+    echo "Build took more than 30 minutes"
+    echo "Exiting with success so that cache is saved"
+    echo "Rerun build to continue with cached progress"
+    exit 0
+fi
