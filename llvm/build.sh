@@ -13,4 +13,4 @@ if [ ! -f build.ninja ]; then
     -DLLVM_TARGETS_TO_BUILD=X86 \
     2>&1 | tee cmake.log
 fi
-ninja
+ninja -j2
