@@ -44,13 +44,52 @@ namespace {
 
 }
 
+bool HandleInletsPass::handlePotentialJump(BasicBlock &BB) {
+  for (auto it = BB.begin(); it != BB.end(); ++it) {
+    auto &instr = *it;
+    auto call = dyn_cast<CallInst>(&instr);
+    if (!call) continue;
+    auto fn = call->getCalledFunction();
+    if (!fn) continue;
+    if (fn->getIntrinsicID() != Intrinsic::x86_uli_potential_jump) continue;
+    auto afterPotentialJump = it; afterPotentialJump++;
+
+    auto BA = dyn_cast<BlockAddress>(call->getArgOperand(0));
+    assert(BA);
+    auto InletBlock = BA->getBasicBlock();
+
+
+    it->eraseFromParent();
+    auto afterBB = BB.splitBasicBlock(afterPotentialJump);
+    
+    auto terminator = BB.getTerminator();
+
+    auto cond = CallInst::Create(returnTrue, "", terminator);
+
+    auto branch = BranchInst::Create(afterBB, InletBlock, cond);
+
+    ReplaceInstWithInst(terminator, branch);
+
+    handlePotentialJump(*afterBB);
+    return true;
+  }
+  return false;
+}
+
 bool HandleInletsPass::runInitialization(Module &M) {
+    auto &C = M.getContext();
+    auto boolTy = Type::getInt1Ty(C);
+    auto returnTrueTy = FunctionType::get(boolTy, false);
+    returnTrue = Function::Create(returnTrueTy, Function::ExternalLinkage, "returnTrue", &M);
+    returnTrue->setCallingConv(CallingConv::C);
     return true;
 }
 
 bool HandleInletsPass::runImpl(Function &F) {
     bool changed = false;
-
+    for (auto &BB : F) {
+        changed |= handlePotentialJump(BB);
+    }
     return changed;
 }
 

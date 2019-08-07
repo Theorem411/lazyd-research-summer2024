@@ -27,6 +27,7 @@ struct HandleInletsPass
 
   llvm::Function *returnTrue;
 
+  bool handlePotentialJump(BasicBlock &BB);
 public:
   /// \return Preserved analyses of function \p F after transformation.
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
