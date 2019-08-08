@@ -17,6 +17,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Support/Timer.h"
+#include "llvm/Transforms/Tapir/ULIABI.h"
 #include "llvm/Transforms/Tapir/CilkABI.h"
 #include "llvm/Transforms/Tapir/CudaABI.h"
 #include "llvm/Transforms/Tapir/OpenCilkABI.h"
@@ -53,6 +54,8 @@ TapirTarget *llvm::getTapirTargetFromID(Module &M, TapirTargetID ID) {
     return new OpenMPABI(M);
   case TapirTargetID::Qthreads:
     return new QthreadsABI(M);
+  case TapirTargetID::ULI:
+    return new ULIABI(M);
   default:
     llvm_unreachable("Invalid TapirTargetID");
   }

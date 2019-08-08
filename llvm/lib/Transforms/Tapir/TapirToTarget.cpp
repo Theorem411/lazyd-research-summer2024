@@ -50,6 +50,7 @@ public:
                     function_ref<AssumptionCache &(Function &)> GetAC,
                     function_ref<TargetLibraryInfo &(Function &)> GetTLI)
       : M(M), GetDT(GetDT), GetTI(GetTI), GetAC(GetAC), GetTLI(GetTLI) {}
+
   ~TapirToTargetImpl() {
     if (Target)
       delete Target;
