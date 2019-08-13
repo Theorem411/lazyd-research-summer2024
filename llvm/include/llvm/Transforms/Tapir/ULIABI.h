@@ -62,6 +62,8 @@ public:
   void postProcessFunction(Function &F) override final;
   void postProcessHelper(Function &F) override final;
 
+  struct Sync {};
+  struct Work {};
 };
 
 }  // end of llvm namespace

@@ -744,6 +744,9 @@ void PassManagerBuilder::populateModulePassManager(
       MPM.add(createAlwaysInlinerLegacyPass());
     }
 
+    // Add passes to run just after Tapir lowering.
+    addExtensionsToPM(EP_PostTapir, MPM);
+
     // FIXME: The BarrierNoopPass is a HACK! The inliner pass above implicitly
     // creates a CGSCC pass manager, but we don't want to add extensions into
     // that pass manager. To prevent this we insert a no-op module pass to reset
@@ -1194,6 +1197,9 @@ void PassManagerBuilder::populateModulePassManager(
     RerunAfterTapirLowering = false;
   }
   } while (RerunAfterTapirLowering);
+
+  // Add passes to run just after Tapir lowering.
+  addExtensionsToPM(EP_PostTapir, MPM);
 
   addExtensionsToPM(EP_OptimizerLast, MPM);
 

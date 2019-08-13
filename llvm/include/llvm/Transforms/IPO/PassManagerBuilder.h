@@ -120,9 +120,14 @@ public:
     /// Tapir instructions are lowered to calls into a parallel runtime system.
     EP_TapirLate,
 
+
     /// EP_TapirLoopEnd - This extension point allows adding passes just before
     /// Tapir loops are processed by lowering, but before additional lowering.
     EP_TapirLoopEnd,
+
+    /// EP_PostTapir - This extension point allows adding passes just after
+    /// Tapir instructions are lowered to calls into a parallel runtime system.
+    //EP_PostTapir,
 
     /// EP_FullLinkTimeOptimizationEarly - This extensions point allow adding
     /// passes that
