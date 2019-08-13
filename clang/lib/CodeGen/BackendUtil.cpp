@@ -620,6 +620,32 @@ addCilkscaleBenchmarkInstrumentation(const PassManagerBuilder &Builder,
   }
 }
 
+static void
+addULISendAndRewritePasses(const PassManagerBuilder &Builder, PassManagerBase &PM) {
+  static int count = 0;
+  count++;
+  // Make sure passes only get added once
+  assert(count == 1);
+
+  const PassManagerBuilderWrapper &BuilderWrapper =
+      static_cast<const PassManagerBuilderWrapper&>(Builder);
+  const CodeGenOptions &CodeGenOpts = BuilderWrapper.getCGOpts();
+
+  if (CodeGenOpts.EnableULITransform) {
+    llvm::errs() << "ULI Transform\n";
+    PM.add(createSendUliPass());
+    PM.add(createHandleUliPass());
+  }
+
+  if (CodeGenOpts.EnableULIRewrite) {
+    llvm::errs() << "ULI Rewrite\n";
+    PassRegistry &Registry = *PassRegistry::getPassRegistry();
+    initializeAnalysis(Registry);
+    PM.add(createULIIntrinsicToExternCallPass());
+    PM.add(createULIPollingInsertionPass());
+  }
+}
+
 static TargetLibraryInfoImpl *createTLII(llvm::Triple &TargetTriple,
                                          const CodeGenOptions &CodeGenOpts) {
   TargetLibraryInfoImpl *TLII = new TargetLibraryInfoImpl(TargetTriple);
@@ -1131,6 +1157,8 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
     }
   }
 
+  PMBuilder.addExtension(PassManagerBuilder::EP_PostTapir, addULISendAndRewritePasses);
+
   // Set up the per-function pass manager.
   FPM.add(new TargetLibraryInfoWrapperPass(*TLII));
   if (CodeGenOpts.VerifyModule)
@@ -1138,18 +1166,6 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
 
   PMBuilder.addExtension(PassManagerBuilder::EP_EarlyAsPossible,
       addHandleInletsPass);
-
-  if (CodeGenOpts.EnableULITransform) {
-    MPM.add(createSendUliPass());
-    MPM.add(createHandleUliPass());
-  }
-
-  if (CodeGenOpts.EnableULIRewrite) {
-    PassRegistry &Registry = *PassRegistry::getPassRegistry();
-    initializeAnalysis(Registry);
-    MPM.add(createULIIntrinsicToExternCallPass());
-    MPM.add(createULIPollingInsertionPass());
-  }
 
   // Set up the per-module pass manager.
   if (!CodeGenOpts.RewriteMapFiles.empty())
