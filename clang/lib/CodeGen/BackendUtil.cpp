@@ -642,7 +642,9 @@ addULISendAndRewritePasses(const PassManagerBuilder &Builder, PassManagerBase &P
     PassRegistry &Registry = *PassRegistry::getPassRegistry();
     initializeAnalysis(Registry);
     PM.add(createULIIntrinsicToExternCallPass());
-    PM.add(createULIPollingInsertionPass());
+    if (!CodeGenOpts.DisableULIPollInsertion) {
+      PM.add(createULIPollingInsertionPass());
+    }
   }
 }
 

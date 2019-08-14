@@ -295,6 +295,7 @@ CODEGENOPT(VectorizeSLP      , 1, 0) ///< Run SLP vectorizer.
 CODEGENOPT(ProfileSampleAccurate, 1, 0) ///< Sample profile is accurate.
 CODEGENOPT(EnableULITransform, 1, 0) ///< Run ULI Transform
 CODEGENOPT(EnableULIRewrite, 1, 0) ///< Run ULI Rewrite
+CODEGENOPT(DisableULIPollInsertion, 1, 0) ///< Run ULI Rewrite
 VALUE_CODEGENOPT(ULIStackletOverflowCheckSize, 8, 0) ///< Enable ULI stacklet overflow check with the given size as the log2 of the stacklet size. Zero means the option is disabled.
 
 /// Treat loops as finite: language, always, never.

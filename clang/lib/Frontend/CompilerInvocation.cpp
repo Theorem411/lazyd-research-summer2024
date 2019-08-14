@@ -1897,6 +1897,7 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
   assert(Opts.ULIStackletOverflowCheckSize < 64);
   Opts.EnableULITransform = Args.hasArg(OPT_fenable_uli_transform);
   Opts.EnableULIRewrite = Args.hasArg(OPT_fenable_uli_rewrite);
+  Opts.DisableULIPollInsertion = Args.hasArg(OPT_fdisable_uli_poll_insertion);
 #if 0  
   Opts.UnwindTables = Args.hasArg(OPT_munwind_tables);
   Opts.RelocationModel = getRelocModel(Args, Diags);

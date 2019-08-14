@@ -2987,6 +2987,8 @@ def fenable_uli_transform : Joined<["-"], "fenable-uli-transform">,
   HelpText<"Enable ULI for send, reply, and handleuli transformation">;
 def fenable_uli_rewrite : Flag<["-"], "fenable-uli-rewrite">,
   HelpText<"Enable ULI rewriting for simulation">;
+def fdisable_uli_poll_insertion : Flag<["-"], "fdisable-uli-poll-insertion">,
+  HelpText<"Disable poll insertion for single thread timing">;
 
 def g_Flag : Flag<["-"], "g">, Group<g_Group>,
   HelpText<"Generate source-level debug information">;
