@@ -1281,7 +1281,9 @@ static uint64_t getRawAttributeMask(Attribute::AttrKind Val) {
     break;
   case Attribute::ULINonAtomic:
     llvm_unreachable("Should never get here: ULINonAtomic");
-    break;  
+  case Attribute::NoStackletCheck:
+    llvm_unreachable("Should never get here: NoStackletCheck");
+    break;
 #if 0
   case Attribute::Dereferenceable:
     llvm_unreachable("dereferenceable attribute not supported in raw format");
