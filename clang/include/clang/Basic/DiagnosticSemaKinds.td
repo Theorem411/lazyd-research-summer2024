@@ -296,7 +296,7 @@ def err_user_level_interrupt_attribute : Error<
     "'user_level_interrupt' attribute only applies to functions that have a 'void' return type">;
 def err_user_level_interrupt_called : Error<
   "user-level interrupt service routine cannot be called directly">;
-def err_ulireply_called_not_in_ulihandler : Error<
+def warn_ulireply_called_not_in_ulihandler : Warning<
    "uli-reply must only be called within a uli handler function">;
 def warn_ulisend_called_in_ulihandler : Warning<
   "uli-send is called within a ulihandler. Potential deadlock.">;

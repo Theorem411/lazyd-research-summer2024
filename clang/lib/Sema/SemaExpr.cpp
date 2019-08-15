@@ -6864,7 +6864,7 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
     } else {
       // If user implements a reply not in the uli handler interrupt, issue an error
       if(BuiltinID == X86::BI__builtin_uli_reply) {
-        Diag(Fn->getExprLoc(), diag::err_ulireply_called_not_in_ulihandler);
+        Diag(Fn->getExprLoc(), diag::warn_ulireply_called_not_in_ulihandler);
       }
     }
     if (Caller->hasAttr<ARMInterruptAttr>()) {
