@@ -1748,13 +1748,21 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
       FrameSize += 2;
   }
 
-  std::vector<llvm::MachineBasicBlock::iterator> framesize_instructions_to_delete;
+  std::vector<llvm::MachineBasicBlock::iterator> instructions_to_delete;
   for (auto mb = MF.begin(); mb != MF.end(); ++mb) {
     for (auto inst = mb->begin(); inst != mb->end(); ++inst) {
       if (inst->getOpcode() == X86::GETFRAMESIZE) {
         BuildMI(*mb, inst, DL, TII.get(X86::MOV64ri), inst->getOperand(0).getReg())
           .addImm(FrameSize);
-        framesize_instructions_to_delete.push_back(inst);
+        instructions_to_delete.push_back(inst);
+      } else if (inst->getOpcode() == X86::SETUP_RBP_FROM_RSP
+          || inst->getOpcode() == X86::SETUP_RBP_FROM_SP_IN_RBP) {
+        auto SrcReg = inst->getOpcode() == X86::SETUP_RBP_FROM_SP_IN_RBP ? X86::RBP : X86::RSP;
+        // ???
+        auto HackOffset = inst->getOpcode() == X86::SETUP_RBP_FROM_SP_IN_RBP ? -8 : 0;
+        addRegOffset(BuildMI(*mb, inst, DL, TII.get(X86::LEA64r), X86::RBP), SrcReg,
+            false, FrameSize + HackOffset);
+        instructions_to_delete.push_back(inst);
       }
     }
   }
@@ -2122,7 +2130,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
   MF.setHasWinCFI(HasWinCFI);
 
 end:
-  for (auto &it : framesize_instructions_to_delete) {
+  for (auto &it : instructions_to_delete) {
     it->eraseFromParent();
   }
 }
