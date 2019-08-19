@@ -2168,6 +2168,8 @@ BUILTIN(__builtin_inlet_get_env, "v*", "")
 BUILTIN(__builtin_uli_message_from, "Ui", "")
 
 BUILTIN(__builtin_uli_potential_jump, "vv*", "")
+BUILTIN(__builtin_setup_rbp_from_rsp, "v", "")
+BUILTIN(__builtin_setup_rbp_from_sp_in_rbp, "v", "")
 
 // return from uli interrup
 BUILTIN(__builtin_uli_retq, "v", "")
