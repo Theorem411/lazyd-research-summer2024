@@ -1548,6 +1548,8 @@ void ToolChain::AddTapirRuntimeLibArgs(const ArgList &Args,
   case TapirTargetID::Qthreads:
     CmdArgs.push_back("-lqthread");
     break;
+    // Chrisma, add runtime of PRSC
+
   default:
     break;
   }
