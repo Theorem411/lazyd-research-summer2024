@@ -39,6 +39,8 @@ using namespace llvm;
 
 #define DEBUG_TYPE "uliabi"
 
+BasicBlock * seedGeneration;
+
 using Sync = ULIABI::Sync;
 using Work = ULIABI::Work;
 
@@ -117,7 +119,212 @@ void ULIABI::createSync(SyncInst &inst, ValueToValueMapTy &DetachCtxToStackFrame
 Function *ULIABI::createDetach(DetachInst &Detach,
                         ValueToValueMapTy &DetachCtxToStackFrame,
                         DominatorTree &DT, AssumptionCache &AC) {
-  assert(false);
+
+    BasicBlock * curBB = Detach.getParent();
+    Function * F = curBB->getParent();
+    Module * M = F->getParent();
+    LLVMContext& C = M->getContext();
+    BasicBlock * detachBlock = Detach.getDetached();    
+    BasicBlock *Continue = Detach.getContinue();
+
+    
+
+    // The block is from a detach inst->continue and all the way until it finds a 
+    // 1. reattach. Change the call function into a send instruction. Remove the store inst.
+    // 2. Sync. Change the call function into a send instruction. Remove the store inst. 
+    
+    // Push continue instruction into a list.
+    // If continue has a sync. Break, don't create 
+    // Get the successor of the continue instruction
+    // If it consists a sync. Break don't create.
+    // If it consists a detach, push and jump to the achd block
+    // If it consists a reattach instruction. Break but also push the block. 
+    // Do a dfs. Push them into a list.
+    // We assume that the cilk_spawn does not exisit in a certain branch only.
+    // Check for each basic block the 
+    
+    // Clone the building block from the list.
+    // In the clone, if there is a reattach, change a call to send instruction.
+    // Remove the store instruction. 
+
+    // Understand extract function to copy an exisiting code.     
+    // Can use cloneBasicBlock
+    
+    // Create the work Generation
+    SmallVector<BasicBlock*, 8> bbV2Clone;
+    SmallVector<BasicBlock*, 8> bbList;
+    DenseMap<BasicBlock *, bool> haveVisited;
+    ValueToValueMapTy VMap;    
+    BasicBlock * bb = nullptr;
+    Instruction * term = nullptr;
+    bool bIgnore = false;
+    
+    // Search 
+    bbList.push_back(Continue);
+    while(!bbList.empty()){
+        bb = bbList.back();
+        bbList.pop_back();
+        if ( (haveVisited.lookup(bb)) ){
+            continue;
+        }
+        haveVisited[bb] = true;
+
+        if ( (term = dyn_cast<DetachInst>(bb->getTerminator())) ){
+            bbV2Clone.push_back(bb);
+            bb = dyn_cast<DetachInst>(term)->getDetached();
+            bbList.push_back(bb);
+        } else if ( (term = dyn_cast<ReattachInst>(bb->getTerminator()))  ){
+            bbV2Clone.push_back(bb);
+        } else if ( (term = dyn_cast<SyncInst>(bb->getTerminator())) ){
+            bIgnore = true;
+            break;
+        } else {
+            bbV2Clone.push_back(bb);
+            for( succ_iterator SI = succ_begin(bb); SI!=succ_end(bb); SI++ ){                
+                bbList.push_back(*SI);
+            }
+        }
+    }
+    
+
+    // Work generation for thief
+    if(!bIgnore){
+        DEBUG(dbgs() << "\nclone start-----------------\n " );
+
+        for(auto BB : bbV2Clone){
+            // Clone this basic block
+            // modify the following instruction
+            // detach->br det.achd
+            // reattach->remove
+            // In detach block, remove store. Change call to send instr.
+
+            // Create a new basic block and copy instructions into it!
+            BasicBlock *bbC = CloneBasicBlock(BB, VMap, ".workGen_Steal", F, nullptr,
+                                      nullptr);
+                        
+            //TODO:
+            //Loop through each instruction and fix the basic block reference, phi node
+            //Look at Outline.cpp CloneIntoFunction after 
+            // Use VMAP and the following function RemapInstruction
+            bbC->dump();
+            
+        }
+        DEBUG(dbgs() << "\nclone end-----------------\n " );
+    }
+
+#if 0
+    // Parallel path
+    bbV2Clone.clear();
+    bbList.clear();
+    haveVisited.clear();
+    bb = nullptr;
+    term = nullptr;
+    bIgnore = false;
+    
+    // Search 
+    bbList.push_back(Continue);
+    bbList.push_back(detachBlock);
+    while(!bbList.empty()){
+        bb = bbList.back();
+        bbList.pop_back();
+        if ( (haveVisited.lookup(bb)) ){
+            continue;
+        }
+        haveVisited[bb] = true;
+
+        if ( (term = dyn_cast<DetachInst>(bb->getTerminator())) ){
+            bbV2Clone.push_back(bb);
+        } else if ( (term = dyn_cast<SyncInst>(bb->getTerminator())) ){
+            bbV2Clone.push_back(bb);
+        } else {
+            bbV2Clone.push_back(bb);
+            for( succ_iterator SI = succ_begin(bb); SI!=succ_end(bb); SI++ ){                
+                bbList.push_back(*SI);
+            }
+        }
+    }
+    
+
+    // Work generation for thief
+    if(!bIgnore){
+        DEBUG(dbgs() << "\nparallel path start-----------------\n " );
+
+        for(auto BB : bbV2Clone){
+            // Clone this basic block
+            // modify the following instruction
+            // detach->br det.achd
+            // reattach->remove
+            // In detach block, remove store. Change call to send instr.
+
+            // Create a new basic block and copy instructions into it!
+            BasicBlock *bbC = CloneBasicBlock(BB, VMap, ".parallelPath", F, nullptr,
+                                      nullptr);
+                        
+            bbC->dump();
+            
+        }
+        DEBUG(dbgs() << "\nparallel path end-----------------\n " );
+    }
+#endif
+
+    //Function * replyInst = Instrinsic::getDeclaration(M, Intrinsic::x86_uli_reply);
+    //B.CreateCall(replyInst, {});        
+
+    // Start from the last detach
+    
+    // Get the continue block. If the block has a sync at the end of it, 
+    // the at the beginning of the block you need to pop the seed (Not valid)
+    // since after the last detach you can have if else meaning the sync inst.
+    // is still down below
+    
+    // Where to push the seed? We can do it in the preprocess function instead.
+    // But if there is multiple sync, we need push only when we encounter the 
+    // first detach
+
+    // Get the achd block. Add a potential Jump to the seed generation
+   
+   IRBuilder<> builder(&*detachBlock->getFirstInsertionPt());
+   Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
+   Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);
+   //Value * NULLPTR = ConstantPointerNull::get(IntegerType::getInt64Ty(Detach.getContext())->getPointerTo());
+   
+   // Do the potential jump later instead
+   Value * seedGen = builder.CreateBitCast(Detach.getParent()->getParent(), VoidPtrTy);
+   //Value * seedGen = builder.CreateBitCast(seedGeneration, VoidPtrTy);
+   //seedGen = builder.CreateBitCast(seedGen, VoidPtrTy);
+   //seedGen = builder.CreateBitCast(seedGen, VoidPtrTy);
+   //builder.CreateCall(potentialJump, {seedGen});
+    
+   BranchInst *DetachBr = BranchInst::Create(detachBlock);   
+   Instruction * reattach = Detach.getDetached()->getTerminator();
+   BranchInst *ContinueBr = BranchInst::Create(Continue);
+   //ReplaceInstWithInst(&Detach, DetachBr);
+   reattach->dump();
+   //ReplaceInstWithInst(reattach, ContinueBr);
+   
+   
+   
+   
+    // Flow is similar to Cilk, except that we don't need a helper function and
+    // just directly call the function
+    
+
+    // change the detach into branch into detach block
+    // chang reattach into branch into continue block
+    // in other words
+    // Change the flow of the det.achd and det.continue
+    // det.achd -> det.continue
+    // Can I use populate Detached CFG?
+
+    // How to change the detach instruction. Look at createDetach since it changes the detach instrcution
+  
+    // Extract function here to get the seed generation for suspend and steal
+   
+
+   
+
+    
+   //assert(false);
   return nullptr;
 }
 
@@ -146,6 +353,7 @@ using UliArgType = long long int;
 
 using TypeBuilderCache = std::map<LLVMContext *, StructType *>;
 
+namespace llvm {
 template <bool X>
 class TypeBuilder<Sync, X> {
 public:
@@ -177,6 +385,7 @@ public:
     seedStolen
   };
 };
+}
 
 // struct Work {
 //     FP fp;
@@ -192,6 +401,7 @@ public:
 //     unsigned int src;
 // };
 
+namespace llvm {
 template <bool X>
 class TypeBuilder<Work, X> {
 public:
@@ -239,7 +449,7 @@ public:
     src
   };
 };
-
+}
 using WorkType = TypeBuilder<Work, false>;
 
 
@@ -353,13 +563,26 @@ void ULIABI::preProcessFunction(Function &F) {
     Wrapper->dump();
     F.dump();
   }
+  
+  // Generate the seed generation here  
+  {
+    seedGeneration = BasicBlock::Create(C, "seedGen", &F);
+    seedGeneration->dump();
+    
+  }
 
+  F.dump();
+  
 
-  assert(false);
+  //assert(false);
 }
 
 void ULIABI::postProcessFunction(Function &F) {
-  assert(false);
+    // Generate the parallel path here and do some fix up?
+    
+    // Generate the gotStolen path and the ready thread sync resume here
+    
+    assert(false);
 }
 
 void ULIABI::postProcessHelper(Function &F) {
@@ -372,3 +595,4 @@ bool ULIABILoopSpawning::processLoop() {
 }
 
 ULIABI::ULIABI() {}
+
