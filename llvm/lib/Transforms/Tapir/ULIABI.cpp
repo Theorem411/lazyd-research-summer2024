@@ -40,9 +40,10 @@ using namespace llvm;
 #define DEBUG_TYPE "uliabi"
 
 BasicBlock * seedGeneration;
-
+Value * prscDescLocal;
 using Sync = ULIABI::Sync;
 using Work = ULIABI::Work;
+using PRSC_Desc = ULIABI::PRSC_Desc;
 
 /// Helper methods for storing to and loading from struct fields.
 static Value *GEP(IRBuilder<> &B, Value *Base, int field) {
@@ -68,11 +69,202 @@ static Value *LoadSTyField(
     IRBuilder<> &B, const DataLayout &DL, StructType *STy, Value *Src,
     int field, bool isVolatile = false,
     AtomicOrdering Ordering = AtomicOrdering::NotAtomic) {
-  LoadInst *L =  B.CreateAlignedLoad(GEP(B, Src, field),
+    LoadInst *L =  B.CreateAlignedLoad(GEP(B, Src, field),
                                      GetAlignment(DL, STy, field), isVolatile);
   L->setOrdering(Ordering);
   return L;
 }
+
+using TypeBuilderCache = std::map<LLVMContext *, StructType *>;
+
+
+#define DEFAULT_GET_LIB_FUNC(name)                          \
+  static Constant *Get_##name(Module& M) {                  \
+    return M.getOrInsertFunction( #name,                    \
+        TypeBuilder< name##_ty, false>::get(M.getContext()) \
+      );                                                    \
+  }
+
+using ENAULI_ty = void (unsigned long);
+DEFAULT_GET_LIB_FUNC(ENAULI)
+
+using PRSC_DEC_JOIN_ty = void (Sync*);
+DEFAULT_GET_LIB_FUNC(PRSC_DEC_JOIN)
+
+using PRSC_SET_JOIN_ty = void (Sync*, int);
+DEFAULT_GET_LIB_FUNC(PRSC_SET_JOIN)
+
+using PRSC_RESUME_TO_HANDLER_ty = void (int );
+DEFAULT_GET_LIB_FUNC(PRSC_RESUME_TO_HANDLER)
+
+typedef void* (*FP)(void);
+using Scalar = long long int;
+using UliArgType = long long int;
+
+
+// typedef struct {
+//     char bEnqResume;
+//     uint counter;
+//     char seedStolen;
+// } Sync;
+
+namespace llvm {
+template <bool X>
+class TypeBuilder<Sync, X> {
+public:
+  static StructType *get(LLVMContext &C) {
+    static TypeBuilderCache cache;
+    TypeBuilderCache::iterator I = cache.find(&C);
+    if (I != cache.end())
+      return I->second;
+    // Try looking up this type by name.
+    StructType *ExistingTy = StructType::lookupOrCreate(C, "Sync");
+    cache[&C] = ExistingTy;
+    StructType *NewTy = StructType::create(C);
+    NewTy->setBody(
+        TypeBuilder<char, X>::get(C), // bEnqResume
+        TypeBuilder<uint, X>::get(C), // counter
+        TypeBuilder<char, X>::get(C)  // seedStolen
+                          );
+    if (ExistingTy->isOpaque())
+      ExistingTy->setBody(NewTy->elements());
+    else {
+      assert(ExistingTy->isLayoutIdentical(NewTy) &&
+             "Conflicting definition of type struct.Sync");
+    }
+    return ExistingTy;
+  }
+  enum {
+    bEnqResume,
+    counter,
+    seedStolen
+  };
+};
+}
+
+using SyncType = TypeBuilder<Sync, false>;
+
+// struct Work {
+//     FP fp;
+//     int id;
+//     Scalar* argv;
+//     uint argc;
+//     Scalar* res;
+//     Sync* pSync;
+//     Work* next;
+//     Work* prev;
+//     int stolen;
+//     int realized;
+//     unsigned int src;
+// };
+
+namespace llvm {
+template <bool X>
+class TypeBuilder<Work, X> {
+public:
+  static StructType *get(LLVMContext &C) {
+    static TypeBuilderCache cache;
+    TypeBuilderCache::iterator I = cache.find(&C);
+    if (I != cache.end())
+      return I->second;
+    // Try looking up this type by name.
+    StructType *ExistingTy = StructType::lookupOrCreate(C, "Work");
+    cache[&C] = ExistingTy;
+    StructType *NewTy = StructType::create(C);
+    NewTy->setBody(
+        TypeBuilder<FP, X>::get(C), // fp
+        TypeBuilder<int, X>::get(C), // id
+        TypeBuilder<Scalar*, X>::get(C), // argv
+        TypeBuilder<uint, X>::get(C), // argc
+        TypeBuilder<Scalar*, X>::get(C), // res
+        TypeBuilder<Sync*, X>::get(C), // pSync
+        TypeBuilder<Work*, X>::get(C), // next
+        TypeBuilder<Work*, X>::get(C), // prev
+        TypeBuilder<int, X>::get(C), // stolen
+        TypeBuilder<int, X>::get(C), // realized
+        TypeBuilder<unsigned int, X>::get(C)  // src
+                          );
+    if (ExistingTy->isOpaque())
+      ExistingTy->setBody(NewTy->elements());
+    else {
+      assert(ExistingTy->isLayoutIdentical(NewTy) &&
+             "Conflicting definition of type struct.Work");
+    }
+    return ExistingTy;
+  }
+  enum {
+    fp,
+    id,
+    argv,
+    argc,
+    res,
+    pSync,
+    next,
+    prev,
+    stolen,
+    realized,
+    src
+  };
+};
+}
+using WorkType = TypeBuilder<Work, false>;
+
+// typedef struct {
+//
+//
+//
+// } PRSC_Desc
+
+namespace llvm{
+template <bool X>
+class TypeBuilder<PRSC_Desc, X> {
+public:
+  static StructType *get(LLVMContext &C){
+      static TypeBuilderCache cache;
+      TypeBuilderCache::iterator I = cache.find(&C);
+      if(I != cache.end())
+          return I->second;
+      StructType *ExistingTy = StructType::lookupOrCreate(C, "PRSC_Desc");
+      cache[&C] = ExistingTy;
+      StructType *NewTy = StructType::create(C);
+      NewTy->setBody(
+                     TypeBuilder<Sync, X>::get(C), // Sync
+                     TypeBuilder<char, X>::get(C), // bpushback
+                     TypeBuilder<Scalar*, X>::get(C),  // res
+                     TypeBuilder<Work*, X>::get(C), // work
+                     TypeBuilder<void*, X>::get(C), // bp
+                     TypeBuilder<void*, X>::get(C),  // sp
+                     TypeBuilder<void*, X>::get(C), // resumeip
+                     TypeBuilder<void*, X>::get(C),  // handlerip
+                     TypeBuilder<void*, X>::get(C), // handlersp
+                     TypeBuilder<void*, X>::get(C)  // handlerbp
+      
+                     );
+      if(ExistingTy->isOpaque())
+          ExistingTy->setBody(NewTy->elements());
+      else
+          assert(ExistingTy->isLayoutIdentical(NewTy) && 
+                 "Conflicting definition of type struct.PRSC_Desc");
+
+      return ExistingTy;
+  }
+  enum {
+      sync,
+      bpushback,
+      res, 
+      work,
+      bp,
+      sp,
+      resumeip,      
+      handlerip,
+      handlersp,
+      handlerbp
+  };
+};
+}
+
+using PRSC_DescType = TypeBuilder<PRSC_Desc, false>;
+
 
 /*
 /// \brief Helper to find a function with the given name, creating it if it
@@ -126,7 +318,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     LLVMContext& C = M->getContext();
     BasicBlock * detachBlock = Detach.getDetached();    
     BasicBlock *Continue = Detach.getContinue();
-
+    const DataLayout &DL = M->getDataLayout();
     
 
     // The block is from a detach inst->continue and all the way until it finds a 
@@ -176,8 +368,9 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         } else if ( (term = dyn_cast<ReattachInst>(bb->getTerminator()))  ){
             bbV2Clone.push_back(bb);
         } else if ( (term = dyn_cast<SyncInst>(bb->getTerminator())) ){
-            bIgnore = true;
-            break;
+            bbV2Clone.push_back(bb);
+            //bIgnore = true;
+            //break;
         } else {
             bbV2Clone.push_back(bb);
             for( succ_iterator SI = succ_begin(bb); SI!=succ_end(bb); SI++ ){                
@@ -186,6 +379,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         }
     }
     
+    SmallVector<Instruction *,2> del_instrs;
 
     // Work generation for thief
     if(!bIgnore){
@@ -202,17 +396,120 @@ Function *ULIABI::createDetach(DetachInst &Detach,
             BasicBlock *bbC = CloneBasicBlock(BB, VMap, ".workGen_Steal", F, nullptr,
                                       nullptr);
                         
-            //TODO:
-            //Loop through each instruction and fix the basic block reference, phi node
-            //Look at Outline.cpp CloneIntoFunction after 
-            // Use VMAP and the following function RemapInstruction
+            
+            
             bbC->dump();
+            VMap[BB] = bbC;
             
         }
         DEBUG(dbgs() << "\nclone end-----------------\n " );
+    
+        DEBUG(dbgs() << "\nremap start-----------------\n " );
+        
+
+        for(auto BB : bbV2Clone){
+            // Clone this basic block
+            // modify the following instruction
+            // detach->br det.achd
+            // reattach->remove
+            // In detach block, remove store. Change call to send instr.
+            BasicBlock *CBB = dyn_cast<BasicBlock>(VMap[BB]);
+            Instruction *iterm  = CBB->getTerminator();
+            if(DetachInst * itermDet = dyn_cast<DetachInst>(iterm)){
+                BasicBlock * detachBlock = itermDet->getDetached();
+                BranchInst *detachBr = BranchInst::Create(detachBlock);
+                ReplaceInstWithInst(itermDet, detachBr);
+            
+            } else if(ReattachInst * itermRet = dyn_cast<ReattachInst>(iterm)){
+                // The first instruction is a call and the the next instruction is a 
+                Instruction * instr = CBB->getFirstNonPHIOrDbgOrLifetime();
+                CallInst * callInst = dyn_cast<CallInst>(instr);
+                assert(callInst && "First instruction not a call instruction. Seems like something is wrong");
+                callInst->dump();
+
+                SmallVector<Value*, 8> Args;
+                for (int i = 0; i<callInst->getNumOperands()-1; i++){
+                    //    Args.push_back(callInst->getOperand(i));
+                    //callInst->getOperand(i)->dump();
+                }
+                
+                IRBuilder<> B(instr);
+
+                Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);
+                Type *PRSC_DescTy = TypeBuilder<PRSC_Desc*, false>::get(C);
+                Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
+
+                Value *InletPtr = B.CreateBitCast(F, VoidPtrTy);
+                
+                Args.push_back(InletPtr);
+
+        
+                Function *UliReply = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_reply);
+                //CallInst * newCallInst = CallInst::Create(UliReply, Args);
+                B.CreateCall(UliReply, Args);
+                //newCallInst->dump();
+                
+                
+
+                Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
+                //Value *PRSCSync = LoadSTyField(B, DL, PRSC_DescType::get(C), prscDescLocal, PRSC_DescType::sync);
+                Value * PRSCSync  = B.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sync);
+                prscDescLocal->dump();
+                PRSCSync->dump();
+                Value *PRSCpSync = B.CreateBitCast(PRSCSync, SyncType::get(C)->getPointerTo()); 
+                Constant *PRSC_SET_JOIN = Get_PRSC_SET_JOIN(*M);
+                B.CreateCall(PRSC_SET_JOIN, {PRSCpSync, Zero});
+
+                Constant *PRSC_RESUME_TO_HANDLER = Get_PRSC_RESUME_TO_HANDLER(*M);
+                B.CreateCall(PRSC_RESUME_TO_HANDLER, Zero);
+
+                //DEBUG(dbgs() << "Number of operand :" << callInst->getNumOperands() << "\n");
+                                               
+                del_instrs.push_back(instr->getNextNode());
+                del_instrs.push_back(instr);
+                del_instrs.push_back(iterm);
+
+            } else if (SyncInst * itermSync = dyn_cast<SyncInst>(iterm)){
+                //TODO:
+                // Find the function that can be spawned before the sync statement and its store
+                // Create a reply instruction for that function and remove the store instruction after it
+                // Should we also remove the remaining instruction?
+
+            }
+            
+            CBB->dump();
+            
+            DEBUG(dbgs() << "\-------------------\n " );
+
+            // Remap instruction
+            for (Instruction &II : *CBB) {
+                //II.dump();
+                RemapInstruction(&II, VMap,
+                                 RF_IgnoreMissingLocals,
+                                 nullptr, nullptr);
+            }
+            
+                        
+        
+                       
+
+            CBB->dump();
+            
+        }
+        DEBUG(dbgs() << "\nremap end-----------------\n " );
+        
+
+    }
+
+
+    for (auto In : del_instrs){
+        Instruction& inst = *In;
+        inst.eraseFromParent(); // delete instrs
     }
 
 #if 0
+    //TODO :
+    // Should I create the parallel path?
     // Parallel path
     bbV2Clone.clear();
     bbList.clear();
@@ -328,130 +625,6 @@ Function *ULIABI::createDetach(DetachInst &Detach,
   return nullptr;
 }
 
-#define DEFAULT_GET_LIB_FUNC(name)                          \
-  static Constant *Get_##name(Module& M) {                  \
-    return M.getOrInsertFunction( #name,                    \
-        TypeBuilder< name##_ty, false>::get(M.getContext()) \
-      );                                                    \
-  }
-
-using ENAULI_ty = void (unsigned long);
-DEFAULT_GET_LIB_FUNC(ENAULI)
-
-using PRSC_DEC_JOIN_ty = void (Sync*);
-DEFAULT_GET_LIB_FUNC(PRSC_DEC_JOIN)
-
-typedef void* (*FP)(void);
-using Scalar = long long int;
-using UliArgType = long long int;
-
-// typedef struct {
-//     char bEnqResume;
-//     uint counter;
-//     char seedStolen;
-// } Sync;
-
-using TypeBuilderCache = std::map<LLVMContext *, StructType *>;
-
-namespace llvm {
-template <bool X>
-class TypeBuilder<Sync, X> {
-public:
-  static StructType *get(LLVMContext &C) {
-    static TypeBuilderCache cache;
-    TypeBuilderCache::iterator I = cache.find(&C);
-    if (I != cache.end())
-      return I->second;
-    // Try looking up this type by name.
-    StructType *ExistingTy = StructType::lookupOrCreate(C, "Sync");
-    cache[&C] = ExistingTy;
-    StructType *NewTy = StructType::create(C);
-    NewTy->setBody(
-        TypeBuilder<char, X>::get(C), // bEnqResume
-        TypeBuilder<uint, X>::get(C), // counter
-        TypeBuilder<char, X>::get(C)  // seedStolen
-                          );
-    if (ExistingTy->isOpaque())
-      ExistingTy->setBody(NewTy->elements());
-    else {
-      assert(ExistingTy->isLayoutIdentical(NewTy) &&
-             "Conflicting definition of type struct.Sync");
-    }
-    return ExistingTy;
-  }
-  enum {
-    bEnqResume,
-    counter,
-    seedStolen
-  };
-};
-}
-
-// struct Work {
-//     FP fp;
-//     int id;
-//     Scalar* argv;
-//     uint argc;
-//     Scalar* res;
-//     Sync* pSync;
-//     Work* next;
-//     Work* prev;
-//     int stolen;
-//     int realized;
-//     unsigned int src;
-// };
-
-namespace llvm {
-template <bool X>
-class TypeBuilder<Work, X> {
-public:
-  static StructType *get(LLVMContext &C) {
-    static TypeBuilderCache cache;
-    TypeBuilderCache::iterator I = cache.find(&C);
-    if (I != cache.end())
-      return I->second;
-    // Try looking up this type by name.
-    StructType *ExistingTy = StructType::lookupOrCreate(C, "Work");
-    cache[&C] = ExistingTy;
-    StructType *NewTy = StructType::create(C);
-    NewTy->setBody(
-        TypeBuilder<FP, X>::get(C), // fp
-        TypeBuilder<int, X>::get(C), // id
-        TypeBuilder<Scalar*, X>::get(C), // argv
-        TypeBuilder<uint, X>::get(C), // argc
-        TypeBuilder<Scalar*, X>::get(C), // res
-        TypeBuilder<Sync*, X>::get(C), // pSync
-        TypeBuilder<Work*, X>::get(C), // next
-        TypeBuilder<Work*, X>::get(C), // prev
-        TypeBuilder<int, X>::get(C), // stolen
-        TypeBuilder<int, X>::get(C), // realized
-        TypeBuilder<unsigned int, X>::get(C)  // src
-                          );
-    if (ExistingTy->isOpaque())
-      ExistingTy->setBody(NewTy->elements());
-    else {
-      assert(ExistingTy->isLayoutIdentical(NewTy) &&
-             "Conflicting definition of type struct.Work");
-    }
-    return ExistingTy;
-  }
-  enum {
-    fp,
-    id,
-    argv,
-    argc,
-    res,
-    pSync,
-    next,
-    prev,
-    stolen,
-    realized,
-    src
-  };
-};
-}
-using WorkType = TypeBuilder<Work, false>;
-
 
 void ULIABI::preProcessFunction(Function &F) {
   if (F.getName() != "fib") return;
@@ -476,6 +649,11 @@ void ULIABI::preProcessFunction(Function &F) {
   assert(RetType == Int32Ty || RetType == Int64Ty);
 
   Type *WorkPtrTy = TypeBuilder<Work*, false>::get(C);
+  
+  BasicBlock & entry  = F.getEntryBlock();
+  IRBuilder<> B(entry.getFirstNonPHIOrDbgOrLifetime());
+  Type *PRSC_DescTy = PRSC_DescType::get(C);
+  prscDescLocal = B.CreateAlloca(PRSC_DescTy, DL.getAllocaAddrSpace(), nullptr, "PRSC_Dec");
 
 
   Function *Inlet = nullptr;
@@ -497,7 +675,8 @@ void ULIABI::preProcessFunction(Function &F) {
     // Value *FromMatch = B.CreateICmpEQ(&FromArg, &From2Arg);
 
     Constant *PRSC_DEC_JOIN = Get_PRSC_DEC_JOIN(*M);
-
+    
+    
     Value *WorkPSync = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::pSync);
     B.CreateCall(PRSC_DEC_JOIN, WorkPSync);
 
