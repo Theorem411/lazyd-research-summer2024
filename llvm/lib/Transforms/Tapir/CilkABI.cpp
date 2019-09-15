@@ -1593,6 +1593,13 @@ void CilkABI::preProcessRootSpawner(Function &F, BasicBlock *TFEntry) {
                        TimePassesIsEnabled);
   GetOrInitCilkStackFrame(F, /*Helper=*/false, false);
 
+  DEBUG(dbgs() << "CallBlock -------------------------\n");
+  
+  DEBUG(dbgs() << *CallBlock);
+  
+  DEBUG(dbgs() << "-------------------------\n");
+
+
   // Mark this function as stealable.
   F.addFnAttr(Attribute::Stealable);
 }
