@@ -1567,7 +1567,6 @@ void CilkABI::lowerSync(SyncInst &SI) {
 
   // Remember to inline this call later.
   CallsToInline.insert(CB);
-
   // Mark this function as stealable.
   Fn.addFnAttr(Attribute::Stealable);
 }
