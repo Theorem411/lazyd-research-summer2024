@@ -324,28 +324,6 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     BasicBlock *Continue = Detach.getContinue();
     const DataLayout &DL = M->getDataLayout();
     
-
-
-    // The block is from a detach inst->continue and all the way until it finds a 
-    // 1. reattach. Change the call function into a send instruction. Remove the store inst.
-    // 2. Sync. Change the call function into a send instruction. Remove the store inst. 
-    
-    // Push continue instruction into a list.
-    // If continue has a sync. Break, don't create 
-    // Get the successor of the continue instruction
-    // If it consists a sync. Break don't create.
-    // If it consists a detach, push and jump to the achd block
-    // If it consists a reattach instruction. Break but also push the block. 
-    // Do a dfs. Push them into a list.
-    // We assume that the cilk_spawn does not exisit in a certain branch only.
-    // Check for each basic block the 
-    
-    // Clone the building block from the list.
-    // In the clone, if there is a reattach, change a call to send instruction.
-    // Remove the store instruction. 
-
-    // Understand extract function to copy an exisiting code.     
-    // Can use cloneBasicBlock
     
     // Create the work Generation
     SmallVector<BasicBlock*, 8> bbV2Clone;
@@ -356,6 +334,13 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     Instruction * term = nullptr;
     bool bIgnore = false;
     
+    SmallVector<Instruction *,2> del_instrs;
+  
+    Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);
+    Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
+    Value *Zero = ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
+    
+
     // Search 
     bbList.push_back(Continue);
     while(!bbList.empty()){
@@ -374,8 +359,6 @@ Function *ULIABI::createDetach(DetachInst &Detach,
             bbV2Clone.push_back(bb);
         } else if ( (term = dyn_cast<SyncInst>(bb->getTerminator())) ){
             bbV2Clone.push_back(bb);
-            //bIgnore = true;
-            //break;
         } else {
             bbV2Clone.push_back(bb);
             for( succ_iterator SI = succ_begin(bb); SI!=succ_end(bb); SI++ ){                
@@ -383,55 +366,33 @@ Function *ULIABI::createDetach(DetachInst &Detach,
             }
         }
     }
-    
-    SmallVector<Instruction *,2> del_instrs;
+  
 
     
     // Work generation for thief
     if(!bIgnore){
-        DEBUG(dbgs() << "\nclone start-----------------\n " );
-
         for(auto BB : bbV2Clone){
-            // Clone this basic block
-            // modify the following instruction
-            // detach->br det.achd
-            // reattach->remove
-            // In detach block, remove store. Change call to send instr.
-
-            // Create a new basic block and copy instructions into it!
             BasicBlock *bbC = CloneBasicBlock(BB, VMap, ".workGen_Steal", F, nullptr,
                                       nullptr);
-                        
-            
-            
             VMap[BB] = bbC;
             
         }
-        DEBUG(dbgs() << "\nclone end-----------------\n " );
-    
-        DEBUG(dbgs() << "\nremap start-----------------\n " );
-        
+
         //TODO : Fix up the instruction(argument etc) and refactoring
         Instruction * potentialCall = nullptr;
         bool bFoundPotentialCall = false;
         for(auto BB : bbV2Clone){
-            // Clone this basic block
-            // modify the following instruction
-            // detach->br det.achd
-            // reattach->remove
-            // In detach block, remove store. Change call to send instr.
+
             BasicBlock *CBB = dyn_cast<BasicBlock>(VMap[BB]);
             Instruction *iterm  = CBB->getTerminator();
             if(DetachInst * itermDet = dyn_cast<DetachInst>(iterm)){
                 BasicBlock * detachBlock = itermDet->getDetached();
                 BranchInst *detachBr = BranchInst::Create(detachBlock);
                 ReplaceInstWithInst(itermDet, detachBr);
-            
-            } else if(ReattachInst * itermRet = dyn_cast<ReattachInst>(iterm)){
+
                 genWorkBB[detachLevel] = CBB;
-                DEBUG(dbgs() << "\ngenWork start-----------------\n " );
-                //genWorkBB[detachLevel]->dump();
-                // The first instruction is a call and the the next instruction is a 
+            
+            } else if(ReattachInst * itermRet = dyn_cast<ReattachInst>(iterm)){                
                 Instruction * instr = CBB->getFirstNonPHIOrDbgOrLifetime();
                 CallInst * callInst = dyn_cast<CallInst>(instr);
                 assert(callInst && "First instruction not a call instruction. Seems like something is wrong");
@@ -454,14 +415,9 @@ Function *ULIABI::createDetach(DetachInst &Detach,
 
         
                 Function *UliReply = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_reply);
-                //CallInst * newCallInst = CallInst::Create(UliReply, Args);
                 B.CreateCall(UliReply, Args);
-                //newCallInst->dump();
-                
-                
 
                 Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
-                //Value *PRSCSync = LoadSTyField(B, DL, PRSC_DescType::get(C), prscDescLocal, PRSC_DescType::sync);
                 Value * PRSCSync  = B.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sync);
 
                 Value *PRSCpSync = B.CreateBitCast(PRSCSync, SyncType::get(C)->getPointerTo()); 
@@ -471,8 +427,6 @@ Function *ULIABI::createDetach(DetachInst &Detach,
                 Constant *PRSC_RESUME_TO_HANDLER = Get_PRSC_RESUME_TO_HANDLER(*M);
                 B.CreateCall(PRSC_RESUME_TO_HANDLER, Zero);
 
-                //DEBUG(dbgs() << "Number of operand :" << callInst->getNumOperands() << "\n");
-                                               
                 del_instrs.push_back(instr->getNextNode());
                 del_instrs.push_back(instr);
                 del_instrs.push_back(iterm);
@@ -520,13 +474,8 @@ Function *ULIABI::createDetach(DetachInst &Detach,
                 }
             }
               
-     
-            
-             DEBUG(dbgs() << "\-------------------\n " );
-
             // Remap instruction
             for (Instruction &II : *CBB) {
-                //II.dump();
                 RemapInstruction(&II, VMap,
                                  RF_IgnoreMissingLocals,
                                  nullptr, nullptr);
@@ -534,7 +483,6 @@ Function *ULIABI::createDetach(DetachInst &Detach,
             
                         
         }
-        DEBUG(dbgs() << "\nremap end-----------------\n " );
         
 
     }
@@ -544,19 +492,39 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         Instruction& inst = *In;
         inst.eraseFromParent(); // delete instrs
     }
-    
+
+#if 1    
     // TODO :
     // Got stolen case
     BasicBlock * gotStolenArr[4];
-    BasicBlock * gotStolen = BasicBlock::Create(C, "gotStolen", F);
+    gotStolenArr[0] = BasicBlock::Create(C, "gotStolen", F);
+    IRBuilder<> gotStolenB (gotStolenArr[0]);
     int tmpLevel = detachLevel;
+    
+    // Store result of function
+    // Decrement counter
+    Value * PRSCSync  = gotStolenB.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sync);    
+    Value *PRSCpSync = gotStolenB.CreateBitCast(PRSCSync, SyncType::get(C)->getPointerTo()); 
+    Constant *PRSC_DEC_JOIN = Get_PRSC_DEC_JOIN(*M);
+    gotStolenB.CreateCall(PRSC_DEC_JOIN, PRSCpSync);
+
+    // Suspend for now
+
     while(tmpLevel > 0){
-        gotStolenArr[detachLevel-tmpLevel] = BasicBlock::Create(C, "gotStolen", F); 
+        gotStolenArr[detachLevel-tmpLevel+1] = BasicBlock::Create(C, "gotStolen", F); 
+        
+        gotStolenB.SetInsertPoint(gotStolenArr[detachLevel-tmpLevel+1]);
+        
+        Value * PRSCSync  = gotStolenB.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sync);    
+        Value *PRSCpSync = gotStolenB.CreateBitCast(PRSCSync, SyncType::get(C)->getPointerTo()); 
+        Constant *PRSC_DEC_JOIN = Get_PRSC_DEC_JOIN(*M);
+        gotStolenB.CreateCall(PRSC_DEC_JOIN, PRSCpSync);
+
+
         tmpLevel--;
     }
     
     
-    //------------------------------------------------------------------------------------------
     //TODO:
     // Create FSM for choosing which work to send
     BasicBlock * ifTrue = BasicBlock::Create(C, "TrueBB", F);
@@ -569,14 +537,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
 
     BlockAddress* bA = BlockAddress::get(detachBlock);
     
-    Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);
-    Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
-    Value *Zero = ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
     
-    
-    //B.CreateStore(bA, tmp_var2);
-    // tmp_var = &tmp_var2
-
     Value * cmpRes = workFSMB.CreateICmpEQ(bA,pRA);
     workFSMB.CreateCondBr(cmpRes, ifTrue, ifFalse);
  
@@ -590,13 +551,13 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     tmpLevel = detachLevel;
     while(tmpLevel > 0){
         BlockAddress* bA = BlockAddress::get(gotStolenArr[detachLevel-tmpLevel]);
-
-        Value * cmpRes = workFSMB.CreateICmpEQ(bA,pRA);
-        workFSMB.CreateCondBr(cmpRes, ifTrue, ifFalse);
         
         BasicBlock * ifTrue = BasicBlock::Create(C, "TrueBB", F);
         BasicBlock * ifFalse = BasicBlock::Create(C, "FalseBB", F);
-    
+  
+        Value * cmpRes = workFSMB.CreateICmpEQ(bA,pRA);
+        workFSMB.CreateCondBr(cmpRes, ifTrue, ifFalse);
+           
         workFSMB.SetInsertPoint(ifTrue);
 
         if(genWorkBB[tmpLevel-1])
@@ -607,7 +568,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
 
         tmpLevel--;
     }
-    
+#endif    
 
 #if 0
     //TODO :
@@ -665,29 +626,12 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     }
 #endif
 
-    //Function * replyInst = Instrinsic::getDeclaration(M, Intrinsic::x86_uli_reply);
-    //B.CreateCall(replyInst, {});        
-
-    // Start from the last detach
-    
-    // Get the continue block. If the block has a sync at the end of it, 
-    // the at the beginning of the block you need to pop the seed (Not valid)
-    // since after the last detach you can have if else meaning the sync inst.
-    // is still down below
-    
-    // Where to push the seed? We can do it in the preprocess function instead.
-    // But if there is multiple sync, we need push only when we encounter the 
-    // first detach
-
-    // Get the achd block. Add a potential Jump to the seed generation
-   
    IRBuilder<> builder(&*detachBlock->getFirstInsertionPt());
    Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
-   //   Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);
-   //Value * NULLPTR = ConstantPointerNull::get(IntegerType::getInt64Ty(Detach.getContext())->getPointerTo());
    
    // Do the potential jump later instead
    Value * seedGen = builder.CreateBitCast(Detach.getParent()->getParent(), VoidPtrTy);
+
    //Value * seedGen = builder.CreateBitCast(seedGeneration, VoidPtrTy);
    //seedGen = builder.CreateBitCast(seedGen, VoidPtrTy);
    //seedGen = builder.CreateBitCast(seedGen, VoidPtrTy);
@@ -696,32 +640,11 @@ Function *ULIABI::createDetach(DetachInst &Detach,
    BranchInst *DetachBr = BranchInst::Create(detachBlock);   
    Instruction * reattach = Detach.getDetached()->getTerminator();
    BranchInst *ContinueBr = BranchInst::Create(Continue);
-   ReplaceInstWithInst(&Detach, DetachBr);
-   ReplaceInstWithInst(reattach, ContinueBr);
-   
-   
-   
-   
-    // Flow is similar to Cilk, except that we don't need a helper function and
-    // just directly call the function
-    
-
-    // change the detach into branch into detach block
-    // chang reattach into branch into continue block
-    // in other words
-    // Change the flow of the det.achd and det.continue
-    // det.achd -> det.continue
-    // Can I use populate Detached CFG?
-
-    // How to change the detach instruction. Look at createDetach since it changes the detach instrcution
-  
-    // Extract function here to get the seed generation for suspend and steal
-   
-
+   //ReplaceInstWithInst(&Detach, DetachBr);
+   //ReplaceInstWithInst(reattach, ContinueBr);
    
    detachLevel++;
     
-   //assert(false);
   return nullptr;
 }
 
