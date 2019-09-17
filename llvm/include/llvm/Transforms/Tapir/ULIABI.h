@@ -65,6 +65,7 @@ public:
   struct Sync {};
   struct Work {};
   struct PRSC_Desc {};
+  struct Seed {};
 };
 
 }  // end of llvm namespace
