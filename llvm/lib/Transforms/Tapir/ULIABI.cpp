@@ -35,6 +35,9 @@
 #include "llvm/Transforms/Utils/TapirUtils.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
+//TODO : Generate suspend routine
+
+
 using namespace llvm;
 
 #define DEBUG_TYPE "uliabi"
@@ -130,8 +133,11 @@ DEFAULT_GET_LIB_FUNC(PRSC_SUSPEND_ROUTINE)
 using PRSC_RESUME_TO_HANDLER_ty = void (int );
 DEFAULT_GET_LIB_FUNC(PRSC_RESUME_TO_HANDLER)
 
+using PRSC_PUSHFRONT_WORKQ_ty = void (Work*);
+DEFAULT_GET_LIB_FUNC(PRSC_PUSHFRONT_WORKQ)
+
 // Argument too much?, cause compilation error
-using PRSC_CREATE_WORK_ty = Work*(void*,int,int,void*,void*,Sync*,void*,int);
+//using PRSC_CREATE_WORK_ty = Work*(void*,int,int,void*,void*,Sync*,void*,int);
 //DEFAULT_GET_LIB_FUNC(PRSC_CREATE_WORK)
 
 typedef void* (*FP)(void);
@@ -719,6 +725,18 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     BasicBlock * ifFalse = BasicBlock::Create(C, "FalseBB", F);
     static IRBuilder<> workFSMB(seedGeneration);
     
+    using AsmPrototype = int (void);
+    FunctionType *FAsmTy =
+        TypeBuilder<AsmPrototype, false>::get(workFSMB.getContext());
+
+    Value *Asm = InlineAsm::get(FAsmTy,
+                              "movl %edi, $0\0A\09",
+                              "=r,~{dirflag},~{fpsr},~{flags}",
+                              /*sideeffects*/ true);
+
+    //%73 = call i32 asm sideeffect "movl %edi, $0\0A\09", "=r,~{dirflag},~{fpsr},~{flags}"() #8, !dbg !2205, !srcloc !2206
+    Value * bSuspendType = workFSMB.CreateCall(Asm);
+
     Value * PRSCSP  = workFSMB.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sp);
     
     pRA = workFSMB.CreateLoad(IntegerType::getInt8Ty(C)->getPointerTo(), PRSCSP);
@@ -1014,10 +1032,26 @@ void ULIABI::preProcessFunction(Function &F) {
    
    Function *HereIsWorkHandler = Function::Create(WorkHandlerFTy, InternalLinkage, Name, M);
    
+   HereIsWorkHandler->addFnAttr(Attribute::UserLevelInterrupt);
+   
    BasicBlock *Entry = BasicBlock::Create(C, "entry", HereIsWorkHandler);
    
-   IRBuilder<> B(Entry);
-   
+   IRBuilder<> B(Entry);   
+
+   using AsmPrototype = int (void);
+   FunctionType *FAsmTy =
+       TypeBuilder<AsmPrototype, false>::get(C);
+
+   Value *Asm = InlineAsm::get(FAsmTy,
+                              "movl %rdi, $0\0A\09",
+                              "=r,~{dirflag},~{fpsr},~{flags}",
+                              /*sideeffects*/ true);
+
+   //%73 = call i32 asm sideeffect "movl %edi, $0\0A\09", "=r,~{dirflag},~{fpsr},~{flags}"() #8, !dbg !2205, !srcloc !2206
+   Value * from = B.CreateCall(Asm);
+   //Value * from = ONE;
+
+
    Constant *PRSC_RESET_WORKSTEAL = Get_PRSC_RESET_WORKSTEAL(*M);
    B.CreateCall(PRSC_RESET_WORKSTEAL);
 
@@ -1028,29 +1062,21 @@ void ULIABI::preProcessFunction(Function &F) {
    Value * parentSP = HereIsWorkHandler->arg_end()-3;
    Value * parentIP = HereIsWorkHandler->arg_end()-4;   
    Value * realArgStart = HereIsWorkHandler->arg_begin() + 1;
-   Value * realArgEnd   = HereIsWorkHandler->arg_end() - 5+1;
+   
+   int numArgs = HereIsWorkHandler->arg_end()-HereIsWorkHandler->arg_begin();
+   int realNumArgs = numArgs - 5;// Remove fp, res, syn, parentSP/IP
 
-   Value * ARGC =  ConstantInt::get(Int32Ty, realArgEnd-realArgStart+1, /*isSigned=*/false);
+
+   Value * ARGC =  ConstantInt::get(Int32Ty, realNumArgs, /*isSigned=*/false);
    Value * ONE =  ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
   
    // TODO : fix this-> lowering of uli_message_from happens earlier than this.    
    //Function *UliFrom = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_message_from);   
    //Value * from = B.CreateCall(UliFrom);
-   Value * from = ONE;
-   
-   //Work *w = PRSC_CREATE_WORK(fp, argc, from, parentIP, parentSP, sync, res, stolen);                
-   //myassert(w && "Fail to create work");
-   //w->argv[0].p = (void *)low;
-   //w->argv[1].p = (void *)tmp;
-   //w->argv[2].lli = size;
-    
-
-
+      
    // Check if fp is NULL
    BasicBlock * fpIsNotNull = BasicBlock::Create(C, "fpIsNotNull", HereIsWorkHandler);
    BasicBlock * fpIsNull = BasicBlock::Create(C, "fpIsNull", HereIsWorkHandler);
-   fp->getType()->dump();
-   ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo())->getType()->dump();
    Value * isFpNull = B.CreateICmpEQ(fp, ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo()) );
    
    B.CreateCondBr(isFpNull, fpIsNull, fpIsNotNull);
@@ -1063,12 +1089,75 @@ void ULIABI::preProcessFunction(Function &F) {
 
    Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {fp, ARGC, from, parentIP, parentSP, sync, res, ONE});
    
-   for(auto ii = realArgStart; ii!= realArgEnd; ii++){
-       // Check type
 
-       
+#if 1
+
+   for(int ii = 0; ii<realNumArgs; ii++){
+       Value * v = realArgStart+ii;
+       // Check type
+       if(v->getType()->isIntegerTy()){
+           errs() << "Value of potentialWork type\n";
+           potentialWork->dump();
+           potentialWork->getType()->dump();
+
+           Value * pargv  = B.CreateStructGEP(WorkType::get(C), potentialWork, (unsigned)WorkType::argv);    
+           errs() << "Value of pargv type\n";
+           pargv->dump();
+           pargv->getType()->dump();
+
+           Value * argv = B.CreateLoad(IntegerType::getInt64Ty(C)->getPointerTo(), pargv);           
+           errs() << "Value of argv type\n";
+           argv->dump();
+           argv->getType()->dump();
+           
+           Value * storeArg = B.CreateInBoundsGEP( IntegerType::getInt64Ty(C), argv, ConstantInt::get(Int32Ty, ii, /*isSigned=*/false) );
+           errs() << "Value of firstStoreArg\n";
+           storeArg->dump();
+           storeArg->getType()->dump();
+           
+           Value * zext = B.CreateZExt(v, IntegerType::getInt64Ty(C), "t5");
+           errs() << "Value of v\n";
+           v->dump();
+           v->getType()->dump();
+           B.CreateStore(zext, storeArg);
+
+           errs() << "End\n";
+       } else if (v->getType()->isPointerTy()){ 
+           errs() << "Value of potentialWork type\n";
+           potentialWork->dump();
+           potentialWork->getType()->dump();
+
+           Value * pargv  = B.CreateStructGEP(WorkType::get(C), potentialWork, (unsigned)WorkType::argv);    
+           errs() << "Value of pargv type\n";
+           pargv->dump();
+           pargv->getType()->dump();
+
+           Value * argv = B.CreateLoad(IntegerType::getInt64Ty(C)->getPointerTo(), pargv);           
+           errs() << "Value of argv type\n";
+           argv->dump();
+           argv->getType()->dump();
+           
+           Value * storeArg = B.CreateInBoundsGEP( IntegerType::getInt64Ty(C), argv, ConstantInt::get(Int32Ty, ii, /*isSigned=*/false) );
+           errs() << "Value of firstStoreArg\n";
+           storeArg->dump();
+           storeArg->getType()->dump();
+           
+           Value * zext = B.CreateCast(Instruction::PtrToInt, v, IntegerType::getInt64Ty(C));
+
+           errs() << "Value of v\n";
+           v->dump();
+           v->getType()->dump();
+           B.CreateStore(zext, storeArg);
+       } else {
+           assert(false && "Type not yet supported");
+       }
+              
    }
-   
+#endif 
+
+   Constant * PRSC_PUSHFRONT_WORKQ = Get_PRSC_PUSHFRONT_WORKQ(*M);
+   B.CreateCall(PRSC_PUSHFRONT_WORKQ, potentialWork);
+
    B.CreateRetVoid();
    
    B.SetInsertPoint(fpIsNull);
