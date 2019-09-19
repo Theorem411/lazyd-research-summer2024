@@ -35,8 +35,7 @@
 #include "llvm/Transforms/Utils/TapirUtils.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
-//TODO : Generate suspend routine
-
+//TODO : Code refactoring
 
 using namespace llvm;
 
@@ -54,7 +53,7 @@ BasicBlock * syncResumeBB;
 Value * prscDescLocal;
 Value * pRA;
 Value * seedLocal;
-
+Value * bSuspendType;
 SmallVector<BasicBlock *, 8> CounterZeroBBVec;
 
 DenseMap<Function *, Function *> WrapperMap;
@@ -420,6 +419,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     SmallVector<Instruction *,2> del_instrs;
   
     Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);
+    Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
     Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
     Value *Zero = ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
     //Instruction * storeInstAfterCall = nullptr;
@@ -472,9 +472,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
             }
         }
     }
-  
-
-    
+      
     // Work generation for thief
     if(!bIgnore){
         for(auto BB : bbV2Clone){
@@ -518,15 +516,24 @@ Function *ULIABI::createDetach(DetachInst &Detach,
                 Type *PRSC_DescTy = TypeBuilder<PRSC_Desc*, false>::get(C);
                 Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
 
+                Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
+                Value *One = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
+                Value *N_One = ConstantInt::get(Int32Ty, -1, /*isSigned=*/true);
+
                 Value *WrapperPtr = B.CreateBitCast(WrapperMap.lookup(F), VoidPtrTy);
                 Value *WorkReplyHandlerPtr = B.CreateBitCast(WorkReplyHandlerMap.lookup(F), VoidPtrTy);
 
                 Args.push_back(WorkReplyHandlerPtr); // Handler
                 Args.push_back(WrapperPtr); // Function wrapper
+                
+                int nargc=0;
                 // Functions argument
                 for (User::op_iterator it = callInst->arg_begin(); it != callInst->arg_end(); it++){
                     Args.push_back(it->get());
+                    nargc++;
                 }
+                Value *Argc = ConstantInt::get(Int32Ty, nargc, /*isSigned=*/false);
+
                 // Basic Block to resume after all child have return
                 BlockAddress* bA = BlockAddress::get(syncResumeBB);
                 Args.push_back(bA);
@@ -538,17 +545,59 @@ Function *ULIABI::createDetach(DetachInst &Detach,
                 Value * PRSCSync  = B.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sync);    
                 Args.push_back(PRSCSync);
                 // Variable to store the result
-                if(storeInstArr[detachLevel]){
-                    Args.push_back(storeInstArr[detachLevel]->getPointerOperand());
-                } else {
-                    Args.push_back(ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo()));
+
+                Value * res = storeInstArr[detachLevel]? storeInstArr[detachLevel]->getPointerOperand() : 
+                    ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
+                res = B.CreateBitCast(res, VoidPtrTy);
+
+                Args.push_back(res);
+                
+                Value * ifSuspendTrue = B.CreateICmpEQ(bSuspendType, One );
+                BasicBlock * suspendRoutine = BasicBlock::Create(C, "SuspendRoutine", F);
+                BasicBlock * stealRoutine = BasicBlock::Create(C, "StealRoutine", F);                
+                B.CreateCondBr(ifSuspendTrue, suspendRoutine, stealRoutine);
+                B.SetInsertPoint(suspendRoutine);    
+                
+                Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt32Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
+
+                Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {WrapperPtr, Argc, N_One, bA, seedSP, PRSCSync, res, Zero});
+#if 1
+
+                for(int ii = 0; ii<nargc; ii++){
+                    Value * v = callInst->arg_begin()->get()+ii;
+                    // Check type
+                    if(v->getType()->isIntegerTy()){
+                        Value * pargv  = B.CreateStructGEP(WorkType::get(C), potentialWork, (unsigned)WorkType::argv);    
+                        Value * argv = B.CreateLoad(IntegerType::getInt64Ty(C)->getPointerTo(), pargv);           
+                        Value * storeArg = B.CreateInBoundsGEP( IntegerType::getInt64Ty(C), argv, ConstantInt::get(Int32Ty, ii, /*isSigned=*/false) );
+                        Value * zext = B.CreateZExt(v, IntegerType::getInt64Ty(C), "t5");
+                        B.CreateStore(zext, storeArg);
+                    } else if (v->getType()->isPointerTy()){ 
+                        Value * pargv  = B.CreateStructGEP(WorkType::get(C), potentialWork, (unsigned)WorkType::argv);    
+                        Value * argv = B.CreateLoad(IntegerType::getInt64Ty(C)->getPointerTo(), pargv);           
+                        Value * storeArg = B.CreateInBoundsGEP( IntegerType::getInt64Ty(C), argv, ConstantInt::get(Int32Ty, ii, /*isSigned=*/false) );           
+                        Value * zext = B.CreateCast(Instruction::PtrToInt, v, IntegerType::getInt64Ty(C));
+                        B.CreateStore(zext, storeArg);
+                    } else {
+                        assert(false && "Type not yet supported");
+                    }
+              
                 }
+#endif 
+
+                Constant * PRSC_PUSHFRONT_WORKQ = Get_PRSC_PUSHFRONT_WORKQ(*M);
+                B.CreateCall(PRSC_PUSHFRONT_WORKQ, potentialWork);
+                
+                Constant *PRSC_RESUME_TO_HANDLER = Get_PRSC_RESUME_TO_HANDLER(*M);
+                B.CreateCall(PRSC_RESUME_TO_HANDLER, One);
+                                
+                B.CreateUnreachable();
+
+                B.SetInsertPoint(stealRoutine);
         
                 Function *UliReply = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_reply);
                 B.CreateCall(UliReply, Args);
 
-                Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
-                Constant *PRSC_RESUME_TO_HANDLER = Get_PRSC_RESUME_TO_HANDLER(*M);
                 B.CreateCall(PRSC_RESUME_TO_HANDLER, Zero);
                                 
                 B.CreateUnreachable();
@@ -606,6 +655,8 @@ Function *ULIABI::createDetach(DetachInst &Detach,
                     } else {
                         Args.push_back(ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo()));
                     }
+
+                    // TODO : Create suspend routine here
         
                     Function *UliReply = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_reply);
                     B.CreateCall(UliReply, Args);            
@@ -638,7 +689,10 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         Instruction& inst = *In;
         inst.eraseFromParent(); // delete instrs
     }
+     
 
+
+    //==========================================================================
     // TODO :
     // Got stolen case
     BasicBlock * gotStolenArr[MAX_LEVEL];
@@ -670,8 +724,6 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     gotStolenB.CreateCondBr(checkCntRes, ifCounterZero, ifCounterNotZero);
     gotStolenB.SetInsertPoint(ifCounterZero);    
     
-    // TODO : This is NULL
-    //gotStolenB.CreateBr(SyncBBMap[F]);
     gotStolenB.CreateUnreachable();
     CounterZeroBBVec.push_back(ifCounterZero);
 
@@ -718,33 +770,54 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         tmpLevel--;
     }
     
-    
-    //TODO:
+    //==========================================================================
+    // seedGeneration
     // Create FSM for choosing which work to send
     BasicBlock * ifTrue = BasicBlock::Create(C, "TrueBB", F);
     BasicBlock * ifFalse = BasicBlock::Create(C, "FalseBB", F);
     static IRBuilder<> workFSMB(seedGeneration);
-    
-    using AsmPrototype = int (void);
-    FunctionType *FAsmTy =
-        TypeBuilder<AsmPrototype, false>::get(workFSMB.getContext());
+    Value * PRSCSP  = workFSMB.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sp);    
+    errs() << "PRSCSP============== \n ";
+    PRSCSP->dump();
+    PRSCSP->getType()->dump();
 
-    Value *Asm = InlineAsm::get(FAsmTy,
-                              "movl %edi, $0\0A\09",
-                              "=r,~{dirflag},~{fpsr},~{flags}",
-                              /*sideeffects*/ true);
+    Value * Eight = ConstantInt::get(Int32Ty, 8, /*isSigned=*/false);
+    errs() << "-------------\n";
+    Eight->dump();
+    Eight->getType()->dump();
 
-    //%73 = call i32 asm sideeffect "movl %edi, $0\0A\09", "=r,~{dirflag},~{fpsr},~{flags}"() #8, !dbg !2205, !srcloc !2206
-    Value * bSuspendType = workFSMB.CreateCall(Asm);
 
-    Value * PRSCSP  = workFSMB.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sp);
-    
-    pRA = workFSMB.CreateLoad(IntegerType::getInt8Ty(C)->getPointerTo(), PRSCSP);
+    Eight = workFSMB.CreateCast(Instruction::IntToPtr, Eight, Int32Ty->getPointerTo());
+    errs() << "-------------\n";
+    Eight->dump();
+    Eight->getType()->dump();
+
+
+    Eight = workFSMB.CreateBitCast(Eight, Eight->getType()->getPointerTo());
+  
+    errs() << "-------------\n";
+    Eight->dump();
+    Eight->getType()->dump();
+
+ 
+    Type *VoidPtrPtrTy = TypeBuilder<void**, false>::get(C);
+    Eight = workFSMB.CreateBitCast(Eight, VoidPtrPtrTy);
+    errs() << "-------------\n";
+    Eight->dump();
+    Eight->getType()->dump();
+
+    Value * ppRA  = workFSMB.CreatePtrDiff(PRSCSP, Eight);
+    ppRA = workFSMB.CreateCast(Instruction::IntToPtr, ppRA, Int64Ty->getPointerTo());
+    ppRA =  workFSMB.CreateBitCast(ppRA, ppRA->getType()->getPointerTo());
+    ppRA = workFSMB.CreateBitCast(ppRA, VoidPtrPtrTy);
+    ppRA->dump();
+    ppRA->getType()->dump();
+    pRA = workFSMB.CreateLoad(IntegerType::getInt8Ty(C)->getPointerTo(), ppRA);
 
     BlockAddress* bA = BlockAddress::get(detachBlock);   
     Value * cmpRes = workFSMB.CreateICmpEQ(bA,pRA);
     workFSMB.CreateCondBr(cmpRes, ifTrue, ifFalse);
- 
+
     workFSMB.SetInsertPoint(ifTrue);
 
     Value *Val = ConstantInt::get(Int32Ty, detachLevel+2, /*isSigned=*/false);
@@ -757,7 +830,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
 
 
     bA = BlockAddress::get(gotStolenArr[0]);
-    Value * ppRA = workFSMB.CreateBitCast(pRA, pRA->getType()->getPointerTo());
+    ppRA = workFSMB.CreateBitCast(pRA, pRA->getType()->getPointerTo());
     workFSMB.CreateStore(bA, ppRA);
 
     if(genWorkBB[detachLevel])
@@ -1000,13 +1073,30 @@ void ULIABI::preProcessFunction(Function &F) {
     B.SetInsertPoint(F.getEntryBlock().getTerminator());
     seedLocal = B.CreateAlloca(SeedType::get(C), DL.getAllocaAddrSpace(), nullptr, "seed");
     seedGeneration = BasicBlock::Create(C, "seedGen", &F);
-    
+
     B.SetInsertPoint(seedGeneration);
 
     // Fix the rbp first using the rsp
     Function *SetupRBPfromRSPinRBP = Intrinsic::getDeclaration(M, Intrinsic::x86_setup_rbp_from_sp_in_rbp);
     B.CreateCall(SetupRBPfromRSPinRBP);
     
+
+    //==========================================================================
+    // Create Prologue for seedGeneration
+    
+    
+    using AsmPrototype = int (void);
+    FunctionType *FAsmTy =
+        TypeBuilder<AsmPrototype, false>::get(B.getContext());
+
+    Value *Asm = InlineAsm::get(FAsmTy,
+                              "movl %edi, $0\0A\09",
+                              "=r,~{dirflag},~{fpsr},~{flags}",
+                              /*sideeffects*/ true);
+
+    //%73 = call i32 asm sideeffect "movl %edi, $0\0A\09", "=r,~{dirflag},~{fpsr},~{flags}"() #8, !dbg !2205, !srcloc !2206
+    bSuspendType = B.CreateCall(Asm);
+
   }
   
   // Sync Resume
