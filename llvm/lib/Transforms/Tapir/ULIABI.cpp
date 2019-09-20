@@ -25,6 +25,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/InstIterator.h"
+#include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/TypeBuilder.h"
 #include "llvm/IR/Verifier.h"
@@ -479,15 +480,33 @@ Function *ULIABI::createDetach(DetachInst &Detach,
             }
         }
     }
-      
+    
+    DebugInfoFinder DIFinder;
+  
     // Work generation for thief
     if(!bIgnore){
-        for(auto BB : bbV2Clone){
-            BasicBlock *bbC = CloneBasicBlock(BB, VMap, ".workGen_Steal", F, nullptr,
-                                      nullptr);
-            VMap[BB] = bbC;            
+
+        DISubprogram *SP = F->getSubprogram();
+        if (SP) {
+            //assert(!MustCloneSP || ModuleLevelChanges);
+            // Add mappings for some DebugInfo nodes that we don't want duplicated
+            // even if they're distinct.
+            auto &MD = VMap.MD();
+            MD[SP->getUnit()].reset(SP->getUnit());
+            MD[SP->getType()].reset(SP->getType());
+            MD[SP->getFile()].reset(SP->getFile());
+            // If we're not cloning into the same module, no need to clone the
+            // subprogram
+            //   if (!MustCloneSP)
+            //    MD[SP].reset(SP);
         }
 
+        for(auto BB : bbV2Clone){
+            BasicBlock *bbC = CloneBasicBlock(BB, VMap, ".workGen_Steal", F, nullptr,
+                                      &DIFinder);
+            VMap[BB] = bbC;            
+        }
+   
         genWorkBB[detachLevel] = dyn_cast<BasicBlock>(VMap[Continue]);
         errs() << "Gen work : "<<  detachLevel << " \n";        
         genWorkBB[detachLevel]->dump();
@@ -637,6 +656,10 @@ Function *ULIABI::createDetach(DetachInst &Detach,
 
                     Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
                     Value *One = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
+                    
+                    Value *Two = ConstantInt::get(Int32Ty, 2, /*isSigned=*/false);
+                    Value *Three = ConstantInt::get(Int32Ty, 3, /*isSigned=*/false);
+
                     Value *N_One = ConstantInt::get(Int32Ty, -1, /*isSigned=*/true);
 
                     Value *WrapperPtr = B.CreateBitCast(WrapperMap.lookup(F), VoidPtrTy);
@@ -706,7 +729,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
                     B.CreateCall(PRSC_PUSHFRONT_WORKQ, potentialWork);
                 
                     Constant *PRSC_RESUME_TO_HANDLER = Get_PRSC_RESUME_TO_HANDLER(*M);
-                    B.CreateCall(PRSC_RESUME_TO_HANDLER, One);
+                    B.CreateCall(PRSC_RESUME_TO_HANDLER, Three);
                                 
                     B.CreateUnreachable();
 
@@ -715,7 +738,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
                     Function *UliReply = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_reply);
                     B.CreateCall(UliReply, Args);
 
-                    B.CreateCall(PRSC_RESUME_TO_HANDLER, Zero);
+                    B.CreateCall(PRSC_RESUME_TO_HANDLER, Two);
                                 
                     B.CreateUnreachable();
         
@@ -761,7 +784,10 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     // Decrement counter
     Value * PRSCSync  = gotStolenB.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sync);    
     Value *PRSCpSync = gotStolenB.CreateBitCast(PRSCSync, SyncType::get(C)->getPointerTo()); 
-    Constant *PRSC_DEC_JOIN = Get_PRSC_DEC_JOIN(*M);    
+    Constant *PRSC_DEC_JOIN = Get_PRSC_DEC_JOIN(*M);
+    Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
+    Value *ZERO = ConstantInt::get(Int64Ty, 0, /*isSigned=*/false);  
+    gotStolenB.CreateCall(disuli, { ZERO });
     gotStolenB.CreateCall(PRSC_DEC_JOIN, PRSCpSync);
     
     //TODO:
@@ -775,15 +801,27 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     BasicBlock * ifCounterZero = BasicBlock::Create(C, "CounterZero", F);
     BasicBlock * ifCounterNotZero = BasicBlock::Create(C, "CounterNotZero", F);
 
+    Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
+    Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false); 
+
     gotStolenB.CreateCondBr(checkCntRes, ifCounterZero, ifCounterNotZero);
     gotStolenB.SetInsertPoint(ifCounterZero);    
     
+    // Fix later in the post processing
+    gotStolenB.CreateCall(enauli, { NEG_ZERO });
     gotStolenB.CreateUnreachable();
     CounterZeroBBVec.push_back(ifCounterZero);
 
     gotStolenB.SetInsertPoint(ifCounterNotZero);
     Constant *PRSC_SUSPEND_ROUTINE = Get_PRSC_SUSPEND_ROUTINE(*M);
-    gotStolenB.CreateCall(PRSC_SUSPEND_ROUTINE);
+    gotStolenB.CreateCall(enauli, { NEG_ZERO });
+    //Instruction * callSuspendRoutine = gotStolenB.CreateCall(PRSC_SUSPEND_ROUTINE);
+    ///gotStolenB.SetCurrentDebugLocation(callSuspendRoutine->getDebugLoc());
+
+    CallInst * CI = CallInst::Create(PRSC_SUSPEND_ROUTINE);
+    CI->setDebugLoc(Detach.getDebugLoc());
+    gotStolenB.Insert(CI);
+
     gotStolenB.CreateUnreachable();
 
     // Suspend for now
@@ -800,6 +838,9 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         Value * PRSCSync  = gotStolenB.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sync);    
         Value *PRSCpSync = gotStolenB.CreateBitCast(PRSCSync, SyncType::get(C)->getPointerTo()); 
         Constant *PRSC_DEC_JOIN = Get_PRSC_DEC_JOIN(*M);
+        Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
+        Value *ZERO = ConstantInt::get(Int64Ty, 0, /*isSigned=*/false);  
+        gotStolenB.CreateCall(disuli, { ZERO });
         gotStolenB.CreateCall(PRSC_DEC_JOIN, PRSCpSync);
 
 
@@ -813,12 +854,18 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         gotStolenB.CreateCondBr(checkCntRes, ifCounterZero, ifCounterNotZero);
         gotStolenB.SetInsertPoint(ifCounterZero);    
         //gotStolenB.CreateBr(SyncBBMap[F]);
-        gotStolenB.CreateUnreachable();
+        gotStolenB.CreateCall(enauli, { NEG_ZERO });
+        gotStolenB.CreateUnreachable(); // Fix later
         CounterZeroBBVec.push_back(ifCounterZero);
 
         gotStolenB.SetInsertPoint(ifCounterNotZero);        
         Constant *PRSC_SUSPEND_ROUTINE = Get_PRSC_SUSPEND_ROUTINE(*M);
-        gotStolenB.CreateCall(PRSC_SUSPEND_ROUTINE);    
+        gotStolenB.CreateCall(enauli, { NEG_ZERO });
+        //Instruction * callSuspendRoutine = gotStolenB.CreateCall(PRSC_SUSPEND_ROUTINE);
+        //gotStolenB.SetCurrentDebugLocation(callSuspendRoutine->getDebugLoc());
+        CallInst * CI = CallInst::Create(PRSC_SUSPEND_ROUTINE);
+        CI->setDebugLoc(Detach.getDebugLoc());
+        gotStolenB.Insert(CI);
         gotStolenB.CreateUnreachable();
 
         tmpLevel--;
@@ -1007,6 +1054,9 @@ void ULIABI::preProcessFunction(Function &F) {
 
   llvm::errs() << "preprocessing " << F.getName() << "...\n";
 
+  // Make it non inlinable
+  F.addFnAttr(Attribute::NoInline);
+
   LLVMContext &C = F.getContext();
   Module *M = F.getParent();
   const DataLayout &DL = M->getDataLayout();
@@ -1029,10 +1079,28 @@ void ULIABI::preProcessFunction(Function &F) {
   
   BasicBlock & entry  = F.getEntryBlock();
   IRBuilder<> B(entry.getFirstNonPHIOrDbgOrLifetime());
+  
+  // Call ENAULI
+  Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
+  Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false);  
+  B.CreateCall(enauli, { NEG_ZERO });
+
+  // Allocate PRSC_Desc
   Type *PRSC_DescTy = PRSC_DescType::get(C);
   prscDescLocal = B.CreateAlloca(PRSC_DescTy, DL.getAllocaAddrSpace(), nullptr, "PRSC_Dec");
+  
 
-
+  // Get all the exit block and put DISULI before return
+  for (auto &BB : F){
+      Instruction * termInst = BB.getTerminator();
+      if(isa<ReturnInst>(termInst)){
+          B.SetInsertPoint(termInst);
+          Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
+          Value *ZERO = ConstantInt::get(Int64Ty, 0, /*isSigned=*/false);  
+          B.CreateCall(disuli, { ZERO });
+      }
+  }
+  
   Function *Inlet = nullptr;
   // Remote Inlet
   {
@@ -1091,11 +1159,15 @@ void ULIABI::preProcessFunction(Function &F) {
     FunctionType *InletTy = FunctionType::get(VoidTy, {UliArgTypeTy, WorkPtrTy}, /*isVarArg=*/false);
     auto Name = "__prsc_" + F.getName() + "Local_Inlet";
     localInlet = Function::Create(InletTy, InternalLinkage, Name, M);
-    localInlet->addFnAttr(Attribute::UserLevelInterrupt);
-    localInlet->setCallingConv(CallingConv::X86_ULI);
-    BasicBlock *Entry = BasicBlock::Create(C, "entry", localInlet);
+     BasicBlock *Entry = BasicBlock::Create(C, "entry", localInlet);
     IRBuilder<> B(Entry);
+    
+    Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
+    Value *ZERO = ConstantInt::get(Int64Ty, 0, /*isSigned=*/false);  
+    B.CreateCall(disuli, { ZERO });
 
+
+    
     Argument &Result = localInlet->arg_begin()[0];
     Argument &WorkPtr = localInlet->arg_begin()[1];
 
@@ -1130,6 +1202,12 @@ void ULIABI::preProcessFunction(Function &F) {
     B.CreateBr(ifCounterNotZero);
 
     B.SetInsertPoint(ifCounterNotZero);
+
+    Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
+    Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false);  
+    B.CreateCall(enauli, { NEG_ZERO });
+
+
     B.CreateRetVoid();
     
     //Inlet->dump();
@@ -1192,9 +1270,14 @@ void ULIABI::preProcessFunction(Function &F) {
     Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
     Value *InletPtr = B.CreateBitCast(Inlet, VoidPtrTy);
     
+    //TODO : Add thread_local to global variable
     Constant *threadIdGlobal = M->getOrInsertGlobal("threadId", Int32Ty);
     assert(threadIdGlobal);
-    Value *threadId = B.CreateLoad(threadIdGlobal, "threadId");
+    GlobalVariable *gVar = M->getNamedGlobal("threadId");
+    //gVar->setLinkage(GlobalValue::CommonLinkage);
+    gVar->setThreadLocal(true);
+
+    Value *threadId = B.CreateLoad(gVar, "threadId");
 
     Function *UliSend = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_send);
 
@@ -1253,6 +1336,7 @@ void ULIABI::preProcessFunction(Function &F) {
   {
    SmallVector<Type *, 8> WorkHandlerParamTys(FTy->param_begin(), FTy->param_end());
    WorkHandlerParamTys.insert(WorkHandlerParamTys.begin(), VoidPtrTy);
+   WorkHandlerParamTys.insert(WorkHandlerParamTys.begin(), Int64Ty);
    WorkHandlerParamTys.push_back(VoidPtrTy);
    WorkHandlerParamTys.push_back(VoidPtrTy);
    WorkHandlerParamTys.push_back(SyncType::get(C)->getPointerTo());
@@ -1270,33 +1354,33 @@ void ULIABI::preProcessFunction(Function &F) {
    
    IRBuilder<> B(Entry);   
 
-   using AsmPrototype = int (void);
+   using AsmPrototype = long (void);
    FunctionType *FAsmTy =
        TypeBuilder<AsmPrototype, false>::get(C);
 
    Value *Asm = InlineAsm::get(FAsmTy,
-                              "movl %rdi, $0\0A\09",
+                              "movq %rdi, $0\0A\09",
                               "=r,~{dirflag},~{fpsr},~{flags}",
                               /*sideeffects*/ true);
 
    //%73 = call i32 asm sideeffect "movl %edi, $0\0A\09", "=r,~{dirflag},~{fpsr},~{flags}"() #8, !dbg !2205, !srcloc !2206
    Value * from = B.CreateCall(Asm);
    //Value * from = ONE;
-
+   from->getType()->dump();
 
    Constant *PRSC_RESET_WORKSTEAL = Get_PRSC_RESET_WORKSTEAL(*M);
    B.CreateCall(PRSC_RESET_WORKSTEAL);
 
-   
-   Value * fp = HereIsWorkHandler->arg_begin();   
+   Value * from2 = HereIsWorkHandler->arg_begin();
+   Value * fp = HereIsWorkHandler->arg_begin()+1;   
    Value * res = HereIsWorkHandler->arg_end()-1;
    Value * sync = HereIsWorkHandler->arg_end()-2;
    Value * parentSP = HereIsWorkHandler->arg_end()-3;
    Value * parentIP = HereIsWorkHandler->arg_end()-4;   
-   Value * realArgStart = HereIsWorkHandler->arg_begin() + 1;
+   Value * realArgStart = HereIsWorkHandler->arg_begin() + 2;
    
    int numArgs = HereIsWorkHandler->arg_end()-HereIsWorkHandler->arg_begin();
-   int realNumArgs = numArgs - 5;// Remove fp, res, syn, parentSP/IP
+   int realNumArgs = numArgs - 6;// Remove from, fp, res, syn, parentSP/IP
 
 
    Value * ARGC =  ConstantInt::get(Int32Ty, realNumArgs, /*isSigned=*/false);
@@ -1316,7 +1400,7 @@ void ULIABI::preProcessFunction(Function &F) {
 
    //Constant *PRSC_CREATE_WORK = Get_PRSC_CREATE_WORK(*M);
    
-   Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt32Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
+   Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt64Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
 
 
    Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {fp, ARGC, from, parentIP, parentSP, sync, res, ONE});
@@ -1412,7 +1496,8 @@ void ULIABI::postProcessFunction(Function &F) {
     LLVMContext &C = F.getContext();
     Module *M = F.getParent();
     const DataLayout &DL = M->getDataLayout();
-    
+    Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
+
     // For pushing and popping the seed 
     //-=======================================================================
     Constant *PRSC_PUSHFRONT_SEEDQ = Get_PRSC_PUSHFRONT_SEEDQ(*M);
@@ -1439,6 +1524,10 @@ void ULIABI::postProcessFunction(Function &F) {
     B.SetInsertPoint(lastDetach->getTerminator());
     B.CreateCall(PRSC_POPFRONT_SEEDQ);
     
+    Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
+    Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false);  
+    B.CreateCall(enauli, { NEG_ZERO });
+
     // For the sync resume
     //-======================================================================
     B.SetInsertPoint(syncResumeBB);    
