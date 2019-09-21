@@ -1759,7 +1759,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
           || inst->getOpcode() == X86::SETUP_RBP_FROM_SP_IN_RBP) {
         auto SrcReg = inst->getOpcode() == X86::SETUP_RBP_FROM_SP_IN_RBP ? X86::RBP : X86::RSP;
         // ???
-        auto HackOffset = inst->getOpcode() == X86::SETUP_RBP_FROM_SP_IN_RBP ? -8 : 0;
+        auto HackOffset = inst->getOpcode() == X86::SETUP_RBP_FROM_SP_IN_RBP ? -8 : -8;
         addRegOffset(BuildMI(*mb, inst, DL, TII.get(X86::LEA64r), X86::RBP), SrcReg,
             false, FrameSize + HackOffset);
         instructions_to_delete.push_back(inst);
