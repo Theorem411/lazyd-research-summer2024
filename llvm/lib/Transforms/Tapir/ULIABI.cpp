@@ -1255,8 +1255,16 @@ void ULIABI::preProcessFunction(Function &F) {
 
     Value *ResultPtr = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::res);
 
+    Value * result32  = B.CreateZExtOrTrunc(&Result, IntegerType::getInt32Ty(C), "t5");
+    result32->dump();
+    result32->getType()->dump();
+    Value * resultPtr32  = B.CreateBitCast(ResultPtr, IntegerType::getInt32Ty(C)->getPointerTo(), "t5");
+    resultPtr32->dump();
+    resultPtr32->getType()->dump();
+    
     // TODO:Alignment?
-    StoreInst *S = B.CreateStore(&Result, ResultPtr);
+    // TODO : Check type
+    StoreInst *S = B.CreateStore(result32, resultPtr32);
 
     Constant *PRSC_CHECKIFZERO_RESUME = Get_PRSC_CHECKIFZERO_RESUME(*M);
     Value * checkCounter = B.CreateCall(PRSC_CHECKIFZERO_RESUME, WorkPSync);
