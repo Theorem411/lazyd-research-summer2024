@@ -109,6 +109,9 @@ using TypeBuilderCache = std::map<LLVMContext *, StructType *>;
 using ENAULI_ty = void (unsigned long);
 DEFAULT_GET_LIB_FUNC(ENAULI)
 
+using POLL_ty = void (unsigned );
+DEFAULT_GET_LIB_FUNC(POLL)
+
 using PRSC_DEC_JOIN_ty = void (Sync*);
 DEFAULT_GET_LIB_FUNC(PRSC_DEC_JOIN)
 
@@ -1135,7 +1138,11 @@ void ULIABI::preProcessFunction(Function &F) {
   // Call ENAULI
   Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
   Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false);  
+  Value *ZERO32 = ConstantInt::get(Int32Ty, 0x0, /*isSigned=*/false);  
   B.CreateCall(enauli, { NEG_ZERO });
+
+  Constant *POLL = Get_POLL(*M);
+  B.CreateCall(POLL, { ZERO32 });
 
   // Allocate PRSC_Desc
   Type *PRSC_DescTy = PRSC_DescType::get(C);
@@ -1571,7 +1578,7 @@ void ULIABI::postProcessFunction(Function &F) {
     //-=======================================================================
     Constant *PRSC_PUSHFRONT_SEEDQ = Get_PRSC_PUSHFRONT_SEEDQ(*M);
     Constant *PRSC_POPFRONT_SEEDQ = Get_PRSC_POPFRONT_SEEDQ(*M);
-    
+    Constant *POLL = Get_POLL(*M);
     Function *GetSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
     
     IRBuilder<> B(firstDetach->getTerminator());
@@ -1585,9 +1592,18 @@ void ULIABI::postProcessFunction(Function &F) {
     Value * seedIP  = B.CreateStructGEP(SeedType::get(C), seedLocal, (unsigned)SeedType::ip);    
     BlockAddress* seedGenAddr = BlockAddress::get(seedGeneration);
 
+    Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
+    Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false);  
+
+    Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
+    Value *ZERO = ConstantInt::get(Int64Ty, 0, /*isSigned=*/false);  
+    Value *ZERO32 = ConstantInt::get(Int32Ty, 0x0, /*isSigned=*/false);  
+    B.CreateCall(disuli, { ZERO });
+
 
     Value * seedStoreIp = B.CreateStore(seedGenAddr, seedIP);
     Value * pSeedLocal = B.CreateBitCast(seedLocal, SeedType::get(C)->getPointerTo());
+    
     B.CreateCall(PRSC_PUSHFRONT_SEEDQ, pSeedLocal);
 
     // Add potential jump
@@ -1598,10 +1614,9 @@ void ULIABI::postProcessFunction(Function &F) {
     B.SetInsertPoint(lastDetach->getTerminator());
     B.CreateCall(PRSC_POPFRONT_SEEDQ);
     
-    Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
-    Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false);  
     B.CreateCall(enauli, { NEG_ZERO });
-
+    B.CreateCall(POLL, { ZERO32 });
+    
     // For the sync resume
     //-======================================================================
     B.SetInsertPoint(syncResumeBB);    
