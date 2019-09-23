@@ -142,6 +142,15 @@ DEFAULT_GET_LIB_FUNC(PRSC_PUSHFRONT_WORKQ)
 using PRSC_PUSHFRONT_READYQ_ty = void (void *, void*);
 DEFAULT_GET_LIB_FUNC(PRSC_PUSHFRONT_READYQ)
 
+using PRSC_INIT_RT_ty = void (void);
+DEFAULT_GET_LIB_FUNC(PRSC_INIT_RT)
+
+using PRSC_DEINIT_RT_ty = void (void);
+DEFAULT_GET_LIB_FUNC(PRSC_DEINIT_RT)
+
+using PRSC_SHOW_STATS_ty = void (void);
+DEFAULT_GET_LIB_FUNC(PRSC_SHOW_STATS)
+
 // Argument too much?, cause compilation error
 //using PRSC_CREATE_WORK_ty = Work*(void*,int,int,void*,void*,Sync*,void*,int);
 //DEFAULT_GET_LIB_FUNC(PRSC_CREATE_WORK)
@@ -1103,6 +1112,29 @@ Function *ULIABI::createDetach(DetachInst &Detach,
 
 
 void ULIABI::preProcessFunction(Function &F) {
+  if ( F.getName() == "main") {
+    F.addFnAttr(Attribute::ULINoPolling);
+    Type *Int32Ty = TypeBuilder<int32_t, false>::get(F.getContext());
+    Constant * PRSC_INIT_RT = Get_PRSC_INIT_RT(*F.getParent());
+    Constant * PRSC_DEINIT_RT = Get_PRSC_DEINIT_RT(*F.getParent());
+    Constant * PRSC_SHOW_STATS = Get_PRSC_SHOW_STATS(*F.getParent());
+    
+    IRBuilder<> B(F.getEntryBlock().getTerminator());
+    B.CreateCall(PRSC_INIT_RT);
+    
+    //B.SetInsertPoint(F.getTerminator());
+    for (auto &BB : F){
+      Instruction * termInst = BB.getTerminator();
+      if(isa<ReturnInst>(termInst)){
+          B.SetInsertPoint(termInst);
+          B.CreateCall(PRSC_SHOW_STATS);
+          B.CreateCall(PRSC_DEINIT_RT);
+      }
+    }    
+  } 
+
+
+
   if (F.getName() != "fib") return;
 
   detachLevel = 0;
