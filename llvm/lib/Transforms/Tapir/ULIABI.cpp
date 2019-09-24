@@ -67,11 +67,17 @@ Value * gIsSuspend;
 SmallVector<BasicBlock *, 8> gCntEqZeroBBList;
 
 // A map that maps a function to the wrapper function and the here is work reply handler
+// TODO : Combine the below map into one single map <Function * , ArrayofFunction>
 DenseMap<Function *, Function *> gWrapperMap;
+DenseMap<Function *, Function *> gRemoteInletMap;
+DenseMap<Function *, Function *> gLocalInletMap;
 DenseMap<Function *, Function *> gRecvWorkHandlerMap;
 
 // Store the basic block that is executed after the cilk_sync statment
 DenseMap<Function *, BasicBlock *> gSyncBBMap;
+
+// Store the return type of the poterntial parallel call function
+DenseMap<Function *, Type*> gRetTypeMap;
 
 using Sync = ULIABI::Sync;
 using Work = ULIABI::Work;
@@ -415,6 +421,25 @@ void ULIABI::StoreFuncRes(IRBuilder <> & gotStolenB, int detachLevel, LLVMContex
     }
 }
 
+
+void ULIABI::StoreRetInInlet(IRBuilder <> &B, Argument * Result, Argument * WorkPtr, Function & F, LLVMContext & C, const DataLayout &DL) {
+    Value *ResultPtr = LoadSTyField(B, DL, WorkType::get(C), WorkPtr, WorkType::res);
+    Type * resTy = gRetTypeMap[&F];
+    if(resTy->isIntegerTy()){
+        Value * result  = B.CreateZExtOrTrunc(Result, resTy, "t5");
+        Value * resultPtr  = B.CreateBitCast(ResultPtr, resTy->getPointerTo(), "t5");            
+        // TODO:Alignment?
+        StoreInst *S = B.CreateStore(result, resultPtr);
+    } else if (resTy->isPointerTy()){
+        assert(false && "Storing this type is not supported yet");
+        //Value * result =  B.CreateCast(Instruction::IntToPtr, ppRA, IntegerType::getInt8Ty(C)->getPointerTo());
+    } else {
+        assert(false && "Storing this type is not supported yet");
+    }
+
+}
+
+
 void ULIABI::PopulateAfterCheckCnt(IRBuilder <> &gotStolenB, Value * checkCntRes, DetachInst &Detach, Function * F, Module * M, LLVMContext & C){
     Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
 
@@ -579,7 +604,6 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     Instruction * term = nullptr;
       
     // Build type
-    Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);    
     Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
     Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
     
@@ -592,6 +616,9 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         // Check if it is the same with the call instruction
         if( !arg0->getName().compare(callInst->getName()) ){
             gStInstArr[detachLevel] = potentialSt;                        
+            gRetTypeMap[F] = potentialSt->getValueOperand()->getType();
+        } else {
+            gRetTypeMap[F] = TypeBuilder<void, false>::get(C);
         }                    
     }
     
@@ -599,7 +626,8 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         gLastDetachBB = detachBB;
     }
     gFirstDetachBB =   curBB;
-    // Search 
+    
+    // Search for basic block to clone 
     bbList.push_back(continueBB);
     while(!bbList.empty()){
         bb = bbList.back();
@@ -814,12 +842,6 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         tmpLevel--;
     }   
 
-   // TODO: Should we just ignore this
-   //BranchInst *DetachBr = BranchInst::Create(detachBB);   
-   //Instruction * reattach = detachBB->getTerminator();
-   //BranchInst *ContinueBr = BranchInst::Create(continueBB);
-   //ReplaceInstWithInst(&Detach, DetachBr);
-   //ReplaceInstWithInst(reattach, ContinueBr);   
    detachLevel++;
     
    return nullptr;
@@ -870,6 +892,7 @@ void ULIABI::preProcessFunction(Function &F) {
   Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
   Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
   Type *UliArgTypeTy = TypeBuilder<UliArgType, false>::get(C);
+  
   // TODO: how to see if a type can fit in a 64bit register
   assert(RetType == Int32Ty || RetType == Int64Ty);
 
@@ -903,45 +926,35 @@ void ULIABI::preProcessFunction(Function &F) {
       }
   }
   
-  Function *Inlet = nullptr;
+  Function *RemoteInlet = nullptr;
   // Remote Inlet
   {
     FunctionType *InletTy = FunctionType::get(VoidTy, {Int32Ty, UliArgTypeTy, WorkPtrTy, Int32Ty}, /*isVarArg=*/false);
     auto Name = "__prsc_" + F.getName() + "Remote_Inlet";
-    Inlet = Function::Create(InletTy, InternalLinkage, Name, M);
-    Inlet->addFnAttr(Attribute::UserLevelInterrupt);
-    Inlet->setCallingConv(CallingConv::X86_ULI);
-    BasicBlock *Entry = BasicBlock::Create(C, "entry", Inlet);
+    RemoteInlet = Function::Create(InletTy, InternalLinkage, Name, M);
+    RemoteInlet->addFnAttr(Attribute::UserLevelInterrupt);
+    RemoteInlet->setCallingConv(CallingConv::X86_ULI);
+    BasicBlock *Entry = BasicBlock::Create(C, "entry", RemoteInlet);
     IRBuilder<> B(Entry);
 
-    Argument &FromArg = Inlet->arg_begin()[0];
-    Argument &Result = Inlet->arg_begin()[1];
-    Argument &WorkPtr = Inlet->arg_begin()[2];
-    Argument &From2Arg = Inlet->arg_begin()[3];
+    Argument &FromArg = RemoteInlet->arg_begin()[0];
+    Argument &WorkPtr = RemoteInlet->arg_begin()[2];
+    Argument &From2Arg = RemoteInlet->arg_begin()[3];
 
     // TODO: assert equal?
     // Value *FromMatch = B.CreateICmpEQ(&FromArg, &From2Arg);
 
     Constant *PRSC_DEC_JOIN = Get_PRSC_DEC_JOIN(*M);
     
-    
     Value *WorkPSync = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::pSync);
     B.CreateCall(PRSC_DEC_JOIN, WorkPSync);
-
-    Value *ResultPtr = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::res);
-    
-    // TODO:Alignment?
-    // TODO: Check type
-    Value * result32  = B.CreateZExtOrTrunc(&Result, IntegerType::getInt32Ty(C), "t5");
-    Value * resultPtr32  = B.CreateBitCast(ResultPtr, IntegerType::getInt32Ty(C)->getPointerTo(), "t5");
-    StoreInst *S = B.CreateStore(result32, resultPtr32);
 
     Constant *PRSC_CHECKIFZERO_RESUME = Get_PRSC_CHECKIFZERO_RESUME(*M);
     Value * checkCounter = B.CreateCall(PRSC_CHECKIFZERO_RESUME, WorkPSync);
     Value * checkCntRes = B.CreateICmpEQ(checkCounter, ConstantInt::get(Int32Ty, 1, /*isSigned=*/false) );
     
-    BasicBlock * ifCounterZero = BasicBlock::Create(C, "CounterZero", Inlet);
-    BasicBlock * ifCounterNotZero = BasicBlock::Create(C, "CounterNotZero", Inlet);
+    BasicBlock * ifCounterZero = BasicBlock::Create(C, "CounterZero", RemoteInlet);
+    BasicBlock * ifCounterNotZero = BasicBlock::Create(C, "CounterNotZero", RemoteInlet);
 
     B.CreateCondBr(checkCntRes, ifCounterZero, ifCounterNotZero);
     B.SetInsertPoint(ifCounterZero);    
@@ -954,8 +967,9 @@ void ULIABI::preProcessFunction(Function &F) {
 
     B.SetInsertPoint(ifCounterNotZero);
     B.CreateRetVoid();
-
-    //Inlet->dump();
+    
+    gRemoteInletMap[&F] =  RemoteInlet;
+    //RemoteInlet->dump();
   }
 
   // Local inlet
@@ -964,14 +978,14 @@ void ULIABI::preProcessFunction(Function &F) {
     FunctionType *InletTy = FunctionType::get(VoidTy, {UliArgTypeTy, WorkPtrTy}, /*isVarArg=*/false);
     auto Name = "__prsc_" + F.getName() + "Local_Inlet";
     localInlet = Function::Create(InletTy, InternalLinkage, Name, M);
-     BasicBlock *Entry = BasicBlock::Create(C, "entry", localInlet);
+    BasicBlock *Entry = BasicBlock::Create(C, "entry", localInlet);
     IRBuilder<> B(Entry);
     
     Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
     Value *ZERO = ConstantInt::get(Int64Ty, 0, /*isSigned=*/false);  
     B.CreateCall(disuli, { ZERO });
     
-    Argument &Result = localInlet->arg_begin()[0];
+    // Result is store later in the postProcess once we get the return type
     Argument &WorkPtr = localInlet->arg_begin()[1];
 
     // TODO: assert equal?
@@ -981,15 +995,6 @@ void ULIABI::preProcessFunction(Function &F) {
     
     Value *WorkPSync = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::pSync);
     B.CreateCall(PRSC_DEC_JOIN, WorkPSync);
-
-    Value *ResultPtr = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::res);
-
-    Value * result32  = B.CreateZExtOrTrunc(&Result, IntegerType::getInt32Ty(C), "t5");
-    Value * resultPtr32  = B.CreateBitCast(ResultPtr, IntegerType::getInt32Ty(C)->getPointerTo(), "t5");
-    
-    // TODO:Alignment?
-    // TODO : Check type
-    StoreInst *S = B.CreateStore(result32, resultPtr32);
 
     Constant *PRSC_CHECKIFZERO_RESUME = Get_PRSC_CHECKIFZERO_RESUME(*M);
     Value * checkCounter = B.CreateCall(PRSC_CHECKIFZERO_RESUME, WorkPSync);
@@ -1015,7 +1020,7 @@ void ULIABI::preProcessFunction(Function &F) {
 
 
     B.CreateRetVoid();
-    
+    gLocalInletMap[&F] =  localInlet;
     //Inlet->dump();
   }
 
@@ -1072,7 +1077,7 @@ void ULIABI::preProcessFunction(Function &F) {
 
     Value *WorkSrc = LoadSTyField(B, DL, WorkType::get(C), Work, WorkType::src);
     Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
-    Value *InletPtr = B.CreateBitCast(Inlet, VoidPtrTy);
+    Value *InletPtr = B.CreateBitCast(RemoteInlet, VoidPtrTy);
     
     //TODO : Add thread_local to global variable
     Constant *threadIdGlobal = M->getOrInsertGlobal("threadId", Int32Ty);
@@ -1223,6 +1228,8 @@ void ULIABI::preProcessFunction(Function &F) {
 
 void ULIABI::postProcessFunction(Function &F) {
     
+    if (F.getName() != "fib") return;
+
     LLVMContext &C = F.getContext();
     Module *M = F.getParent();
     const DataLayout &DL = M->getDataLayout();
@@ -1294,7 +1301,22 @@ void ULIABI::postProcessFunction(Function &F) {
         B.CreateBr(gSyncBBMap[&F]);
         term->eraseFromParent();
     }
-    
+
+    // Fix for local and remote inlet
+    //-==================================================================
+    Function * localInlet = gLocalInletMap.lookup(&F);
+    B.SetInsertPoint(localInlet->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());    
+    Argument *Result = localInlet->arg_begin();
+    Argument *WorkPtr = localInlet->arg_begin()+1;        
+    StoreRetInInlet(B, Result, WorkPtr, F, C, DL);
+
+   
+    //--------
+    Function * RemoteInlet = gRemoteInletMap.lookup(&F);
+    B.SetInsertPoint(RemoteInlet->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());    
+    Result = RemoteInlet->arg_begin()+1;
+    WorkPtr = RemoteInlet->arg_begin()+2;
+    StoreRetInInlet(B, Result, WorkPtr, F, C, DL);    
 }
 
 void ULIABI::postProcessHelper(Function &F) {

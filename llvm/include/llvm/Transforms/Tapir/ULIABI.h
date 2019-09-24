@@ -76,6 +76,7 @@ private:
     void SetJoinCounter(IRBuilder <> & B, int val, Module * M, LLVMContext & C);
     Value* CheckIfJoinCounterZero(IRBuilder <> & gotStolenB, Module * M, LLVMContext & C);
     void StoreFuncRes(IRBuilder <> & gotStolenB, int detachLevel, LLVMContext & C);
+    void StoreRetInInlet(IRBuilder <> &B, Argument * Result, Argument * WorkPtr, Function & F, LLVMContext & C, const DataLayout &DL);
     void PopulateAfterCheckCnt(IRBuilder <> & gotStolenB, Value * checkCntRes, DetachInst &Detach, Function * F, Module * M, LLVMContext & C);
 };
 
