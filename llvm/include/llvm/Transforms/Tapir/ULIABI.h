@@ -16,6 +16,7 @@
 
 #include "llvm/Transforms/Tapir/LoopSpawning.h"
 #include "llvm/Transforms/Tapir/LoweringUtils.h"
+#include "llvm/IR/IRBuilder.h"
 
 namespace llvm {
 class Value;
@@ -66,6 +67,16 @@ public:
   struct Work {};
   struct PRSC_Desc {};
   struct Seed {};
+
+private:
+    void BuildSuspendAndStealRoutine (/*input*/CallInst * callInst, Value * returnFromSteal, Value* returnFromSuspend, Function *F, Module *M, LLVMContext & C, /*ouput*/SmallVector<BasicBlock*, 2> &newBB, SmallVector<Instruction*, 2> &delInstrs);
+    
+    void StoreArgIntoWork(LLVMContext &C, IRBuilder<> & B, CallInst * callInst, Value * potentialWork, int nargc);
+    void DecrementJoinCounter(IRBuilder <> & gotStolen, Module * M, LLVMContext & C);
+    void SetJoinCounter(IRBuilder <> & B, int val, Module * M, LLVMContext & C);
+    Value* CheckIfJoinCounterZero(IRBuilder <> & gotStolenB, Module * M, LLVMContext & C);
+    void StoreFuncRes(IRBuilder <> & gotStolenB, int detachLevel, LLVMContext & C);
+    void PopulateAfterCheckCnt(IRBuilder <> & gotStolenB, Value * checkCntRes, DetachInst &Detach, Function * F, Module * M, LLVMContext & C);
 };
 
 }  // end of llvm namespace

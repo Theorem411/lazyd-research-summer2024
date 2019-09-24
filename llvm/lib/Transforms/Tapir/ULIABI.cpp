@@ -44,26 +44,40 @@ using namespace llvm;
 
 #define MAX_LEVEL 4
 
-StoreInst  * storeInstArr[MAX_LEVEL];
-BasicBlock * genWorkBB[MAX_LEVEL];
-BasicBlock * seedGeneration;
-BasicBlock * lastFalseBB;
-BasicBlock * firstDetach;
-BasicBlock * lastDetach;
-BasicBlock * syncResumeBB;
-Value * prscDescLocal;
-Value * pRA;
-Value * seedLocal;
-Value * bSuspendType;
-SmallVector<BasicBlock *, 8> CounterZeroBBVec;
+// Store instruction to store the result of the potential parallel call 
+StoreInst  * gStInstArr[MAX_LEVEL];
 
-DenseMap<Function *, Function *> WrapperMap;
-DenseMap<Function *, Function *> WorkReplyHandlerMap;
-DenseMap<Function *, BasicBlock *> SyncBBMap;
+//  Basic block for generating work
+BasicBlock * gGenWorkBBArr[MAX_LEVEL];
+// Entry point for generating work
+BasicBlock * gGenWorkEntryBB;
+
+BasicBlock * gLastFalseBB;
+BasicBlock * gFirstDetachBB;
+BasicBlock * gLastDetachBB;
+BasicBlock * gSyncResumeBB;
+
+Value * gPrscDescLocalVar;
+Value * gSeedLocalVar;
+
+// Check if we should jump to the suspend routine or to steal routine
+Value * gIsSuspend;
+
+// Store basic block that is taken if the join counter == 0 (Basic block is basically a jump to sync statement
+SmallVector<BasicBlock *, 8> gCntEqZeroBBList;
+
+// A map that maps a function to the wrapper function and the here is work reply handler
+DenseMap<Function *, Function *> gWrapperMap;
+DenseMap<Function *, Function *> gRecvWorkHandlerMap;
+
+// Store the basic block that is executed after the cilk_sync statment
+DenseMap<Function *, BasicBlock *> gSyncBBMap;
+
 using Sync = ULIABI::Sync;
 using Work = ULIABI::Work;
 using PRSC_Desc = ULIABI::PRSC_Desc;
 using Seed = ULIABI::Seed;
+
 unsigned detachLevel = 0;
 
 /// Helper methods for storing to and loading from struct fields.
@@ -151,21 +165,11 @@ DEFAULT_GET_LIB_FUNC(PRSC_DEINIT_RT)
 using PRSC_SHOW_STATS_ty = void (void);
 DEFAULT_GET_LIB_FUNC(PRSC_SHOW_STATS)
 
-// Argument too much?, cause compilation error
-//using PRSC_CREATE_WORK_ty = Work*(void*,int,int,void*,void*,Sync*,void*,int);
-//DEFAULT_GET_LIB_FUNC(PRSC_CREATE_WORK)
-
 typedef void* (*FP)(void);
 using Scalar = long long int;
 using UliArgType = long long int;
 
-
-// typedef struct {
-//     char bEnqResume;
-//     uint counter;
-//     char seedStolen;
-// } Sync;
-
+// Build type for Sync structure
 namespace llvm {
 template <bool X>
 class TypeBuilder<Sync, X> {
@@ -202,20 +206,7 @@ public:
 
 using SyncType = TypeBuilder<Sync, false>;
 
-// struct Work {
-//     FP fp;
-//     int id;
-//     Scalar* argv;
-//     uint argc;
-//     Scalar* res;
-//     Sync* pSync;
-//     Work* next;
-//     Work* prev;
-//     int stolen;
-//     int realized;
-//     unsigned int src;
-// };
-
+// Build type for Work structure
 namespace llvm {
 template <bool X>
 class TypeBuilder<Work, X> {
@@ -271,12 +262,7 @@ public:
 }
 using WorkType = TypeBuilder<Work, false>;
 
-// typedef struct {
-//
-//
-//
-// } PRSC_Desc
-
+// Build type for PRSC_Desc
 namespace llvm{
 template <bool X>
 class TypeBuilder<PRSC_Desc, X> {
@@ -299,8 +285,7 @@ public:
                      TypeBuilder<void*, X>::get(C), // resumeip
                      TypeBuilder<void*, X>::get(C),  // handlerip
                      TypeBuilder<void*, X>::get(C), // handlersp
-                     TypeBuilder<void*, X>::get(C)  // handlerbp
-      
+                     TypeBuilder<void*, X>::get(C)  // handlerbp      
                      );
       if(ExistingTy->isOpaque())
           ExistingTy->setBody(NewTy->elements());
@@ -327,6 +312,7 @@ public:
 
 using PRSC_DescType = TypeBuilder<PRSC_Desc, false>;
 
+// Build type for seed structure
 namespace llvm{
 template <bool X>
 class TypeBuilder<Seed, X> {
@@ -360,46 +346,13 @@ public:
 
 using SeedType = TypeBuilder<Seed, false>;
 
-/*
-/// \brief Helper to find a function with the given name, creating it if it
-/// doesn't already exist. If the function needed to be created then return
-/// false, signifying that the caller needs to add the function body.
-template <typename T>
-static bool GetOrCreateFunction(const char *FnName, Module& M,
-                                Function *&Fn,
-                                Function::LinkageTypes Linkage =
-                                Function::InternalLinkage,
-                                bool DoesNotThrow = true) {
-  LLVMContext &Ctx = M.getContext();
-
-  Fn = M.getFunction(FnName);
-
-  // if the function already exists then let the
-  // caller know that it is complete
-  if (Fn)
-    return true;
-
-  // Otherwise we have to create it
-  FunctionType *FTy = TypeBuilder<T, false>::get(Ctx);
-  Fn = Function::Create(FTy, Linkage, FnName, &M);
-
-  // Set nounwind if it does not throw.
-  if (DoesNotThrow)
-    Fn->setDoesNotThrow();
-
-  // and let the caller know that the function is incomplete
-  // and the body still needs to be added
-  return false;
-}
-*/
-
 Value *ULIABI::lowerGrainsizeCall(CallInst *GrainsizeCall) {
   assert(false);
   return nullptr;
 }
 
 void ULIABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) {
-    IRBuilder<> B(lastFalseBB);
+    IRBuilder<> B(gLastFalseBB);
     B.CreateUnreachable();
     
     BasicBlock &BB = *(SI.getParent());
@@ -408,11 +361,199 @@ void ULIABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) 
 
     BasicBlock * syncBB = SI.getSuccessor(0);
     // TODO :  sync?sync_region should be the key instead of function since one function can have multiple sync statement 
-    SyncBBMap[&Fn] = syncBB;
+    gSyncBBMap[&Fn] = syncBB;
+}
 
-    //assert(false);
+void ULIABI::SetJoinCounter(IRBuilder <> & B, int val, Module * M, LLVMContext & C){
+    Type * Int32Ty = TypeBuilder<int32_t, false>::get(C);
+    Value *Val = ConstantInt::get(Int32Ty, detachLevel+2, /*isSigned=*/false);
+    Value * PRSCpSync  = B.CreateStructGEP(PRSC_DescType::get(C), gPrscDescLocalVar, (unsigned)PRSC_DescType::sync);
+    Constant *PRSC_SET_JOIN = Get_PRSC_SET_JOIN(*M);
+    B.CreateCall(PRSC_SET_JOIN, {PRSCpSync, Val});
+}
+
+
+void ULIABI::DecrementJoinCounter(IRBuilder <> & gotStolenB, Module * M, LLVMContext & C){
+    Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
+    Value *ZERO = ConstantInt::get(Int64Ty, 0, /*isSigned=*/false);  
+    Value * PRSCpSync  = gotStolenB.CreateStructGEP(PRSC_DescType::get(C), gPrscDescLocalVar, (unsigned)PRSC_DescType::sync);    
+    Constant *PRSC_DEC_JOIN = Get_PRSC_DEC_JOIN(*M);
+    Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);    
+    gotStolenB.CreateCall(disuli, { ZERO });
+    gotStolenB.CreateCall(PRSC_DEC_JOIN, PRSCpSync);
+    
+}
+
+Value* ULIABI::CheckIfJoinCounterZero(IRBuilder <> & gotStolenB, Module * M, LLVMContext & C){
+    Type * Int32Ty = TypeBuilder<int32_t, false>::get(C);
+    Value * ONE = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
+    Value * PRSCpSync  = gotStolenB.CreateStructGEP(PRSC_DescType::get(C), gPrscDescLocalVar, (unsigned)PRSC_DescType::sync);    
+    Constant *PRSC_CHECKIFZERO_RESUME = Get_PRSC_CHECKIFZERO_RESUME(*M);
+    Value * checkCounter = gotStolenB.CreateCall(PRSC_CHECKIFZERO_RESUME, PRSCpSync);
+    Value * checkCntRes = gotStolenB.CreateICmpEQ(checkCounter, ONE);
+    return checkCntRes;
 
 }
+
+void ULIABI::StoreFuncRes(IRBuilder <> & gotStolenB, int detachLevel, LLVMContext & C){
+    if(gStInstArr[detachLevel]){
+        // Does not work, need asm
+        //gotStolenB.Insert(gStInstArr[detachLevel], gStInstArr[detachLevel]->getName());
+        Value * toStoreTo = gStInstArr[detachLevel]->getPointerOperand();
+
+        using AsmPrototype = void ( int* );
+        FunctionType *FAsmTy =
+            TypeBuilder<AsmPrototype, false>::get(gotStolenB.getContext());
+
+        Value *Asm = InlineAsm::get(FAsmTy,
+                              "movl %eax, $0\0A\09",
+                              "=*m,~{dirflag},~{fpsr},~{flags}",
+                              /*sideeffects*/ true);
+
+        // Store the result to storeInst
+        gotStolenB.CreateCall(Asm, toStoreTo); 
+    }
+}
+
+void ULIABI::PopulateAfterCheckCnt(IRBuilder <> &gotStolenB, Value * checkCntRes, DetachInst &Detach, Function * F, Module * M, LLVMContext & C){
+    Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
+
+    BasicBlock * ifCounterZero = BasicBlock::Create(C, "CounterZero", F);    
+    BasicBlock * ifCounterNotZero = BasicBlock::Create(C, "CounterNotZero", F);
+
+    Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
+    Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false); 
+
+    gotStolenB.CreateCondBr(checkCntRes, ifCounterZero, ifCounterNotZero);
+    gotStolenB.SetInsertPoint(ifCounterZero);    
+    
+    // Fix later in the post processing
+    gotStolenB.CreateCall(enauli, { NEG_ZERO });
+    gotStolenB.CreateUnreachable();
+    gCntEqZeroBBList.push_back(ifCounterZero);
+
+    gotStolenB.SetInsertPoint(ifCounterNotZero);
+    Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
+    gotStolenB.CreateCall(potentialJump, {BlockAddress::get(gSyncResumeBB)});
+    Constant *PRSC_SUSPEND_ROUTINE = Get_PRSC_SUSPEND_ROUTINE(*M);
+    gotStolenB.CreateCall(enauli, { NEG_ZERO });
+
+    // Suspend for now
+    CallInst * CI = CallInst::Create(PRSC_SUSPEND_ROUTINE);
+
+    // TODO: Hack?
+    CI->setDebugLoc(Detach.getDebugLoc());
+    gotStolenB.Insert(CI);    
+    gotStolenB.CreateUnreachable();
+}
+
+void ULIABI::BuildSuspendAndStealRoutine (/*input*/CallInst * callInst, Value * returnFromSteal, Value* returnFromSuspend, Function *F, Module *M, LLVMContext & C, /*ouput*/SmallVector<BasicBlock*, 2> &newBB, SmallVector<Instruction*, 2> &delInstrs){
+    
+     Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt32Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
+
+    IRBuilder<> B(callInst);
+    SmallVector<Value*, 8> Args;                                        
+    Type * Int32Ty = IntegerType::getInt32Ty(C);
+    Type * VoidPtrTy = TypeBuilder<void*, false>::get(C);
+
+    Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
+    Value *One = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);                    
+    Value *N_One = ConstantInt::get(Int32Ty, -1, /*isSigned=*/true);
+
+    Value *WrapperPtr = B.CreateBitCast(gWrapperMap.lookup(F), VoidPtrTy);
+    Value *WorkReplyHandlerPtr = B.CreateBitCast(gRecvWorkHandlerMap.lookup(F), VoidPtrTy);
+
+    Args.push_back(WorkReplyHandlerPtr); // Handler
+    Args.push_back(WrapperPtr); // Function wrapper
+
+    int nargc=0;
+    // Functions argument
+    for (User::op_iterator it = callInst->arg_begin(); it != callInst->arg_end(); it++){
+        Args.push_back(it->get());
+        nargc++;
+    }
+
+    StoreInst * storeAfterCall = dyn_cast<StoreInst>(callInst->getNextNode() );
+    if( ! (storeAfterCall && gStInstArr[detachLevel] ) ){                    
+        storeAfterCall = nullptr;                        
+    }
+   
+    Value *Argc = ConstantInt::get(Int32Ty, nargc, /*isSigned=*/false);
+
+    // Basic Block to resume after all child have return
+    BlockAddress* bA = BlockAddress::get(gSyncResumeBB);
+    Args.push_back(bA);
+    // SP
+    Value * pSeedSP  = B.CreateStructGEP(SeedType::get(C), gSeedLocalVar, (unsigned)SeedType::sp);    
+    Value * seedSP = B.CreateLoad(IntegerType::getInt8Ty(C)->getPointerTo(), pSeedSP);
+    Args.push_back(seedSP);
+    // Sync
+    Value * PRSCSync  = B.CreateStructGEP(PRSC_DescType::get(C), gPrscDescLocalVar, (unsigned)PRSC_DescType::sync);    
+    Args.push_back(PRSCSync);
+
+    Value * res = storeAfterCall? storeAfterCall->getPointerOperand() : 
+        ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
+                    
+    res = B.CreateBitCast(res, VoidPtrTy);
+
+    Args.push_back(res);
+                
+    Value * ifSuspendTrue = B.CreateICmpEQ(gIsSuspend, One );
+    BasicBlock * suspendRoutine = BasicBlock::Create(C, "SuspendRoutine", F);
+    BasicBlock * stealRoutine = BasicBlock::Create(C, "StealRoutine", F);
+    newBB.push_back(suspendRoutine);
+    newBB.push_back(stealRoutine);
+
+                
+    B.CreateCondBr(ifSuspendTrue, suspendRoutine, stealRoutine);
+    B.SetInsertPoint(suspendRoutine);    
+                
+    Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {WrapperPtr, Argc, N_One, bA, seedSP, PRSCSync, res, Zero});
+    StoreArgIntoWork(C, B, callInst, potentialWork, nargc);
+
+    Constant * PRSC_PUSHFRONT_WORKQ = Get_PRSC_PUSHFRONT_WORKQ(*M);
+    B.CreateCall(PRSC_PUSHFRONT_WORKQ, potentialWork);
+                
+    Constant *PRSC_RESUME_TO_HANDLER = Get_PRSC_RESUME_TO_HANDLER(*M);
+    B.CreateCall(PRSC_RESUME_TO_HANDLER, returnFromSuspend);
+                                
+    B.CreateUnreachable();
+
+    B.SetInsertPoint(stealRoutine);
+        
+    Function *UliReply = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_reply);
+    B.CreateCall(UliReply, Args);
+
+    B.CreateCall(PRSC_RESUME_TO_HANDLER, returnFromSteal);
+                                
+    B.CreateUnreachable();
+        
+    delInstrs.push_back(callInst->getNextNode());
+    delInstrs.push_back(callInst);
+}
+
+void ULIABI::StoreArgIntoWork(LLVMContext &C, IRBuilder<> & B, CallInst * callInst, Value * potentialWork, int nargc){
+    for(int ii = 0; ii<nargc; ii++){
+        Value * v = callInst->arg_begin()->get()+ii;
+        // Check type
+        if(v->getType()->isIntegerTy()){
+            Value * pargv  = B.CreateStructGEP(WorkType::get(C), potentialWork, (unsigned)WorkType::argv);    
+            Value * argv = B.CreateLoad(IntegerType::getInt64Ty(C)->getPointerTo(), pargv);           
+            Value * storeArg = B.CreateInBoundsGEP(IntegerType::getInt64Ty(C), argv, ConstantInt::get(IntegerType::getInt32Ty(C), ii, /*isSigned=*/false) );
+            Value * zext = B.CreateZExt(v, IntegerType::getInt64Ty(C), "t5");
+            B.CreateStore(zext, storeArg);
+        } else if (v->getType()->isPointerTy()){ 
+            Value * pargv  = B.CreateStructGEP(WorkType::get(C), potentialWork, (unsigned)WorkType::argv);    
+            Value * argv = B.CreateLoad(IntegerType::getInt64Ty(C)->getPointerTo(), pargv);           
+            Value * storeArg = B.CreateInBoundsGEP( IntegerType::getInt64Ty(C), argv, ConstantInt::get(IntegerType::getInt32Ty(C), ii, /*isSigned=*/false) );           
+            Value * zext = B.CreateCast(Instruction::PtrToInt, v, IntegerType::getInt64Ty(C));
+            B.CreateStore(zext, storeArg);
+        } else {
+            assert(false && "Type not yet supported");
+        }              
+    }
+} 
+
 
 Function *ULIABI::createDetach(DetachInst &Detach,
                         ValueToValueMapTy &DetachCtxToStackFrame,
@@ -422,54 +563,44 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     Function * F = curBB->getParent();
     Module * M = F->getParent();
     LLVMContext& C = M->getContext();
-    BasicBlock * detachBlock = Detach.getDetached();    
-    BasicBlock *Continue = Detach.getContinue();
+    BasicBlock * detachBB = Detach.getDetached();    
+    BasicBlock * continueBB = Detach.getContinue();
     const DataLayout &DL = M->getDataLayout();
     
     
     // Create the work Generation
     SmallVector<BasicBlock*, 8> bbV2Clone;
     SmallVector<BasicBlock*, 8> bbList;
+    SmallVector<Instruction *,2> delInstrs;
     DenseMap<BasicBlock *, bool> haveVisited;
+
     ValueToValueMapTy VMap;    
     BasicBlock * bb = nullptr;
     Instruction * term = nullptr;
-    bool bIgnore = false;
-    
-    SmallVector<Instruction *,2> del_instrs;
-  
-    Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);
+      
+    // Build type
+    Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);    
     Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
     Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
-    Value *Zero = ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
-    //Instruction * storeInstAfterCall = nullptr;
-
-
+    
     // Look for potential Store operation
-    StoreInst * potentialSt = dyn_cast<StoreInst>(detachBlock->getFirstNonPHIOrDbgOrLifetime()->getNextNode() );
+    StoreInst * potentialSt = dyn_cast<StoreInst>(detachBB->getFirstNonPHIOrDbgOrLifetime()->getNextNode() );
     if(potentialSt){                    
         // Get the IR to store
         Value *arg0 = potentialSt->getOperand(0);
-        arg0->dump();
-
-        Instruction * callInst = detachBlock->getFirstNonPHIOrDbgOrLifetime();
-        callInst->dump();
+        Instruction * callInst = detachBB->getFirstNonPHIOrDbgOrLifetime();
         // Check if it is the same with the call instruction
         if( !arg0->getName().compare(callInst->getName()) ){
-            //storeInstArr[detachLevel] = dyn_cast<StoreInst>( potentialSt->clone() );              
-            storeInstArr[detachLevel] = potentialSt;                        
-            //storeInstArr[detachLevel]->setName(potentialSt->getName());
-        } 
-                   
-
+            gStInstArr[detachLevel] = potentialSt;                        
+        }                    
     }
     
     if(detachLevel==0){
-        lastDetach = detachBlock;
+        gLastDetachBB = detachBB;
     }
-    firstDetach =   curBB;
+    gFirstDetachBB =   curBB;
     // Search 
-    bbList.push_back(Continue);
+    bbList.push_back(continueBB);
     while(!bbList.empty()){
         bb = bbList.back();
         bbList.pop_back();
@@ -494,320 +625,92 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         }
     }
     
-    DebugInfoFinder DIFinder;
+    DebugInfoFinder DIFinder;      
+    DISubprogram *SP = F->getSubprogram();
+    if (SP) {
+        //assert(!MustCloneSP || ModuleLevelChanges);
+        // Add mappings for some DebugInfo nodes that we don't want duplicated
+        // even if they're distinct.
+        auto &MD = VMap.MD();
+        MD[SP->getUnit()].reset(SP->getUnit());
+        MD[SP->getType()].reset(SP->getType());
+        MD[SP->getFile()].reset(SP->getFile());
   
-    // Work generation for thief
-    if(!bIgnore){
-         
-#if 1 // Not needed
-        DISubprogram *SP = F->getSubprogram();
-        if (SP) {
-            //assert(!MustCloneSP || ModuleLevelChanges);
-            // Add mappings for some DebugInfo nodes that we don't want duplicated
-            // even if they're distinct.
-            auto &MD = VMap.MD();
-            MD[SP->getUnit()].reset(SP->getUnit());
-            MD[SP->getType()].reset(SP->getType());
-            MD[SP->getFile()].reset(SP->getFile());
-            // If we're not cloning into the same module, no need to clone the
-            // subprogram
-            //   if (!MustCloneSP)
-            MD[SP].reset(SP); // Seems to reset
-        }
-#endif 
+        MD[SP].reset(SP); 
+    }
 
-        for(auto BB : bbV2Clone){
-            BasicBlock *bbC = CloneBasicBlock(BB, VMap, ".workGen_Steal", F, nullptr,
-                                      &DIFinder);
-            VMap[BB] = bbC;            
-        }
+    for(auto BB : bbV2Clone){
+        BasicBlock *bbC = CloneBasicBlock(BB, VMap, ".workGen_Steal", F, nullptr,
+                                          &DIFinder);
+        VMap[BB] = bbC;            
+    }
    
-        genWorkBB[detachLevel] = dyn_cast<BasicBlock>(VMap[Continue]);
-        errs() << "Gen work : "<<  detachLevel << " \n";        
-        genWorkBB[detachLevel]->dump();
+    gGenWorkBBArr[detachLevel] = dyn_cast<BasicBlock>(VMap[continueBB]);
 
-        //TODO : Fix up the instruction(argument etc) and refactoring
-        Instruction * potentialCall = nullptr;
-        bool bFoundPotentialCall = false;
+    //TODO : Fix up the instruction(argument etc) and refactoring
+    Instruction * potentialCall = nullptr;
+    bool bFoundPotentialCall = false;
         
-        for(auto BB : bbV2Clone){
-            SmallVector<BasicBlock*, 2> newBB;
-            BasicBlock *CBB = dyn_cast<BasicBlock>(VMap[BB]);
-            Instruction *iterm  = CBB->getTerminator();
-            if(DetachInst * itermDet = dyn_cast<DetachInst>(iterm)){
-                BasicBlock * detachBlock = itermDet->getDetached();
-                BranchInst *detachBr = BranchInst::Create(detachBlock);
-                ReplaceInstWithInst(itermDet, detachBr);
+    for(auto BB : bbV2Clone){
+        SmallVector<BasicBlock*, 2> newBB;
+        BasicBlock *CBB = dyn_cast<BasicBlock>(VMap[BB]);
+
+        Instruction *iterm  = CBB->getTerminator();
+        delInstrs.push_back(iterm);
+
+        if(DetachInst * itermDet = dyn_cast<DetachInst>(iterm)){
+            BasicBlock * detachBB = itermDet->getDetached();
+            BranchInst *detachBr = BranchInst::Create(detachBB);
+            ReplaceInstWithInst(itermDet, detachBr);
 
  
-            } else if(ReattachInst * itermRet = dyn_cast<ReattachInst>(iterm)){                
-                Instruction * instr = CBB->getFirstNonPHIOrDbgOrLifetime();
-                CallInst * callInst = dyn_cast<CallInst>(instr);
-                CallInst * callInstOri = dyn_cast<CallInst>(BB->getFirstNonPHIOrDbgOrLifetime());
-                assert(callInst && "First instruction not a call instruction. Seems like something is wrong");
-
-                SmallVector<Value*, 8> Args;
-                for (int i = 0; i<callInst->getNumOperands()-1; i++){
-                    //    Args.push_back(callInst->getOperand(i));
-                    //callInst->getOperand(i)->dump();
-                }
-                
-                IRBuilder<> B(instr);
-
-                Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);
-                Type *PRSC_DescTy = TypeBuilder<PRSC_Desc*, false>::get(C);
-                Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
-
-                Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
-                Value *One = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
-                Value *N_One = ConstantInt::get(Int32Ty, -1, /*isSigned=*/true);
-
-                Value *WrapperPtr = B.CreateBitCast(WrapperMap.lookup(F), VoidPtrTy);
-                Value *WorkReplyHandlerPtr = B.CreateBitCast(WorkReplyHandlerMap.lookup(F), VoidPtrTy);
-
-                Args.push_back(WorkReplyHandlerPtr); // Handler
-                Args.push_back(WrapperPtr); // Function wrapper
-                
-                int nargc=0;
-                // Functions argument
-                for (User::op_iterator it = callInst->arg_begin(); it != callInst->arg_end(); it++){
-                    Args.push_back(it->get());
-                    nargc++;
-                }
-                Value *Argc = ConstantInt::get(Int32Ty, nargc, /*isSigned=*/false);
-
-                // Basic Block to resume after all child have return
-                BlockAddress* bA = BlockAddress::get(syncResumeBB);
-                Args.push_back(bA);
-                // SP
-                Value * pSeedSP  = B.CreateStructGEP(SeedType::get(C), seedLocal, (unsigned)SeedType::sp);    
-                Value * seedSP = B.CreateLoad(IntegerType::getInt8Ty(C)->getPointerTo(), pSeedSP);
-                Args.push_back(seedSP);
-                // Sync
-                Value * PRSCSync  = B.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sync);    
-                Args.push_back(PRSCSync);
-                // Variable to store the result
-
-                Value * res = storeInstArr[detachLevel]? storeInstArr[detachLevel]->getPointerOperand() : 
-                    ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
-                res = B.CreateBitCast(res, VoidPtrTy);
-
-                Args.push_back(res);
-                
-                Value * ifSuspendTrue = B.CreateICmpEQ(bSuspendType, One );
-                BasicBlock * suspendRoutine = BasicBlock::Create(C, "SuspendRoutine", F);
-                BasicBlock * stealRoutine = BasicBlock::Create(C, "StealRoutine", F);                
-                newBB.push_back(suspendRoutine);
-                newBB.push_back(stealRoutine);
-
-                B.CreateCondBr(ifSuspendTrue, suspendRoutine, stealRoutine);
-                B.SetInsertPoint(suspendRoutine);    
-                
-                Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt32Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
-
-                Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {WrapperPtr, Argc, N_One, bA, seedSP, PRSCSync, res, Zero});
-#if 1
-
-                for(int ii = 0; ii<nargc; ii++){
-                    Value * v = callInst->arg_begin()->get()+ii;
-                    // Check type
-                    if(v->getType()->isIntegerTy()){
-                        Value * pargv  = B.CreateStructGEP(WorkType::get(C), potentialWork, (unsigned)WorkType::argv);    
-                        Value * argv = B.CreateLoad(IntegerType::getInt64Ty(C)->getPointerTo(), pargv);           
-                        Value * storeArg = B.CreateInBoundsGEP( IntegerType::getInt64Ty(C), argv, ConstantInt::get(Int32Ty, ii, /*isSigned=*/false) );
-                        Value * zext = B.CreateZExt(v, IntegerType::getInt64Ty(C), "t5");
-                        B.CreateStore(zext, storeArg);
-                    } else if (v->getType()->isPointerTy()){ 
-                        Value * pargv  = B.CreateStructGEP(WorkType::get(C), potentialWork, (unsigned)WorkType::argv);    
-                        Value * argv = B.CreateLoad(IntegerType::getInt64Ty(C)->getPointerTo(), pargv);           
-                        Value * storeArg = B.CreateInBoundsGEP( IntegerType::getInt64Ty(C), argv, ConstantInt::get(Int32Ty, ii, /*isSigned=*/false) );           
-                        Value * zext = B.CreateCast(Instruction::PtrToInt, v, IntegerType::getInt64Ty(C));
-                        B.CreateStore(zext, storeArg);
-                    } else {
-                        assert(false && "Type not yet supported");
-                    }
-              
-                }
-#endif 
-
-                Constant * PRSC_PUSHFRONT_WORKQ = Get_PRSC_PUSHFRONT_WORKQ(*M);
-                B.CreateCall(PRSC_PUSHFRONT_WORKQ, potentialWork);
-                
-                Constant *PRSC_RESUME_TO_HANDLER = Get_PRSC_RESUME_TO_HANDLER(*M);
-                B.CreateCall(PRSC_RESUME_TO_HANDLER, One);
+        } else if(ReattachInst * itermRet = dyn_cast<ReattachInst>(iterm)){                
+            Instruction * instr = CBB->getFirstNonPHIOrDbgOrLifetime();
+            CallInst * callInst = dyn_cast<CallInst>(instr);
+            assert(callInst && "First instruction not a call instruction. Seems like something is wrong");
+            Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
+            Value *One = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);                                   
+            BuildSuspendAndStealRoutine(callInst, Zero, One, F, M, C, newBB, delInstrs);                     
                                 
-                B.CreateUnreachable();
-
-                B.SetInsertPoint(stealRoutine);
-        
-                Function *UliReply = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_reply);
-                B.CreateCall(UliReply, Args);
-
-                B.CreateCall(PRSC_RESUME_TO_HANDLER, Zero);
-                                
-                B.CreateUnreachable();
-                
-                del_instrs.push_back(instr->getNextNode());
-                del_instrs.push_back(instr);
-                del_instrs.push_back(iterm);
-
-                
-            } else {
-                for(Instruction &I : *CBB){
-                    if(CallInst * callInst = dyn_cast<CallInst>(&I)){
-                        //genWorkBB[detachLevel] = CBB;
-                        DEBUG(dbgs() << "Instruction to send\n");                            
-                        potentialCall = &I;
-                        bFoundPotentialCall = true;
-                    }
+        } else {
+            for(Instruction &I : *CBB){
+                if(CallInst * callInst = dyn_cast<CallInst>(&I)){
+                    DEBUG(dbgs() << "Instruction to send\n");                            
+                    potentialCall = &I;
+                    bFoundPotentialCall = true;
                 }
             }
+        }
 
-            if ( SyncInst * itermSync = dyn_cast<SyncInst>(iterm) ) {
-                if(bFoundPotentialCall){
-                    CallInst * callInst = dyn_cast<CallInst>(potentialCall);
-                    IRBuilder<> B(potentialCall);
-                    SmallVector<Value*, 8> Args;
-                                        
-                    Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);
-                    Type *PRSC_DescTy = TypeBuilder<PRSC_Desc*, false>::get(C);
-                    Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
+        if ( SyncInst * itermSync = dyn_cast<SyncInst>(iterm) ) {
+            if(bFoundPotentialCall){
+                CallInst * callInst = dyn_cast<CallInst>(potentialCall);
+                Value *Two = ConstantInt::get(Int32Ty, 2, /*isSigned=*/false);
+                Value *Three = ConstantInt::get(Int32Ty, 3, /*isSigned=*/false);
 
-                    Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
-                    Value *One = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
-                    
-                    Value *Two = ConstantInt::get(Int32Ty, 2, /*isSigned=*/false);
-                    Value *Three = ConstantInt::get(Int32Ty, 3, /*isSigned=*/false);
-
-                    Value *N_One = ConstantInt::get(Int32Ty, -1, /*isSigned=*/true);
-
-                    Value *WrapperPtr = B.CreateBitCast(WrapperMap.lookup(F), VoidPtrTy);
-                    Value *WorkReplyHandlerPtr = B.CreateBitCast(WorkReplyHandlerMap.lookup(F), VoidPtrTy);
-
-                    Args.push_back(WorkReplyHandlerPtr); // Handler
-                    Args.push_back(WrapperPtr); // Function wrapper
-
-                    int nargc=0;
-                    // Functions argument
-                    for (User::op_iterator it = callInst->arg_begin(); it != callInst->arg_end(); it++){
-                        Args.push_back(it->get());
-                        nargc++;
-                    }
-
-                    StoreInst * storeAfterCall = dyn_cast<StoreInst>(callInst->getNextNode() );
-                    if( ! (storeAfterCall && storeInstArr[detachLevel] ) ){                    
-                        storeAfterCall = nullptr;                        
-                    }
-    
-
-                    Value *Argc = ConstantInt::get(Int32Ty, nargc, /*isSigned=*/false);
-
-                    // Basic Block to resume after all child have return
-                    BlockAddress* bA = BlockAddress::get(syncResumeBB);
-                    Args.push_back(bA);
-                    // SP
-                    Value * pSeedSP  = B.CreateStructGEP(SeedType::get(C), seedLocal, (unsigned)SeedType::sp);    
-                    Value * seedSP = B.CreateLoad(IntegerType::getInt8Ty(C)->getPointerTo(), pSeedSP);
-                    Args.push_back(seedSP);
-                    // Sync
-                    Value * PRSCSync  = B.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sync);    
-                    Args.push_back(PRSCSync);
-
-                    Value * res = storeAfterCall? storeAfterCall->getPointerOperand() : 
-                        ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
-                    
-                    errs() << "Store b \n";
-                    res->dump();
-
-                    res = B.CreateBitCast(res, VoidPtrTy);
-
-                    Args.push_back(res);
-                
-                    Value * ifSuspendTrue = B.CreateICmpEQ(bSuspendType, One );
-                    BasicBlock * suspendRoutine = BasicBlock::Create(C, "SuspendRoutine", F);
-                    BasicBlock * stealRoutine = BasicBlock::Create(C, "StealRoutine", F);
-                    newBB.push_back(suspendRoutine);
-                    newBB.push_back(stealRoutine);
-
-                
-                    B.CreateCondBr(ifSuspendTrue, suspendRoutine, stealRoutine);
-                    B.SetInsertPoint(suspendRoutine);    
-                
-                    Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt32Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
-
-                    Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {WrapperPtr, Argc, N_One, bA, seedSP, PRSCSync, res, Zero});
-#if 1
-
-                    for(int ii = 0; ii<nargc; ii++){
-                        Value * v = callInst->arg_begin()->get()+ii;
-                        // Check type
-                        if(v->getType()->isIntegerTy()){
-                            Value * pargv  = B.CreateStructGEP(WorkType::get(C), potentialWork, (unsigned)WorkType::argv);    
-                            Value * argv = B.CreateLoad(IntegerType::getInt64Ty(C)->getPointerTo(), pargv);           
-                            Value * storeArg = B.CreateInBoundsGEP( IntegerType::getInt64Ty(C), argv, ConstantInt::get(Int32Ty, ii, /*isSigned=*/false) );
-                            Value * zext = B.CreateZExt(v, IntegerType::getInt64Ty(C), "t5");
-                            B.CreateStore(zext, storeArg);
-                        } else if (v->getType()->isPointerTy()){ 
-                            Value * pargv  = B.CreateStructGEP(WorkType::get(C), potentialWork, (unsigned)WorkType::argv);    
-                            Value * argv = B.CreateLoad(IntegerType::getInt64Ty(C)->getPointerTo(), pargv);           
-                            Value * storeArg = B.CreateInBoundsGEP( IntegerType::getInt64Ty(C), argv, ConstantInt::get(Int32Ty, ii, /*isSigned=*/false) );           
-                            Value * zext = B.CreateCast(Instruction::PtrToInt, v, IntegerType::getInt64Ty(C));
-                            B.CreateStore(zext, storeArg);
-                        } else {
-                            assert(false && "Type not yet supported");
-                        }
-              
-                    }
-#endif 
-
-                    Constant * PRSC_PUSHFRONT_WORKQ = Get_PRSC_PUSHFRONT_WORKQ(*M);
-                    B.CreateCall(PRSC_PUSHFRONT_WORKQ, potentialWork);
-                
-                    Constant *PRSC_RESUME_TO_HANDLER = Get_PRSC_RESUME_TO_HANDLER(*M);
-                    B.CreateCall(PRSC_RESUME_TO_HANDLER, Three);
-                                
-                    B.CreateUnreachable();
-
-                    B.SetInsertPoint(stealRoutine);
-        
-                    Function *UliReply = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_reply);
-                    B.CreateCall(UliReply, Args);
-
-                    B.CreateCall(PRSC_RESUME_TO_HANDLER, Two);
-                                
-                    B.CreateUnreachable();
-        
-                    del_instrs.push_back(potentialCall->getNextNode());
-                    del_instrs.push_back(potentialCall);
-                    del_instrs.push_back(iterm);
-                }
+                BuildSuspendAndStealRoutine(callInst, Two, Three, F, M, C, newBB, delInstrs);                     
             }
+        }
               
             
-            // Remap instruction
-            for (Instruction &II : *CBB) {
+        // Remap instruction
+        for (Instruction &II : *CBB) {
+            RemapInstruction(&II, VMap,
+                             RF_IgnoreMissingLocals,
+                             nullptr, nullptr);
+        }
+
+        // New basic blocks also needs remap
+        for(auto newBB_elem : newBB){
+            for (Instruction &II : *newBB_elem){
                 RemapInstruction(&II, VMap,
                                  RF_IgnoreMissingLocals,
                                  nullptr, nullptr);
             }
+        }                  
+    }        
 
-            // New basic blocks also needs remap
-            for(auto newBB_elem : newBB){
-                for (Instruction &II : *newBB_elem){
-                    RemapInstruction(&II, VMap,
-                                 RF_IgnoreMissingLocals,
-                                 nullptr, nullptr);
-                }
-            }
-            
-                        
-        }
-        
-
-    }
-
-
-    for (auto In : del_instrs){
+    for (auto In : delInstrs){
         Instruction& inst = *In;
         inst.eraseFromParent(); // delete instrs
     }
@@ -815,123 +718,25 @@ Function *ULIABI::createDetach(DetachInst &Detach,
 
 
     //==========================================================================
-    // TODO :
     // Got stolen case
     BasicBlock * gotStolenArr[MAX_LEVEL];
     gotStolenArr[0] = BasicBlock::Create(C, "gotStolen", F);
     IRBuilder<> gotStolenB (gotStolenArr[0]);
     int tmpLevel = detachLevel;
     
-    // Store result of function
-    if(storeInstArr[detachLevel]){
-        // Does not work, need asm
-        //gotStolenB.Insert(storeInstArr[detachLevel], storeInstArr[detachLevel]->getName());
-        Value * toStoreTo = storeInstArr[detachLevel]->getPointerOperand();
-
-        using AsmPrototype = void ( int* );
-        FunctionType *FAsmTy =
-            TypeBuilder<AsmPrototype, false>::get(gotStolenB.getContext());
-
-        Value *Asm = InlineAsm::get(FAsmTy,
-                              "movl %eax, $0\0A\09",
-                              "=*m,~{dirflag},~{fpsr},~{flags}",
-                              /*sideeffects*/ true);
-
-        // Store the result to storeInst
-        Asm->dump();
-        Asm->getType()->dump();
-        toStoreTo->dump();
-        toStoreTo->getType()->dump();
-        gotStolenB.CreateCall(Asm, toStoreTo); 
-    }
-    // Decrement counter
-    Value * PRSCSync  = gotStolenB.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sync);    
-    Value *PRSCpSync = gotStolenB.CreateBitCast(PRSCSync, SyncType::get(C)->getPointerTo()); 
-    Constant *PRSC_DEC_JOIN = Get_PRSC_DEC_JOIN(*M);
-    Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
-    Value *ZERO = ConstantInt::get(Int64Ty, 0, /*isSigned=*/false);  
-    gotStolenB.CreateCall(disuli, { ZERO });
-    gotStolenB.CreateCall(PRSC_DEC_JOIN, PRSCpSync);
+    StoreFuncRes(gotStolenB, detachLevel, C);
+    DecrementJoinCounter(gotStolenB, M, C);
+    Value * checkCntRes = CheckIfJoinCounterZero(gotStolenB, M, C);    
+    PopulateAfterCheckCnt(gotStolenB, checkCntRes, Detach, F, M, C);
     
-    //TODO:
-    // Check if counter is zero    
-    Constant *PRSC_CHECKIFZERO_RESUME = Get_PRSC_CHECKIFZERO_RESUME(*M);
-    Value * checkCounter = gotStolenB.CreateCall(PRSC_CHECKIFZERO_RESUME, PRSCpSync);
-    checkCounter->dump();
-    checkCounter->getType()->dump();
-    Value * checkCntRes = gotStolenB.CreateICmpEQ(checkCounter, ConstantInt::get(Int32Ty, 1, /*isSigned=*/false) );
-    
-    BasicBlock * ifCounterZero = BasicBlock::Create(C, "CounterZero", F);
-    BasicBlock * ifCounterNotZero = BasicBlock::Create(C, "CounterNotZero", F);
-
-    Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
-    Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false); 
-
-    gotStolenB.CreateCondBr(checkCntRes, ifCounterZero, ifCounterNotZero);
-    gotStolenB.SetInsertPoint(ifCounterZero);    
-    
-    // Fix later in the post processing
-    gotStolenB.CreateCall(enauli, { NEG_ZERO });
-    gotStolenB.CreateUnreachable();
-    CounterZeroBBVec.push_back(ifCounterZero);
-
-    gotStolenB.SetInsertPoint(ifCounterNotZero);
-    Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
-    gotStolenB.CreateCall(potentialJump, {BlockAddress::get(syncResumeBB)});
-    Constant *PRSC_SUSPEND_ROUTINE = Get_PRSC_SUSPEND_ROUTINE(*M);
-    gotStolenB.CreateCall(enauli, { NEG_ZERO });
-    //Instruction * callSuspendRoutine = gotStolenB.CreateCall(PRSC_SUSPEND_ROUTINE);
-    ///gotStolenB.SetCurrentDebugLocation(callSuspendRoutine->getDebugLoc());
-
-    CallInst * CI = CallInst::Create(PRSC_SUSPEND_ROUTINE);
-    CI->setDebugLoc(Detach.getDebugLoc());
-    gotStolenB.Insert(CI);
-
-    gotStolenB.CreateUnreachable();
-
-    // Suspend for now
-
     while(tmpLevel > 0){
-        gotStolenArr[detachLevel-tmpLevel+1] = BasicBlock::Create(C, "gotStolen", F); 
-        
+        gotStolenArr[detachLevel-tmpLevel+1] = BasicBlock::Create(C, "gotStolen", F);         
         gotStolenB.SetInsertPoint(gotStolenArr[detachLevel-tmpLevel+1]);
-        if(storeInstArr[detachLevel]){
-            Instruction* stInst = storeInstArr[detachLevel]->clone();
-            stInst->setName(storeInstArr[detachLevel]->getName());
-            gotStolenB.Insert(stInst, stInst->getName());
-        }
-        Value * PRSCSync  = gotStolenB.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sync);    
-        Value *PRSCpSync = gotStolenB.CreateBitCast(PRSCSync, SyncType::get(C)->getPointerTo()); 
-        Constant *PRSC_DEC_JOIN = Get_PRSC_DEC_JOIN(*M);
-        Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
-        Value *ZERO = ConstantInt::get(Int64Ty, 0, /*isSigned=*/false);  
-        gotStolenB.CreateCall(disuli, { ZERO });
-        gotStolenB.CreateCall(PRSC_DEC_JOIN, PRSCpSync);
-
-
-        Constant *PRSC_CHECKIFZERO_RESUME = Get_PRSC_CHECKIFZERO_RESUME(*M);
-        Value * checkCounter = gotStolenB.CreateCall(PRSC_CHECKIFZERO_RESUME, PRSCpSync);
-        Value * checkCntRes = gotStolenB.CreateICmpEQ(checkCounter, ConstantInt::get(Int32Ty, 1, /*isSigned=*/false) );
         
-        BasicBlock * ifCounterZero = BasicBlock::Create(C, "CounterZero", F);
-        BasicBlock * ifCounterNotZero = BasicBlock::Create(C, "CounterNotZero", F);
-        
-        gotStolenB.CreateCondBr(checkCntRes, ifCounterZero, ifCounterNotZero);
-        gotStolenB.SetInsertPoint(ifCounterZero);    
-        //gotStolenB.CreateBr(SyncBBMap[F]);
-        gotStolenB.CreateCall(enauli, { NEG_ZERO });
-        gotStolenB.CreateUnreachable(); // Fix later
-        CounterZeroBBVec.push_back(ifCounterZero);
-
-        gotStolenB.SetInsertPoint(ifCounterNotZero);        
-        Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
-        gotStolenB.CreateCall(potentialJump, {BlockAddress::get(syncResumeBB)});
-        Constant *PRSC_SUSPEND_ROUTINE = Get_PRSC_SUSPEND_ROUTINE(*M);
-        gotStolenB.CreateCall(enauli, { NEG_ZERO });
-        CallInst * CI = CallInst::Create(PRSC_SUSPEND_ROUTINE);
-        CI->setDebugLoc(Detach.getDebugLoc());
-        gotStolenB.Insert(CI);
-        gotStolenB.CreateUnreachable();
+        StoreFuncRes(gotStolenB, detachLevel, C);
+        DecrementJoinCounter(gotStolenB, M, C);
+        Value * checkCntRes = CheckIfJoinCounterZero(gotStolenB, M, C);    
+        PopulateAfterCheckCnt(gotStolenB, checkCntRes, Detach, F, M, C);
 
         tmpLevel--;
     }
@@ -939,175 +744,85 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     // 
     
     //==========================================================================
-    // seedGeneration
+    // gGenWorkEntryBB
     // Create FSM for choosing which work to send
-    BasicBlock * ifTrue = BasicBlock::Create(C, "TrueBB", F);
-    BasicBlock * ifFalse = BasicBlock::Create(C, "FalseBB", F);
-    static IRBuilder<> workFSMB(seedGeneration);
-    Value * PRSCSP  = workFSMB.CreateStructGEP(SeedType::get(C), seedLocal, (unsigned)SeedType::sp);    
-    errs() << "PRSCSP============== \n ";
-    PRSCSP->dump();
-    PRSCSP->getType()->dump();
+    static IRBuilder<> workFSMB(gGenWorkEntryBB);
 
+    // Load the return Address
+    Value * PRSCSP  = workFSMB.CreateStructGEP(SeedType::get(C), gSeedLocalVar, (unsigned)SeedType::sp);    
     Value * Eight = ConstantInt::get(Int64Ty, 8, /*isSigned=*/false);
-    errs() << "-------------\n";
-    Eight->dump();
-    Eight->getType()->dump();
-
-    
     Value * SPVal = workFSMB.CreateLoad(IntegerType::getInt8Ty(C)->getPointerTo(), PRSCSP);
-    errs() << "-------------\n";
-    SPVal->dump();
-    SPVal->getType()->dump();
-
     Value * SPValInt = workFSMB.CreateCast(Instruction::PtrToInt, SPVal, IntegerType::getInt64Ty(C));
-    errs() << "-------------\n";
-    SPValInt->dump();
-    SPValInt->getType()->dump();
-
     Value * ppRA  = workFSMB.CreateSub(SPValInt, Eight);
     ppRA = workFSMB.CreateCast(Instruction::IntToPtr, ppRA, IntegerType::getInt8Ty(C)->getPointerTo());
-    errs() << "-------------\n";
-    ppRA->dump();
-    ppRA->getType()->dump();
-
-
     ppRA =  workFSMB.CreateBitCast(ppRA, ppRA->getType()->getPointerTo());
-    pRA = workFSMB.CreateLoad(IntegerType::getInt8Ty(C)->getPointerTo(), ppRA);
-    errs() << "-------------\n";
-    pRA->dump();
-    pRA->getType()->dump();
+    Value * pRA = workFSMB.CreateLoad(IntegerType::getInt8Ty(C)->getPointerTo(), ppRA);
 
-    
 
-    // TODO: Fix potential jump location
-    // HACK
-    IRBuilder <> detachB (detachBlock->getTerminator());
-    detachB.CreateCall(potentialJump, {BlockAddress::get(gotStolenArr[0])});
-    
-    BlockAddress* bA = BlockAddress::get(detachBlock);   
+    BasicBlock * ifTrue = BasicBlock::Create(C, "TrueBB", F);
+    BasicBlock * ifFalse = BasicBlock::Create(C, "FalseBB", F);
+    BlockAddress* bA = BlockAddress::get(detachBB);   
     Value * cmpRes = workFSMB.CreateICmpUGE(pRA,bA);
     workFSMB.CreateCondBr(cmpRes, ifTrue, ifFalse);
-
     workFSMB.SetInsertPoint(ifTrue);
 
-    Value *Val = ConstantInt::get(Int32Ty, detachLevel+2, /*isSigned=*/false);
-    PRSCSync  = workFSMB.CreateStructGEP(PRSC_DescType::get(C), prscDescLocal, (unsigned)PRSC_DescType::sync);
-    PRSCpSync = workFSMB.CreateBitCast(PRSCSync, SyncType::get(C)->getPointerTo()); 
-
-    Constant *PRSC_SET_JOIN = Get_PRSC_SET_JOIN(*M);
-    workFSMB.CreateCall(PRSC_SET_JOIN, {PRSCpSync, Val});
+    SetJoinCounter(workFSMB, detachLevel+2, M, C);
 
     bA = BlockAddress::get(gotStolenArr[0]);
     workFSMB.CreateStore(bA, ppRA);
+    
+    // TODO: Fix potential jump location
+    // HACK
+    Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
+    IRBuilder <> detachB (detachBB->getTerminator());
+    detachB.CreateCall(potentialJump, {bA});
 
-    if(genWorkBB[detachLevel])
-        workFSMB.CreateBr(genWorkBB[detachLevel]);
+
+    if(gGenWorkBBArr[detachLevel])
+        workFSMB.CreateBr(gGenWorkBBArr[detachLevel]);
 
     workFSMB.SetInsertPoint(ifFalse);
-    lastFalseBB = ifFalse;
+    gLastFalseBB = ifFalse;
 
     tmpLevel = detachLevel;
     while(tmpLevel > 0){
         assert(false && "Not working yet, code needs update");
-        BlockAddress* bA = BlockAddress::get(gotStolenArr[detachLevel-tmpLevel]);
+        bA = BlockAddress::get(gotStolenArr[detachLevel-tmpLevel]);        
+        ifTrue = BasicBlock::Create(C, "TrueBB", F);
+        ifFalse = BasicBlock::Create(C, "FalseBB", F);
         
-        BasicBlock * ifTrue = BasicBlock::Create(C, "TrueBB", F);
-        BasicBlock * ifFalse = BasicBlock::Create(C, "FalseBB", F);
-        
-        workFSMB.CreateCall(potentialJump, {BlockAddress::get(gotStolenArr[detachLevel-tmpLevel])});
-        Value * cmpRes = workFSMB.CreateICmpUGE(pRA,bA);
+        Value * cmpRes = workFSMB.CreateICmpEQ(pRA,bA);
         workFSMB.CreateCondBr(cmpRes, ifTrue, ifFalse);
            
         workFSMB.SetInsertPoint(ifTrue);
         
         if(gotStolenArr[detachLevel-tmpLevel+1]){
             bA = BlockAddress::get(gotStolenArr[detachLevel-tmpLevel+1]);
-            Value * ppRA = workFSMB.CreateBitCast(pRA, pRA->getType()->getPointerTo());
             workFSMB.CreateStore(bA, ppRA);
+
+            detachB.SetInsertPoint(gotStolenArr[detachLevel-tmpLevel]);        
+            detachB.CreateCall(potentialJump, {bA});
+
         }
 
-        if(genWorkBB[tmpLevel-1])          
-            workFSMB.CreateBr(genWorkBB[tmpLevel-1]);
+        if(gGenWorkBBArr[tmpLevel-1])          
+            workFSMB.CreateBr(gGenWorkBBArr[tmpLevel-1]);
         
-
         workFSMB.SetInsertPoint(ifFalse);
-        lastFalseBB = ifFalse;
+        gLastFalseBB = ifFalse;
 
         tmpLevel--;
-    }
+    }   
 
-#if 0
-    //TODO :
-    // Should I create the parallel path?
-    // Parallel path
-    bbV2Clone.clear();
-    bbList.clear();
-    haveVisited.clear();
-    bb = nullptr;
-    term = nullptr;
-    bIgnore = false;
-    
-    // Search 
-    bbList.push_back(Continue);
-    bbList.push_back(detachBlock);
-    while(!bbList.empty()){
-        bb = bbList.back();
-        bbList.pop_back();
-        if ( (haveVisited.lookup(bb)) ){
-            continue;
-        }
-        haveVisited[bb] = true;
-
-        if ( (term = dyn_cast<DetachInst>(bb->getTerminator())) ){
-            bbV2Clone.push_back(bb);
-        } else if ( (term = dyn_cast<SyncInst>(bb->getTerminator())) ){
-            bbV2Clone.push_back(bb);
-        } else {
-            bbV2Clone.push_back(bb);
-            for( succ_iterator SI = succ_begin(bb); SI!=succ_end(bb); SI++ ){                
-                bbList.push_back(*SI);
-            }
-        }
-    }
-    
-
-    // Work generation for thief
-    if(!bIgnore){
-        DEBUG(dbgs() << "\nparallel path start-----------------\n " );
-
-        for(auto BB : bbV2Clone){
-            // Clone this basic block
-            // modify the following instruction
-            // detach->br det.achd
-            // reattach->remove
-            // In detach block, remove store. Change call to send instr.
-
-            // Create a new basic block and copy instructions into it!
-            BasicBlock *bbC = CloneBasicBlock(BB, VMap, ".parallelPath", F, nullptr,
-                                      nullptr);
-                        
-            
-        }
-        DEBUG(dbgs() << "\nparallel path end-----------------\n " );
-    }
-#endif
-
-   IRBuilder<> builder(&*detachBlock->getFirstInsertionPt());
-
-   // Do the potential jump later instead
-   //Value * seedGen = builder.CreateBitCast(Detach.getParent()->getParent(), VoidPtrTy);
-
-    
-   BranchInst *DetachBr = BranchInst::Create(detachBlock);   
-   Instruction * reattach = Detach.getDetached()->getTerminator();
-   BranchInst *ContinueBr = BranchInst::Create(Continue);
+   // TODO: Should we just ignore this
+   //BranchInst *DetachBr = BranchInst::Create(detachBB);   
+   //Instruction * reattach = detachBB->getTerminator();
+   //BranchInst *ContinueBr = BranchInst::Create(continueBB);
    //ReplaceInstWithInst(&Detach, DetachBr);
-   //ReplaceInstWithInst(reattach, ContinueBr);
-   
+   //ReplaceInstWithInst(reattach, ContinueBr);   
    detachLevel++;
     
-  return nullptr;
+   return nullptr;
 }
 
 
@@ -1133,12 +848,8 @@ void ULIABI::preProcessFunction(Function &F) {
     }    
   } 
 
-
-
   if (F.getName() != "fib") return;
-
   detachLevel = 0;
-
   llvm::errs() << "preprocessing " << F.getName() << "...\n";
 
   // Make it non inlinable
@@ -1178,7 +889,7 @@ void ULIABI::preProcessFunction(Function &F) {
 
   // Allocate PRSC_Desc
   Type *PRSC_DescTy = PRSC_DescType::get(C);
-  prscDescLocal = B.CreateAlloca(PRSC_DescTy, DL.getAllocaAddrSpace(), nullptr, "PRSC_Dec");
+  gPrscDescLocalVar = B.CreateAlloca(PRSC_DescTy, DL.getAllocaAddrSpace(), nullptr, "PRSC_Dec");
   
 
   // Get all the exit block and put DISULI before return
@@ -1219,22 +930,11 @@ void ULIABI::preProcessFunction(Function &F) {
 
     Value *ResultPtr = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::res);
     
-    ResultPtr->dump();
-    ResultPtr->getType()->dump();
-
     // TODO:Alignment?
     // TODO: Check type
-    Result.dump();
-    Result.getType()->dump();
     Value * result32  = B.CreateZExtOrTrunc(&Result, IntegerType::getInt32Ty(C), "t5");
-    result32->dump();
-    result32->getType()->dump();
     Value * resultPtr32  = B.CreateBitCast(ResultPtr, IntegerType::getInt32Ty(C)->getPointerTo(), "t5");
-    resultPtr32->dump();
-    resultPtr32->getType()->dump();
-
     StoreInst *S = B.CreateStore(result32, resultPtr32);
-    //StoreInst *S = B.CreateStore(&Result, ResultPtr);
 
     Constant *PRSC_CHECKIFZERO_RESUME = Get_PRSC_CHECKIFZERO_RESUME(*M);
     Value * checkCounter = B.CreateCall(PRSC_CHECKIFZERO_RESUME, WorkPSync);
@@ -1270,8 +970,6 @@ void ULIABI::preProcessFunction(Function &F) {
     Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
     Value *ZERO = ConstantInt::get(Int64Ty, 0, /*isSigned=*/false);  
     B.CreateCall(disuli, { ZERO });
-
-
     
     Argument &Result = localInlet->arg_begin()[0];
     Argument &WorkPtr = localInlet->arg_begin()[1];
@@ -1281,18 +979,13 @@ void ULIABI::preProcessFunction(Function &F) {
 
     Constant *PRSC_DEC_JOIN = Get_PRSC_DEC_JOIN(*M);
     
-    
     Value *WorkPSync = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::pSync);
     B.CreateCall(PRSC_DEC_JOIN, WorkPSync);
 
     Value *ResultPtr = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::res);
 
     Value * result32  = B.CreateZExtOrTrunc(&Result, IntegerType::getInt32Ty(C), "t5");
-    result32->dump();
-    result32->getType()->dump();
     Value * resultPtr32  = B.CreateBitCast(ResultPtr, IntegerType::getInt32Ty(C)->getPointerTo(), "t5");
-    resultPtr32->dump();
-    resultPtr32->getType()->dump();
     
     // TODO:Alignment?
     // TODO : Check type
@@ -1348,7 +1041,6 @@ void ULIABI::preProcessFunction(Function &F) {
     }
 
     Value *Result = B.CreateCall(&F, Args, "result");
-    
 
     // TODO: should this be a builtin instead??
     Constant *ENAULI = Get_ENAULI(*M);
@@ -1378,7 +1070,6 @@ void ULIABI::preProcessFunction(Function &F) {
 
     B.SetInsertPoint(BBremoteInlet);
 
-
     Value *WorkSrc = LoadSTyField(B, DL, WorkType::get(C), Work, WorkType::src);
     Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
     Value *InletPtr = B.CreateBitCast(Inlet, VoidPtrTy);
@@ -1387,7 +1078,6 @@ void ULIABI::preProcessFunction(Function &F) {
     Constant *threadIdGlobal = M->getOrInsertGlobal("threadId", Int32Ty);
     assert(threadIdGlobal);
     GlobalVariable *gVar = M->getNamedGlobal("threadId");
-    //gVar->setLinkage(GlobalValue::CommonLinkage);
     gVar->setThreadLocal(true);
 
     Value *threadId = B.CreateLoad(gVar, "threadId");
@@ -1400,29 +1090,23 @@ void ULIABI::preProcessFunction(Function &F) {
     B.CreateRetVoid();
     
     // Store the wrapper function
-    WrapperMap[&F] =  Wrapper;
-
-    //Wrapper->dump();
-    //F.dump();
+    gWrapperMap[&F] =  Wrapper;
   }
   
-  // Seed Generation
+  // Work Generation
   {
     B.SetInsertPoint(F.getEntryBlock().getTerminator());
-    seedLocal = B.CreateAlloca(SeedType::get(C), DL.getAllocaAddrSpace(), nullptr, "seed");
-    seedGeneration = BasicBlock::Create(C, "seedGen", &F);
+    gSeedLocalVar = B.CreateAlloca(SeedType::get(C), DL.getAllocaAddrSpace(), nullptr, "seed");
+    gGenWorkEntryBB = BasicBlock::Create(C, "seedGen", &F);
 
-    B.SetInsertPoint(seedGeneration);
+    B.SetInsertPoint(gGenWorkEntryBB);
 
     // Fix the rbp first using the rsp
     Function *SetupRBPfromRSPinRBP = Intrinsic::getDeclaration(M, Intrinsic::x86_setup_rbp_from_sp_in_rbp);
     B.CreateCall(SetupRBPfromRSPinRBP);
-    
 
     //==========================================================================
-    // Create Prologue for seedGeneration
-    
-    
+    // Create Prologue for gGenWorkEntryBB
     using AsmPrototype = int (void);
     FunctionType *FAsmTy =
         TypeBuilder<AsmPrototype, false>::get(B.getContext());
@@ -1432,15 +1116,14 @@ void ULIABI::preProcessFunction(Function &F) {
                               "=r,~{dirflag},~{fpsr},~{flags}",
                               /*sideeffects*/ true);
 
-    //%73 = call i32 asm sideeffect "movl %edi, $0\0A\09", "=r,~{dirflag},~{fpsr},~{flags}"() #8, !dbg !2205, !srcloc !2206
-    bSuspendType = B.CreateCall(Asm);
+    gIsSuspend = B.CreateCall(Asm);
 
   }
   
   // Sync Resume
   {
-    syncResumeBB = BasicBlock::Create(C, "syncResume", &F);
-    B.SetInsertPoint(syncResumeBB); B.CreateUnreachable();
+    gSyncResumeBB = BasicBlock::Create(C, "syncResume", &F);
+    B.SetInsertPoint(gSyncResumeBB); B.CreateUnreachable();
 
 
   }
@@ -1467,22 +1150,6 @@ void ULIABI::preProcessFunction(Function &F) {
    
    IRBuilder<> B(Entry);   
 
-#if 0
-   using AsmPrototype = long (void);
-   FunctionType *FAsmTy =
-       TypeBuilder<AsmPrototype, false>::get(C);
-
-   Value *Asm = InlineAsm::get(FAsmTy,
-                              "movq %rdi, $0\0A\09",
-                              "=r,~{dirflag},~{fpsr},~{flags}",
-                              /*sideeffects*/ true);
-
-   //%73 = call i32 asm sideeffect "movl %edi, $0\0A\09", "=r,~{dirflag},~{fpsr},~{flags}"() #8, !dbg !2205, !srcloc !2206
-   Value * from = B.CreateCall(Asm);
-   //Value * from = ONE;
-   from->getType()->dump();
-#endif
-
    Constant *PRSC_RESET_WORKSTEAL = Get_PRSC_RESET_WORKSTEAL(*M);
    B.CreateCall(PRSC_RESET_WORKSTEAL);
 
@@ -1501,10 +1168,6 @@ void ULIABI::preProcessFunction(Function &F) {
    Value * ARGC =  ConstantInt::get(Int32Ty, realNumArgs, /*isSigned=*/false);
    Value * ONE =  ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
   
-   // TODO : fix this-> lowering of uli_message_from happens earlier than this.    
-   //Function *UliFrom = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_message_from);   
-   //Value * from = B.CreateCall(UliFrom);
-      
    // Check if fp is NULL
    BasicBlock * fpIsNotNull = BasicBlock::Create(C, "fpIsNotNull", HereIsWorkHandler);
    BasicBlock * fpIsNull = BasicBlock::Create(C, "fpIsNull", HereIsWorkHandler);
@@ -1513,78 +1176,36 @@ void ULIABI::preProcessFunction(Function &F) {
    B.CreateCondBr(isFpNull, fpIsNull, fpIsNotNull);
    B.SetInsertPoint(fpIsNotNull);      
 
-   //Constant *PRSC_CREATE_WORK = Get_PRSC_CREATE_WORK(*M);
-   
    Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt64Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
 
-
    Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {fp, ARGC, from, parentIP, parentSP, sync, res, ONE});
-   
-
-#if 1
 
    for(int ii = 0; ii<realNumArgs; ii++){
        Value * v = realArgStart+ii;
        // Check type
        if(v->getType()->isIntegerTy()){
-           errs() << "Value of potentialWork type\n";
-           potentialWork->dump();
-           potentialWork->getType()->dump();
-
            Value * pargv  = B.CreateStructGEP(WorkType::get(C), potentialWork, (unsigned)WorkType::argv);    
-           errs() << "Value of pargv type\n";
-           pargv->dump();
-           pargv->getType()->dump();
-
            Value * argv = B.CreateLoad(IntegerType::getInt64Ty(C)->getPointerTo(), pargv);           
-           errs() << "Value of argv type\n";
-           argv->dump();
-           argv->getType()->dump();
            
            Value * storeArg = B.CreateInBoundsGEP( IntegerType::getInt64Ty(C), argv, ConstantInt::get(Int32Ty, ii, /*isSigned=*/false) );
-           errs() << "Value of firstStoreArg\n";
-           storeArg->dump();
-           storeArg->getType()->dump();
-           
            Value * zext = B.CreateZExt(v, IntegerType::getInt64Ty(C), "t5");
-           errs() << "Value of v\n";
-           v->dump();
-           v->getType()->dump();
            B.CreateStore(zext, storeArg);
 
-           errs() << "End\n";
        } else if (v->getType()->isPointerTy()){ 
-           errs() << "Value of potentialWork type\n";
-           potentialWork->dump();
-           potentialWork->getType()->dump();
-
            Value * pargv  = B.CreateStructGEP(WorkType::get(C), potentialWork, (unsigned)WorkType::argv);    
-           errs() << "Value of pargv type\n";
-           pargv->dump();
-           pargv->getType()->dump();
 
            Value * argv = B.CreateLoad(IntegerType::getInt64Ty(C)->getPointerTo(), pargv);           
-           errs() << "Value of argv type\n";
-           argv->dump();
-           argv->getType()->dump();
            
            Value * storeArg = B.CreateInBoundsGEP( IntegerType::getInt64Ty(C), argv, ConstantInt::get(Int32Ty, ii, /*isSigned=*/false) );
-           errs() << "Value of firstStoreArg\n";
-           storeArg->dump();
-           storeArg->getType()->dump();
            
            Value * zext = B.CreateCast(Instruction::PtrToInt, v, IntegerType::getInt64Ty(C));
 
-           errs() << "Value of v\n";
-           v->dump();
-           v->getType()->dump();
            B.CreateStore(zext, storeArg);
        } else {
            assert(false && "Type not yet supported");
        }
               
    }
-#endif 
 
    Constant * PRSC_PUSHFRONT_WORKQ = Get_PRSC_PUSHFRONT_WORKQ(*M);
    B.CreateCall(PRSC_PUSHFRONT_WORKQ, potentialWork);
@@ -1595,15 +1216,9 @@ void ULIABI::preProcessFunction(Function &F) {
    B.CreateRetVoid();
     
    // Store the here is work handler function
-   WorkReplyHandlerMap[&F] =  HereIsWorkHandler;
-
-   
+   gRecvWorkHandlerMap[&F] =  HereIsWorkHandler;
   }
 
-  //F.dump();
-  
-
-  //assert(false);
 }
 
 void ULIABI::postProcessFunction(Function &F) {
@@ -1621,16 +1236,15 @@ void ULIABI::postProcessFunction(Function &F) {
     Constant *POLL = Get_POLL(*M);
     Function *GetSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
     
-    IRBuilder<> B(firstDetach->getTerminator());
-    //B.SetInsertPoint(firstDetach->getTerminator());
+    IRBuilder<> B(gFirstDetachBB->getTerminator());
     Value * currSp = B.CreateCall(GetSP);    
-    Value * pSeedSP  = B.CreateStructGEP(SeedType::get(C), seedLocal, (unsigned)SeedType::sp);    
+    Value * pSeedSP  = B.CreateStructGEP(SeedType::get(C), gSeedLocalVar, (unsigned)SeedType::sp);    
     currSp = B.CreateCast(Instruction::IntToPtr, currSp, IntegerType::getInt8Ty(C)->getPointerTo());
 
     Value * seedStoreSp = B.CreateStore(currSp, pSeedSP);
     
-    Value * seedIP  = B.CreateStructGEP(SeedType::get(C), seedLocal, (unsigned)SeedType::ip);    
-    BlockAddress* seedGenAddr = BlockAddress::get(seedGeneration);
+    Value * seedIP  = B.CreateStructGEP(SeedType::get(C), gSeedLocalVar, (unsigned)SeedType::ip);    
+    BlockAddress* seedGenAddr = BlockAddress::get(gGenWorkEntryBB);
 
     Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
     Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false);  
@@ -1642,16 +1256,16 @@ void ULIABI::postProcessFunction(Function &F) {
 
 
     Value * seedStoreIp = B.CreateStore(seedGenAddr, seedIP);
-    Value * pSeedLocal = B.CreateBitCast(seedLocal, SeedType::get(C)->getPointerTo());
+    Value * pSeedLocal = B.CreateBitCast(gSeedLocalVar, SeedType::get(C)->getPointerTo());
     
     B.CreateCall(PRSC_PUSHFRONT_SEEDQ, pSeedLocal);
 
     // Add potential jump
     Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
-    B.CreateCall(potentialJump, {BlockAddress::get(seedGeneration)});
+    B.CreateCall(potentialJump, {BlockAddress::get(gGenWorkEntryBB)});
 
 
-    B.SetInsertPoint(lastDetach->getTerminator());
+    B.SetInsertPoint(gLastDetachBB->getTerminator());
     B.CreateCall(PRSC_POPFRONT_SEEDQ);
     
     B.CreateCall(enauli, { NEG_ZERO });
@@ -1659,31 +1273,28 @@ void ULIABI::postProcessFunction(Function &F) {
     
     // For the sync resume
     //-======================================================================
-    B.SetInsertPoint(syncResumeBB);    
-    Instruction * syncTerm = syncResumeBB->getTerminator();
+    B.SetInsertPoint(gSyncResumeBB);    
+    Instruction * syncTerm = gSyncResumeBB->getTerminator();
     
     // Fix base pointer
     Function *SetupRBPfromRSP = Intrinsic::getDeclaration(M, Intrinsic::x86_setup_rbp_from_rsp);
     B.CreateCall(SetupRBPfromRSP);
 
     // Branch to the sync
-    B.CreateBr(SyncBBMap[&F]);
+    B.CreateBr(gSyncBBMap[&F]);
     
     // Delete the previous terminator instruction
     syncTerm->eraseFromParent();
     
     // For gotStolen
     //-==================================================================
-    for( auto BB : CounterZeroBBVec ){
+    for( auto BB : gCntEqZeroBBList ){
         Instruction * term  = BB->getTerminator();
         B.SetInsertPoint(term);
-        B.CreateBr(SyncBBMap[&F]);
+        B.CreateBr(gSyncBBMap[&F]);
         term->eraseFromParent();
     }
     
-
-    
-    //assert(false);
 }
 
 void ULIABI::postProcessHelper(Function &F) {
