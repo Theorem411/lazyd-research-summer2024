@@ -71,13 +71,13 @@ public:
 private:
     void BuildSuspendAndStealRoutine (/*input*/CallInst * callInst, Value * returnFromSteal, Value* returnFromSuspend, Function *F, Module *M, LLVMContext & C, /*ouput*/SmallVector<BasicBlock*, 2> &newBB, SmallVector<Instruction*, 2> &delInstrs);
     
-    void StoreArgIntoWork(LLVMContext &C, IRBuilder<> & B, Value * firstArg, Value * potentialWork, int nargc);
+    void StoreArgIntoWork(LLVMContext &C, IRBuilder<> & B, Value * Arg, int offset, Value * potentialWork, int nargc);
     void DecrementJoinCounter(IRBuilder <> & gotStolen, Module * M, LLVMContext & C);
     void SetJoinCounter(IRBuilder <> & B, int val, Module * M, LLVMContext & C);
     Value* CheckIfJoinCounterZero(IRBuilder <> & gotStolenB, Module * M, LLVMContext & C);
     void StoreFuncRes(IRBuilder <> & gotStolenB, int detachLevel, LLVMContext & C);
     void StoreRetInInlet(IRBuilder <> &B, Argument & Result, Argument & WorkPtr, Type * retType, LLVMContext & C, const DataLayout &DL);
-    void PopulateAfterCheckCnt(IRBuilder <> & gotStolenB, Value * checkCntRes, DetachInst &Detach, Function * F, Module * M, LLVMContext & C);
+    void PopulateAfterCheckCnt(IRBuilder <> & gotStolenB, BasicBlock * parentBB, Value * checkCntRes, DetachInst &Detach, Function * F, Module * M, LLVMContext & C);
     void GenerateInletEntry(IRBuilder<> & B, Argument & Result, Argument & WorkPtr, Type * retType, Function * Inlet, Module * M, LLVMContext & C, const DataLayout &DL);
 
 };

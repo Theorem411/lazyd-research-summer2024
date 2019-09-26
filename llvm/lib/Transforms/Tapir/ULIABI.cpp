@@ -37,6 +37,7 @@
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 //TODO : Code refactoring
+//TODO : Design document
 
 using namespace llvm;
 
@@ -56,6 +57,9 @@ BasicBlock * gLastFalseBB;
 BasicBlock * gFirstDetachBB;
 BasicBlock * gLastDetachBB;
 BasicBlock * gSyncResumeBB;
+
+BasicBlock * oldDetachBB = nullptr;
+BlockAddress * oldBA = nullptr;
 
 Value * gPrscDescLocalVar;
 Value * gSeedLocalVar;
@@ -149,6 +153,9 @@ DEFAULT_GET_LIB_FUNC(PRSC_SET_JOIN)
 
 using PRSC_SUSPEND_ROUTINE_ty = void (void);
 DEFAULT_GET_LIB_FUNC(PRSC_SUSPEND_ROUTINE)
+
+using PRSC_SUSPEND_AND_CHANGERETADDR_ty = void (void *);
+DEFAULT_GET_LIB_FUNC(PRSC_SUSPEND_AND_CHANGERETADDR)
 
 using PRSC_RESUME_TO_HANDLER_ty = void (int );
 DEFAULT_GET_LIB_FUNC(PRSC_RESUME_TO_HANDLER)
@@ -399,6 +406,7 @@ Value* ULIABI::CheckIfJoinCounterZero(IRBuilder <> & gotStolenB, Module * M, LLV
 }
 
 void ULIABI::StoreFuncRes(IRBuilder <> & gotStolenB, int detachLevel, LLVMContext & C){
+    // TODO: fix this
     if(gStInstArr[detachLevel]){
         // Does not work, need asm
         //gotStolenB.Insert(gStInstArr[detachLevel], gStInstArr[detachLevel]->getName());
@@ -429,6 +437,9 @@ void ULIABI::StoreRetInInlet(IRBuilder <> &B, Argument & Result, Argument & Work
     } else if (resTy->isPointerTy()){
         assert(false && "Storing this type is not supported yet");
         //Value * result =  B.CreateCast(Instruction::IntToPtr, ppRA, IntegerType::getInt8Ty(C)->getPointerTo());
+    } else if (resTy->isVoidTy()) {
+        // Do nothing
+        ;
     } else {
         assert(false && "Storing this type is not supported yet");
     }
@@ -436,7 +447,7 @@ void ULIABI::StoreRetInInlet(IRBuilder <> &B, Argument & Result, Argument & Work
 }
 
 
-void ULIABI::PopulateAfterCheckCnt(IRBuilder <> &gotStolenB, Value * checkCntRes, DetachInst &Detach, Function * F, Module * M, LLVMContext & C){
+void ULIABI::PopulateAfterCheckCnt(IRBuilder <> &gotStolenB, BasicBlock * parentBB, Value * checkCntRes, DetachInst &Detach, Function * F, Module * M, LLVMContext & C){
     Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
 
     BasicBlock * ifCounterZero = BasicBlock::Create(C, "CounterZero", F);    
@@ -456,11 +467,12 @@ void ULIABI::PopulateAfterCheckCnt(IRBuilder <> &gotStolenB, Value * checkCntRes
     gotStolenB.SetInsertPoint(ifCounterNotZero);
     Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
     gotStolenB.CreateCall(potentialJump, {BlockAddress::get(gSyncResumeBB)});
-    Constant *PRSC_SUSPEND_ROUTINE = Get_PRSC_SUSPEND_ROUTINE(*M);
-    gotStolenB.CreateCall(enauli, { NEG_ZERO });
+    Constant *PRSC_SUSPEND_AND_CHANGERETADDR = Get_PRSC_SUSPEND_AND_CHANGERETADDR(*M);
+    //gotStolenB.CreateCall(enauli, { NEG_ZERO });
 
     // Suspend for now
-    CallInst * CI = CallInst::Create(PRSC_SUSPEND_ROUTINE);
+    
+    CallInst * CI = CallInst::Create(PRSC_SUSPEND_AND_CHANGERETADDR, {BlockAddress::get(parentBB)});
 
     // TODO: Hack?
     CI->setDebugLoc(Detach.getDebugLoc());
@@ -559,7 +571,7 @@ void ULIABI::BuildSuspendAndStealRoutine (/*input*/CallInst * callInst, Value * 
     B.SetInsertPoint(suspendRoutine);    
                 
     Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {WrapperPtr, Argc, N_One, bA, seedSP, PRSCSync, res, Zero});
-    StoreArgIntoWork(C, B, callInst->arg_begin()->get(), potentialWork, nargc);
+    StoreArgIntoWork(C, B, callInst, 0, potentialWork, nargc);
 
     Constant * PRSC_PUSHFRONT_WORKQ = Get_PRSC_PUSHFRONT_WORKQ(*M);
     B.CreateCall(PRSC_PUSHFRONT_WORKQ, potentialWork);
@@ -578,14 +590,25 @@ void ULIABI::BuildSuspendAndStealRoutine (/*input*/CallInst * callInst, Value * 
                                 
     B.CreateUnreachable();
         
-    delInstrs.push_back(callInst->getNextNode());
+    if(storeAfterCall){
+        delInstrs.push_back(callInst->getNextNode());
+    }
     delInstrs.push_back(callInst);
 }
 
-void ULIABI::StoreArgIntoWork(LLVMContext &C, IRBuilder<> & B, Value * firstArg, Value * potentialWork, int nargc){
+void ULIABI::StoreArgIntoWork(LLVMContext &C, IRBuilder<> & B, Value * Arg, int offset, Value * potentialWork, int nargc){
     for(int ii = 0; ii<nargc; ii++){
-        Value * v = firstArg+ii;
+        CallInst * callInst = nullptr;
+        Function * F = nullptr;
+        Value * v = nullptr;
+        if (callInst = dyn_cast<CallInst>(Arg)) {
+            v = (callInst->arg_begin()+ offset+ii)->get();
+        } else if (F = dyn_cast<Function>(Arg)){
+            v = F->arg_begin() + offset + ii;
+        }
+
         // Check type
+        assert(v);
         if(v->getType()->isIntegerTy()){
             Value * pargv  = B.CreateStructGEP(WorkType::get(C), potentialWork, (unsigned)WorkType::argv);    
             Value * argv = B.CreateLoad(IntegerType::getInt64Ty(C)->getPointerTo(), pargv);           
@@ -613,7 +636,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     Function * F = curBB->getParent();
     Module * M = F->getParent();
     LLVMContext& C = M->getContext();
-    BasicBlock * detachBB = Detach.getDetached();    
+    BasicBlock * detachBB = Detach.getDetached();        
     BasicBlock * continueBB = Detach.getContinue();
     const DataLayout &DL = M->getDataLayout();
     
@@ -701,11 +724,13 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     bool bFoundPotentialCall = false;
         
     for(auto BB : bbV2Clone){
+        BB->dump();
+
         SmallVector<BasicBlock*, 2> newBB;
         BasicBlock *CBB = dyn_cast<BasicBlock>(VMap[BB]);
 
         Instruction *iterm  = CBB->getTerminator();
-        delInstrs.push_back(iterm);
+     
 
         if(DetachInst * itermDet = dyn_cast<DetachInst>(iterm)){
             BasicBlock * detachBB = itermDet->getDetached();
@@ -720,7 +745,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
             Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
             Value *One = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);                                   
             BuildSuspendAndStealRoutine(callInst, Zero, One, F, M, C, newBB, delInstrs);                     
-                                
+            delInstrs.push_back(iterm);
         } else {
             for(Instruction &I : *CBB){
                 if(CallInst * callInst = dyn_cast<CallInst>(&I)){
@@ -738,6 +763,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
                 Value *Three = ConstantInt::get(Int32Ty, 3, /*isSigned=*/false);
 
                 BuildSuspendAndStealRoutine(callInst, Two, Three, F, M, C, newBB, delInstrs);                     
+                delInstrs.push_back(iterm);
             }
         }
               
@@ -759,11 +785,10 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         }                  
     }        
 
-    for (auto In : delInstrs){
+     for (auto In : delInstrs){
         Instruction& inst = *In;
         inst.eraseFromParent(); // delete instrs
     }
-     
 
 
     //==========================================================================
@@ -776,7 +801,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     StoreFuncRes(gotStolenB, detachLevel, C);
     DecrementJoinCounter(gotStolenB, M, C);
     Value * checkCntRes = CheckIfJoinCounterZero(gotStolenB, M, C);    
-    PopulateAfterCheckCnt(gotStolenB, checkCntRes, Detach, F, M, C);
+    PopulateAfterCheckCnt(gotStolenB, gotStolenArr[0], checkCntRes, Detach, F, M, C);
     
     while(tmpLevel > 0){
         gotStolenArr[detachLevel-tmpLevel+1] = BasicBlock::Create(C, "gotStolen", F);         
@@ -785,7 +810,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         StoreFuncRes(gotStolenB, detachLevel, C);
         DecrementJoinCounter(gotStolenB, M, C);
         Value * checkCntRes = CheckIfJoinCounterZero(gotStolenB, M, C);    
-        PopulateAfterCheckCnt(gotStolenB, checkCntRes, Detach, F, M, C);
+        PopulateAfterCheckCnt(gotStolenB, gotStolenArr[detachLevel-tmpLevel+1], checkCntRes, Detach, F, M, C);
 
         tmpLevel--;
     }
@@ -810,8 +835,15 @@ Function *ULIABI::createDetach(DetachInst &Detach,
 
     BasicBlock * ifTrue = BasicBlock::Create(C, "TrueBB", F);
     BasicBlock * ifFalse = BasicBlock::Create(C, "FalseBB", F);
+
     BlockAddress* bA = BlockAddress::get(detachBB);   
     Value * cmpRes = workFSMB.CreateICmpUGE(pRA,bA);
+
+    BlockAddress* bA2 = BlockAddress::get(continueBB);   
+    Value * cmpRes2 = workFSMB.CreateICmpULE(pRA, bA2);
+
+    cmpRes = workFSMB.CreateAnd(cmpRes, cmpRes2);
+
     workFSMB.CreateCondBr(cmpRes, ifTrue, ifFalse);
     workFSMB.SetInsertPoint(ifTrue);
 
@@ -820,11 +852,23 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     bA = BlockAddress::get(gotStolenArr[0]);
     workFSMB.CreateStore(bA, ppRA);
     
-    // TODO: Fix potential jump location
-    // HACK
     Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
-    IRBuilder <> detachB (detachBB->getTerminator());
-    detachB.CreateCall(potentialJump, {bA});
+    
+    //TODO : Fix this. Hack
+    workFSMB.CreateCall(potentialJump, {bA});
+    
+    if(oldDetachBB){
+        //TODO : Fix this. Hack
+        BasicBlock * cloneOldDetachBB = dyn_cast<BasicBlock>(VMap[oldDetachBB]);
+        IRBuilder <> detachB (cloneOldDetachBB->getTerminator());
+        detachB.CreateCall(potentialJump, {oldBA});
+        detachB.CreateCall(potentialJump, {bA});
+        errs() << "Potential jump\n";
+        cloneOldDetachBB->dump();
+        errs() << "Potential jump end\n";
+    }
+    
+    oldBA = bA;
 
 
     if(gGenWorkBBArr[detachLevel])
@@ -835,7 +879,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
 
     tmpLevel = detachLevel;
     while(tmpLevel > 0){
-        assert(false && "Not working yet, code needs update");
+        //assert(false && "Not working yet, code needs update");
         bA = BlockAddress::get(gotStolenArr[detachLevel-tmpLevel]);        
         ifTrue = BasicBlock::Create(C, "TrueBB", F);
         ifFalse = BasicBlock::Create(C, "FalseBB", F);
@@ -848,8 +892,9 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         if(gotStolenArr[detachLevel-tmpLevel+1]){
             bA = BlockAddress::get(gotStolenArr[detachLevel-tmpLevel+1]);
             workFSMB.CreateStore(bA, ppRA);
-
-            detachB.SetInsertPoint(gotStolenArr[detachLevel-tmpLevel]);        
+            
+            IRBuilder <> detachB(gotStolenArr[detachLevel-tmpLevel]->getTerminator());        
+            //detachB.SetInsertPoint(gotStolenArr[detachLevel-tmpLevel]->getTerminator());        
             detachB.CreateCall(potentialJump, {bA});
 
         }
@@ -864,7 +909,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     }   
 
    detachLevel++;
-    
+   oldDetachBB = detachBB;
    return nullptr;
 }
 
@@ -888,10 +933,11 @@ void ULIABI::preProcessFunction(Function &F) {
           B.CreateCall(PRSC_SHOW_STATS);
           B.CreateCall(PRSC_DEINIT_RT);
       }
-    }    
+    }   
+
+    return;
   } 
 
-  if (F.getName() != "fib") return;
   detachLevel = 0;
   llvm::errs() << "preprocessing " << F.getName() << "...\n";
 
@@ -915,7 +961,7 @@ void ULIABI::preProcessFunction(Function &F) {
   Type *UliArgTypeTy = TypeBuilder<UliArgType, false>::get(C);
   
   // TODO: how to see if a type can fit in a 64bit register
-  assert(RetType == Int32Ty || RetType == Int64Ty);
+  //assert(RetType == Int32Ty || RetType == Int64Ty);
 
   Type *WorkPtrTy = TypeBuilder<Work*, false>::get(C);
   
@@ -1032,7 +1078,10 @@ void ULIABI::preProcessFunction(Function &F) {
       Args.push_back(it);
     }
 
-    Value *Result = B.CreateCall(&F, Args, "result");
+    Value *Result = B.CreateCall(&F, Args);
+    if (RetType->isVoidTy()){
+        Result =  ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
+    }
 
     // TODO: should this be a builtin instead??
     Constant *ENAULI = Get_ENAULI(*M);
@@ -1045,8 +1094,15 @@ void ULIABI::preProcessFunction(Function &F) {
     Value * WorkStolen = LoadSTyField(B, DL, WorkType::get(C), Work, WorkType::stolen);
     Value *ZERO = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
     
-    Value *SendResult = B.CreateZExtOrBitCast(Result, UliArgTypeTy);
-    Value *SendWork = B.CreatePtrToInt(Work, UliArgTypeTy);
+    Value * SendResult = nullptr;
+    Value * SendWork = B.CreatePtrToInt(Work, UliArgTypeTy);;
+    
+    if (RetType->isVoidTy()){
+       SendResult = ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
+       SendResult = B.CreatePtrToInt(SendResult, UliArgTypeTy);
+    }else {
+       SendResult = B.CreateZExtOrBitCast(Result, UliArgTypeTy);
+    }
 
     BasicBlock *BBremoteInlet = BasicBlock::Create(C, "remoteInlet", Wrapper);
     BasicBlock *BBlocalInlet = BasicBlock::Create(C, "localInlet", Wrapper);
@@ -1165,7 +1221,7 @@ void ULIABI::preProcessFunction(Function &F) {
 
    Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {fp, ARGC, from, parentIP, parentSP, sync, res, ONE});
 
-   StoreArgIntoWork(C, B, realArgStart, potentialWork, realNumArgs);
+   StoreArgIntoWork(C, B, HereIsWorkHandler, 2, potentialWork, realNumArgs);
 
    Constant * PRSC_PUSHFRONT_WORKQ = Get_PRSC_PUSHFRONT_WORKQ(*M);
    B.CreateCall(PRSC_PUSHFRONT_WORKQ, potentialWork);
@@ -1183,8 +1239,6 @@ void ULIABI::preProcessFunction(Function &F) {
 
 void ULIABI::postProcessFunction(Function &F) {
     
-    if (F.getName() != "fib") return;
-
     LLVMContext &C = F.getContext();
     Module *M = F.getParent();
     const DataLayout &DL = M->getDataLayout();
