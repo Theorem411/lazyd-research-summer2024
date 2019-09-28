@@ -127,9 +127,6 @@ using TypeBuilderCache = std::map<LLVMContext *, StructType *>;
       );                                                    \
   }
 
-using ENAULI_ty = void (unsigned long);
-DEFAULT_GET_LIB_FUNC(ENAULI)
-
 using POLL_ty = void (unsigned );
 DEFAULT_GET_LIB_FUNC(POLL)
 
@@ -1083,12 +1080,11 @@ void ULIABI::preProcessFunction(Function &F) {
         Result =  ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
     }
 
-    // TODO: should this be a builtin instead??
-    Constant *ENAULI = Get_ENAULI(*M);
+    // TODO: should this be a builtin instead?? Fail on native using ENAULI
+    Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
+    Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false);  
 
-    Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false);
-
-    B.CreateCall(ENAULI, { NEG_ZERO });
+    B.CreateCall(enauli, { NEG_ZERO });
 
     Value *Work = Wrapper->arg_begin();
     Value * WorkStolen = LoadSTyField(B, DL, WorkType::get(C), Work, WorkType::stolen);
@@ -1156,7 +1152,7 @@ void ULIABI::preProcessFunction(Function &F) {
         TypeBuilder<AsmPrototype, false>::get(B.getContext());
 
     Value *Asm = InlineAsm::get(FAsmTy,
-                              "movl %edi, $0\0A\09",
+                              "movl 0(%rsp), $0\0A\09",
                               "=r,~{dirflag},~{fpsr},~{flags}",
                               /*sideeffects*/ true);
 
