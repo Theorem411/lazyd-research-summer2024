@@ -1166,7 +1166,8 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   if (CodeGenOpts.VerifyModule)
     FPM.add(createVerifierPass());
 
-  PMBuilder.addExtension(PassManagerBuilder::EP_EarlyAsPossible,
+  //PMBuilder.addExtension(PassManagerBuilder::EP_EarlyAsPossible,
+  PMBuilder.addExtension(PassManagerBuilder::EP_PostTapir,
       addHandleInletsPass);
 
   // Set up the per-module pass manager.
