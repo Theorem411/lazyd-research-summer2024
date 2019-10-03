@@ -79,7 +79,11 @@ private:
     void StoreRetInInlet(IRBuilder <> &B, Argument & Result, Argument & WorkPtr, Type * retType, LLVMContext & C, const DataLayout &DL);
     void PopulateAfterCheckCnt(IRBuilder <> & gotStolenB, BasicBlock * parentBB, Value * checkCntRes, DetachInst &Detach, Function * F, Module * M, LLVMContext & C);
     void GenerateInletEntry(IRBuilder<> & B, Argument & Result, Argument & WorkPtr, Type * retType, Function * Inlet, Module * M, LLVMContext & C, const DataLayout &DL);
-
+    
+    Function * GenerateWrapperFunc(Function & callFunc, Module * M, LLVMContext & C);
+    Function * GenerateRemoteInlet(Function & callFunc, Module * M, LLVMContext & C);
+    Function * GenerateLocalInlet(Function & callFunc, Module * M, LLVMContext & C);
+    Function * GenerateHereIsWorkHandlerFunc(Function & callFunc, Module * M, LLVMContext & C);
 };
 
 }  // end of llvm namespace

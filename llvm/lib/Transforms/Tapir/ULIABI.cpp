@@ -43,20 +43,21 @@ using namespace llvm;
 
 #define DEBUG_TYPE "uliabi"
 
-#define MAX_LEVEL 4
+#define MAX_LEVEL 8
 
 // Store instruction to store the result of the potential parallel call 
 StoreInst  * gStInstArr[MAX_LEVEL];
 
 //  Basic block for generating work
 BasicBlock * gGenWorkBBArr[MAX_LEVEL];
+
 // Entry point for generating work
 BasicBlock * gGenWorkEntryBB;
 
-BasicBlock * gLastFalseBB;
-BasicBlock * gFirstDetachBB;
-BasicBlock * gLastDetachBB;
-BasicBlock * gSyncResumeBB;
+BasicBlock * gLastFalseBB[MAX_LEVEL];
+BasicBlock * gFirstDetachBB[MAX_LEVEL];
+BasicBlock * gLastDetachBB[MAX_LEVEL];
+BasicBlock * gSyncResumeBB[MAX_LEVEL];
 
 BasicBlock * oldDetachBB = nullptr;
 BlockAddress * oldBA = nullptr;
@@ -69,6 +70,7 @@ Value * gIsSuspend;
 
 // Store basic block that is taken if the join counter == 0 (Basic block is basically a jump to sync statement
 SmallVector<BasicBlock *, 8> gCntEqZeroBBList;
+DenseMap<BasicBlock *, int> gBBtoSyncLevel;
 
 // A map that maps a function to the wrapper function and the here is work reply handler
 // TODO : Combine the below map into one single map <Function * , ArrayofFunction>
@@ -78,7 +80,8 @@ DenseMap<Function *, Function *> gLocalInletMap;
 DenseMap<Function *, Function *> gRecvWorkHandlerMap;
 
 // Store the basic block that is executed after the cilk_sync statment
-DenseMap<Function *, BasicBlock *> gSyncBBMap;
+//DenseMap<Function *, BasicBlock *> gSyncBBMap;
+BasicBlock * gSyncBBMap[MAX_LEVEL];
 
 using Sync = ULIABI::Sync;
 using Work = ULIABI::Work;
@@ -86,6 +89,10 @@ using PRSC_Desc = ULIABI::PRSC_Desc;
 using Seed = ULIABI::Seed;
 
 unsigned detachLevel = 0;
+
+unsigned syncLevel =0;
+
+unsigned gSlvlI = 0;
 
 /// Helper methods for storing to and loading from struct fields.
 static Value *GEP(IRBuilder<> &B, Value *Base, int field) {
@@ -358,17 +365,21 @@ Value *ULIABI::lowerGrainsizeCall(CallInst *GrainsizeCall) {
   return nullptr;
 }
 
-void ULIABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) {
-    IRBuilder<> B(gLastFalseBB);
-    B.CreateUnreachable();
-    
+void ULIABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) {    
+    if(gSlvlI == 0 ){
+        IRBuilder<> B(gLastFalseBB[syncLevel-1]);
+        B.CreateUnreachable();
+    }
+
     BasicBlock &BB = *(SI.getParent());
     Function &Fn = *(BB.getParent());
     Module &M = *(Fn.getParent());
 
     BasicBlock * syncBB = SI.getSuccessor(0);
     // TODO :  sync?sync_region should be the key instead of function since one function can have multiple sync statement 
-    gSyncBBMap[&Fn] = syncBB;
+    //gSyncBBMap[&Fn] = syncBB;
+    gSyncBBMap[gSlvlI] = syncBB;
+    gSlvlI++;
 }
 
 void ULIABI::SetJoinCounter(IRBuilder <> & B, int val, Module * M, LLVMContext & C){
@@ -460,10 +471,11 @@ void ULIABI::PopulateAfterCheckCnt(IRBuilder <> &gotStolenB, BasicBlock * parent
     gotStolenB.CreateCall(enauli, { NEG_ZERO });
     gotStolenB.CreateUnreachable();
     gCntEqZeroBBList.push_back(ifCounterZero);
+    gBBtoSyncLevel[ifCounterZero] = syncLevel-1;
 
     gotStolenB.SetInsertPoint(ifCounterNotZero);
     Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
-    gotStolenB.CreateCall(potentialJump, {BlockAddress::get(gSyncResumeBB)});
+    gotStolenB.CreateCall(potentialJump, {BlockAddress::get(gSyncResumeBB[syncLevel-1])});
     Constant *PRSC_SUSPEND_AND_CHANGERETADDR = Get_PRSC_SUSPEND_AND_CHANGERETADDR(*M);
     //gotStolenB.CreateCall(enauli, { NEG_ZERO });
 
@@ -506,9 +518,319 @@ void ULIABI::GenerateInletEntry(IRBuilder<> & B, Argument & Result, Argument & W
     B.CreateRetVoid();
 }
 
+Function * ULIABI::GenerateHereIsWorkHandlerFunc(Function & F, Module * M, LLVMContext & C){
+
+    const DataLayout &DL = M->getDataLayout();
+    auto InternalLinkage = Function::LinkageTypes::InternalLinkage;
+
+    Type *VoidTy = TypeBuilder<void, false>::get(C);
+    Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);
+    
+    FunctionType *FTy = F.getFunctionType();
+    assert(!FTy->isFunctionVarArg());
+
+    Type *RetType = FTy->getReturnType();
+    Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
+    Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
+    Type *UliArgTypeTy = TypeBuilder<UliArgType, false>::get(C);
+  
+    // TODO: how to see if a type can fit in a 64bit register
+    //assert(RetType == Int32Ty || RetType == Int64Ty);
+
+    Type *WorkPtrTy = TypeBuilder<Work*, false>::get(C);
+
+
+   
+    SmallVector<Type *, 8> WorkHandlerParamTys(FTy->param_begin(), FTy->param_end());
+    WorkHandlerParamTys.insert(WorkHandlerParamTys.begin(), VoidPtrTy);
+    WorkHandlerParamTys.insert(WorkHandlerParamTys.begin(), Int64Ty);
+    WorkHandlerParamTys.push_back(VoidPtrTy);
+    WorkHandlerParamTys.push_back(VoidPtrTy);
+    WorkHandlerParamTys.push_back(SyncType::get(C)->getPointerTo());
+    WorkHandlerParamTys.push_back(VoidPtrTy);
+
+    FunctionType *WorkHandlerFTy = FunctionType::get(VoidTy, WorkHandlerParamTys, /*isVarArg=*/false);
+
+    auto Name = "__prsc_" + F.getName() + "HereIsWorkHandler";
+   
+    Function *HereIsWorkHandler = Function::Create(WorkHandlerFTy, InternalLinkage, Name, M);
+    HereIsWorkHandler->setCallingConv(CallingConv::X86_ULI);
+    HereIsWorkHandler->addFnAttr(Attribute::UserLevelInterrupt);
+   
+    BasicBlock *Entry = BasicBlock::Create(C, "entry", HereIsWorkHandler);
+   
+    IRBuilder<> B(Entry);   
+
+    Constant *PRSC_RESET_WORKSTEAL = Get_PRSC_RESET_WORKSTEAL(*M);
+    B.CreateCall(PRSC_RESET_WORKSTEAL);
+
+    Value * from = HereIsWorkHandler->arg_begin();
+    Value * fp = HereIsWorkHandler->arg_begin()+1;   
+    Value * res = HereIsWorkHandler->arg_end()-1;
+    Value * sync = HereIsWorkHandler->arg_end()-2;
+    Value * parentSP = HereIsWorkHandler->arg_end()-3;
+    Value * parentIP = HereIsWorkHandler->arg_end()-4;   
+    Value * realArgStart = HereIsWorkHandler->arg_begin() + 2;
+   
+    int numArgs = HereIsWorkHandler->arg_end()-HereIsWorkHandler->arg_begin();
+    int realNumArgs = numArgs - 6;// Remove from, fp, res, syn, parentSP/IP
+
+    Value * ARGC =  ConstantInt::get(Int32Ty, realNumArgs, /*isSigned=*/false);
+    Value * ONE =  ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
+  
+    // Check if fp is NULL
+    BasicBlock * fpIsNotNull = BasicBlock::Create(C, "fpIsNotNull", HereIsWorkHandler);
+    BasicBlock * fpIsNull = BasicBlock::Create(C, "fpIsNull", HereIsWorkHandler);
+    Value * isFpNull = B.CreateICmpEQ(fp, ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo()) );
+   
+    B.CreateCondBr(isFpNull, fpIsNull, fpIsNotNull);
+    B.SetInsertPoint(fpIsNotNull);      
+
+    Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt64Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
+
+    Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {fp, ARGC, from, parentIP, parentSP, sync, res, ONE});
+
+    StoreArgIntoWork(C, B, HereIsWorkHandler, 2, potentialWork, realNumArgs);
+
+    Constant * PRSC_PUSHFRONT_WORKQ = Get_PRSC_PUSHFRONT_WORKQ(*M);
+    B.CreateCall(PRSC_PUSHFRONT_WORKQ, potentialWork);
+
+    B.CreateRetVoid();
+   
+    B.SetInsertPoint(fpIsNull);
+    B.CreateRetVoid();
+
+    return HereIsWorkHandler;
+}
+
+//TODO :
+// Free the work and its argument
+// free(w); free(w->argv);
+// Can use CallInst::CreateFree
+Function * ULIABI::GenerateRemoteInlet(Function & F, Module * M, LLVMContext & C){
+    Function * RemoteInlet = nullptr;
+    
+    const DataLayout &DL = M->getDataLayout();
+    auto InternalLinkage = Function::LinkageTypes::InternalLinkage;
+
+    Type *VoidTy = TypeBuilder<void, false>::get(C);
+    Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);
+    
+    FunctionType *FTy = F.getFunctionType();
+    assert(!FTy->isFunctionVarArg());
+
+    Type *RetType = FTy->getReturnType();
+    Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
+    Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
+    Type *UliArgTypeTy = TypeBuilder<UliArgType, false>::get(C);
+  
+    // TODO: how to see if a type can fit in a 64bit register
+    //assert(RetType == Int32Ty || RetType == Int64Ty);
+
+    Type *WorkPtrTy = TypeBuilder<Work*, false>::get(C);
+
+    FunctionType *InletTy = FunctionType::get(VoidTy, {Int32Ty, UliArgTypeTy, WorkPtrTy, Int32Ty}, /*isVarArg=*/false);
+    auto Name = "__prsc_" + F.getName() + "Remote_Inlet";
+    RemoteInlet = Function::Create(InletTy, InternalLinkage, Name, M);
+    RemoteInlet->addFnAttr(Attribute::UserLevelInterrupt);
+    RemoteInlet->setCallingConv(CallingConv::X86_ULI);
+    BasicBlock *Entry = BasicBlock::Create(C, "entry", RemoteInlet);
+    IRBuilder<> B(Entry);
+    
+
+    Argument &FromArg = RemoteInlet->arg_begin()[0];
+    Argument &Result = RemoteInlet->arg_begin()[1];
+    Argument &WorkPtr = RemoteInlet->arg_begin()[2];
+    Argument &From2Arg = RemoteInlet->arg_begin()[3];
+     
+    // TODO: assert equal?
+    // Value *FromMatch = B.CreateICmpEQ(&FromArg, &From2Arg);
+    
+    GenerateInletEntry(B, Result, WorkPtr, RetType, RemoteInlet, M, C, DL);    
+    gRemoteInletMap[&F] =  RemoteInlet;
+
+    return RemoteInlet;
+}
+
+//TODO :
+// Free the work and its argument
+// free(w); free(w->argv);
+Function * ULIABI::GenerateLocalInlet(Function & F, Module * M, LLVMContext & C){
+    Function * localInlet = nullptr;
+
+    const DataLayout &DL = M->getDataLayout();
+    auto InternalLinkage = Function::LinkageTypes::InternalLinkage;
+
+    Type *VoidTy = TypeBuilder<void, false>::get(C);
+    Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);
+    
+    FunctionType *FTy = F.getFunctionType();
+    assert(!FTy->isFunctionVarArg());
+
+    Type *RetType = FTy->getReturnType();
+    Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
+    Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
+    Type *UliArgTypeTy = TypeBuilder<UliArgType, false>::get(C);
+  
+    // TODO: how to see if a type can fit in a 64bit register
+    //assert(RetType == Int32Ty || RetType == Int64Ty);
+
+    Type *WorkPtrTy = TypeBuilder<Work*, false>::get(C);
+
+    FunctionType *InletTy = FunctionType::get(VoidTy, {UliArgTypeTy, WorkPtrTy}, /*isVarArg=*/false);
+    auto Name = "__prsc_" + F.getName() + "Local_Inlet";
+    localInlet = Function::Create(InletTy, InternalLinkage, Name, M);
+    BasicBlock *Entry = BasicBlock::Create(C, "entry", localInlet);
+    IRBuilder<> B(Entry);
+    // Generate the disuli here
+    Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
+    Value *ZERO = ConstantInt::get(Int64Ty, 0, /*isSigned=*/false);  
+    B.CreateCall(disuli, { ZERO });
+    
+    // Result is store later in the postProcess once we get the return type
+    Argument &Result = localInlet->arg_begin()[0];
+    Argument &WorkPtr = localInlet->arg_begin()[1];
+ 
+    
+    // TODO: assert equal?
+    // Value *FromMatch = B.CreateICmpEQ(&FromArg, &From2Arg);
+    
+    GenerateInletEntry(B, Result, WorkPtr, RetType, localInlet, M, C, DL);    
+    
+    // Generate the enauli here
+    for (auto &BB : *localInlet){
+        Instruction * termInst = BB.getTerminator();
+        if(isa<ReturnInst>(termInst)){
+            B.SetInsertPoint(termInst);
+            Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
+            Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false);      
+            B.CreateCall(enauli, { NEG_ZERO });
+        }
+    }
+    
+    errs() << "Key value : " << &F << "\n";
+    gLocalInletMap[&F] =  localInlet;
+    //Inlet->dump();
+
+    return localInlet;
+}
+
+Function * ULIABI::GenerateWrapperFunc(Function & F, Module * M, LLVMContext & C){
+    const DataLayout &DL = M->getDataLayout();
+    auto InternalLinkage = Function::LinkageTypes::InternalLinkage;
+
+    Type *VoidTy = TypeBuilder<void, false>::get(C);
+    Type *VoidPtrTy = TypeBuilder<void*, false>::get(C);
+    
+    FunctionType *FTy = F.getFunctionType();
+    assert(!FTy->isFunctionVarArg());
+
+    Type *RetType = FTy->getReturnType();
+    Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
+    Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
+    Type *UliArgTypeTy = TypeBuilder<UliArgType, false>::get(C);
+  
+    // TODO: how to see if a type can fit in a 64bit register
+    //assert(RetType == Int32Ty || RetType == Int64Ty);
+
+    Type *WorkPtrTy = TypeBuilder<Work*, false>::get(C);
+  
+    SmallVector<Type *, 8> WrapperParamTys(FTy->param_begin(), FTy->param_end());
+    WrapperParamTys.insert(WrapperParamTys.begin(), WorkPtrTy);
+
+    FunctionType *WrapperFTy = FunctionType::get(VoidTy, WrapperParamTys, /*isVarArg=*/false);
+
+    auto Name = "__prsc_" + F.getName() + "Wrapper";
+
+    Function *Wrapper = Function::Create(WrapperFTy, InternalLinkage, Name, M);
+    
+    BasicBlock *Entry = BasicBlock::Create(C, "entry", Wrapper);
+
+    IRBuilder<> B(Entry);
+    Function::arg_iterator SecondArg = Wrapper->arg_begin(); ++SecondArg;
+    SmallVector<Value*, 8> Args;
+    for (auto it = SecondArg; it < Wrapper->arg_end(); ++it) {
+        Args.push_back(it);
+    }
+
+    Value *Result = B.CreateCall(&F, Args);
+    if (RetType->isVoidTy()){
+        Result =  ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
+    }
+
+    // TODO: should this be a builtin instead?? Fail on native using ENAULI
+    Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
+    Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false);  
+
+    B.CreateCall(enauli, { NEG_ZERO });
+
+    Value *Work = Wrapper->arg_begin();
+    Value * WorkStolen = LoadSTyField(B, DL, WorkType::get(C), Work, WorkType::stolen);
+    Value *ZERO = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
+    
+    Value * SendResult = nullptr;
+    Value * SendWork = B.CreatePtrToInt(Work, UliArgTypeTy);;
+    
+    if (RetType->isVoidTy()){
+        SendResult = ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
+        SendResult = B.CreatePtrToInt(SendResult, UliArgTypeTy);
+    }else {
+        SendResult = B.CreateZExtOrBitCast(Result, UliArgTypeTy);
+    }
+
+    BasicBlock *BBremoteInlet = BasicBlock::Create(C, "remoteInlet", Wrapper);
+    BasicBlock *BBlocalInlet = BasicBlock::Create(C, "localInlet", Wrapper);
+    Value * ifZero = B.CreateICmpEQ(WorkStolen, ZERO);
+    B.CreateCondBr(ifZero, BBlocalInlet, BBremoteInlet);
+    
+    B.SetInsertPoint(BBlocalInlet);
+    
+    Function * localInlet = nullptr;
+    if(gLocalInletMap.count(&F) == 0){
+        localInlet  = GenerateLocalInlet(F, M, C);
+    } else {
+        localInlet = gLocalInletMap[&F];
+    }
+
+
+    B.CreateCall(localInlet, {SendResult, Work});
+    B.CreateRetVoid();
+
+    B.SetInsertPoint(BBremoteInlet);
+
+    Function * RemoteInlet = nullptr;
+    if(gRemoteInletMap.count(&F) == 0){
+        RemoteInlet  = GenerateRemoteInlet(F, M, C);
+    } else {
+        RemoteInlet = gRemoteInletMap[&F];
+    }
+
+
+
+    Value *WorkSrc = LoadSTyField(B, DL, WorkType::get(C), Work, WorkType::src);
+    Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
+    Value *InletPtr = B.CreateBitCast(RemoteInlet, VoidPtrTy);
+    
+    // threadId need to be thread_local
+    Constant *threadIdGlobal = M->getOrInsertGlobal("threadId", Int32Ty);
+    assert(threadIdGlobal);
+    GlobalVariable *gVar = M->getNamedGlobal("threadId");
+    gVar->setThreadLocal(true);
+
+    Value *threadId = B.CreateLoad(gVar, "threadId");
+
+    Function *UliSend = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_send);
+
+    B.CreateCall(UliSend, {WorkSrc, Zero, InletPtr, SendResult, SendWork, threadId});
+    B.CreateRetVoid();
+    
+    return Wrapper;
+
+}
+
 void ULIABI::BuildSuspendAndStealRoutine (/*input*/CallInst * callInst, Value * returnFromSteal, Value* returnFromSuspend, Function *F, Module *M, LLVMContext & C, /*ouput*/SmallVector<BasicBlock*, 2> &newBB, SmallVector<Instruction*, 2> &delInstrs){
     
-     Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt32Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
+    Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt32Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
 
     IRBuilder<> B(callInst);
     SmallVector<Value*, 8> Args;                                        
@@ -518,9 +840,21 @@ void ULIABI::BuildSuspendAndStealRoutine (/*input*/CallInst * callInst, Value * 
     Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
     Value *One = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);                    
     Value *N_One = ConstantInt::get(Int32Ty, -1, /*isSigned=*/true);
+    
+    Function * callFunc = callInst->getCalledFunction();
+    if(gWrapperMap.count(callFunc) == 0){
+        // Create the function
+        gWrapperMap[callFunc] = GenerateWrapperFunc(*callFunc, M, C);       
+    } 
+    
+    Value * WrapperPtr = B.CreateBitCast(gWrapperMap.lookup(callFunc), VoidPtrTy);  
+    
+    if(gRecvWorkHandlerMap.count(callFunc) == 0){
+        // Create the function
+        gRecvWorkHandlerMap[callFunc] = GenerateHereIsWorkHandlerFunc(*callFunc, M, C);       
+    } 
 
-    Value *WrapperPtr = B.CreateBitCast(gWrapperMap.lookup(F), VoidPtrTy);
-    Value *WorkReplyHandlerPtr = B.CreateBitCast(gRecvWorkHandlerMap.lookup(F), VoidPtrTy);
+    Value *WorkReplyHandlerPtr = B.CreateBitCast(gRecvWorkHandlerMap.lookup(callFunc), VoidPtrTy);
 
     Args.push_back(WorkReplyHandlerPtr); // Handler
     Args.push_back(WrapperPtr); // Function wrapper
@@ -540,7 +874,7 @@ void ULIABI::BuildSuspendAndStealRoutine (/*input*/CallInst * callInst, Value * 
     Value *Argc = ConstantInt::get(Int32Ty, nargc, /*isSigned=*/false);
 
     // Basic Block to resume after all child have return
-    BlockAddress* bA = BlockAddress::get(gSyncResumeBB);
+    BlockAddress* bA = BlockAddress::get(gSyncResumeBB[syncLevel-1]);
     Args.push_back(bA);
     // SP
     Value * pSeedSP  = B.CreateStructGEP(SeedType::get(C), gSeedLocalVar, (unsigned)SeedType::sp);    
@@ -636,8 +970,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     BasicBlock * detachBB = Detach.getDetached();        
     BasicBlock * continueBB = Detach.getContinue();
     const DataLayout &DL = M->getDataLayout();
-    
-    
+        
     // Create the work Generation
     SmallVector<BasicBlock*, 8> bbV2Clone;
     SmallVector<BasicBlock*, 8> bbList;
@@ -651,25 +984,10 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     // Build type
     Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
     Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
-    
-    // Look for potential Store operation
-    StoreInst * potentialSt = dyn_cast<StoreInst>(detachBB->getFirstNonPHIOrDbgOrLifetime()->getNextNode() );
-    if(potentialSt){                    
-        // Get the IR to store
-        Value *arg0 = potentialSt->getOperand(0);
-        Instruction * callInst = detachBB->getFirstNonPHIOrDbgOrLifetime();
-        // Check if it is the same with the call instruction
-        if( !arg0->getName().compare(callInst->getName()) ){
-            gStInstArr[detachLevel] = potentialSt;                        
-        } 
-    }
-    
-    if(detachLevel==0){
-        gLastDetachBB = detachBB;
-    }
-    gFirstDetachBB =   curBB;
-    
-    // Search for basic block to clone 
+        
+    static IRBuilder<> workFSMB(gGenWorkEntryBB);
+  
+    // Search for basic block to clone : Look for the next cilk_spawn or sync instruction
     bbList.push_back(continueBB);
     while(!bbList.empty()){
         bb = bbList.back();
@@ -684,9 +1002,31 @@ Function *ULIABI::createDetach(DetachInst &Detach,
             bb = dyn_cast<DetachInst>(term)->getDetached();
             bbList.push_back(bb);
         } else if ( (term = dyn_cast<ReattachInst>(bb->getTerminator()))  ){
+            // Don't push anynore if we encountered reattach instruction
             bbV2Clone.push_back(bb);
         } else if ( (term = dyn_cast<SyncInst>(bb->getTerminator())) ){
+            // Don't push anynore if we encountered sync instruction
             bbV2Clone.push_back(bb);
+            
+            // Sync Resume
+            {
+                gSyncResumeBB[syncLevel] = BasicBlock::Create(C, "syncResume", F);
+                IRBuilder <> B(gSyncResumeBB[syncLevel]);
+                //B.SetInsertPoint(gSyncResumeBB[syncLevel]); 
+                B.CreateUnreachable();
+            }
+
+            if(syncLevel == 0){
+                workFSMB.SetInsertPoint(gGenWorkEntryBB);
+            }
+
+            // Reset detachLevel and update SyncLevel
+            detachLevel = 0;
+            oldDetachBB = nullptr;
+            oldBA = nullptr;
+            memset(gGenWorkBBArr, 0, MAX_LEVEL*sizeof(BasicBlock*));
+            syncLevel++;
+
         } else {
             bbV2Clone.push_back(bb);
             for( succ_iterator SI = succ_begin(bb); SI!=succ_end(bb); SI++ ){                
@@ -695,6 +1035,28 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         }
     }
     
+    // Look for potential Store operation
+    StoreInst * potentialSt = dyn_cast<StoreInst>(detachBB->getFirstNonPHIOrDbgOrLifetime()->getNextNode() );
+    if(potentialSt){                    
+        // Get the IR to store
+        Value *arg0 = potentialSt->getOperand(0);
+        Instruction * callInst = detachBB->getFirstNonPHIOrDbgOrLifetime();
+        // Check if it is the same with the call instruction
+        if( !arg0->getName().compare(callInst->getName()) ){
+            gStInstArr[detachLevel] = potentialSt;                        
+        } 
+    }
+    
+    // Used for pushing and popping seeds
+    if(detachLevel==0){
+        gLastDetachBB[syncLevel-1] = detachBB;
+    }
+    gFirstDetachBB[syncLevel-1] =   curBB;
+
+
+
+    // Clone the basic block
+    // -------------------------------------------------------------------------
     DebugInfoFinder DIFinder;      
     DISubprogram *SP = F->getSubprogram();
     if (SP) {
@@ -704,8 +1066,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         auto &MD = VMap.MD();
         MD[SP->getUnit()].reset(SP->getUnit());
         MD[SP->getType()].reset(SP->getType());
-        MD[SP->getFile()].reset(SP->getFile());
-  
+        MD[SP->getFile()].reset(SP->getFile());  
         MD[SP].reset(SP); 
     }
 
@@ -714,6 +1075,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
                                           &DIFinder);
         VMap[BB] = bbC;            
     }
+    // -------------------------------------------------------------------------
    
     gGenWorkBBArr[detachLevel] = dyn_cast<BasicBlock>(VMap[continueBB]);
 
@@ -721,21 +1083,20 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     bool bFoundPotentialCall = false;
         
     for(auto BB : bbV2Clone){
-        BB->dump();
-
         SmallVector<BasicBlock*, 2> newBB;
         BasicBlock *CBB = dyn_cast<BasicBlock>(VMap[BB]);
 
         Instruction *iterm  = CBB->getTerminator();
-     
-
+                    
         if(DetachInst * itermDet = dyn_cast<DetachInst>(iterm)){
+            // Replace detach instruction with branch instruction
             BasicBlock * detachBB = itermDet->getDetached();
             BranchInst *detachBr = BranchInst::Create(detachBB);
             ReplaceInstWithInst(itermDet, detachBr);
 
- 
-        } else if(ReattachInst * itermRet = dyn_cast<ReattachInst>(iterm)){                
+              
+        } else if(ReattachInst * itermRet = dyn_cast<ReattachInst>(iterm)){
+            // Replace the basic block with set of instruction to create/send work
             Instruction * instr = CBB->getFirstNonPHIOrDbgOrLifetime();
             CallInst * callInst = dyn_cast<CallInst>(instr);
             assert(callInst && "First instruction not a call instruction. Seems like something is wrong");
@@ -744,6 +1105,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
             BuildSuspendAndStealRoutine(callInst, Zero, One, F, M, C, newBB, delInstrs);                     
             delInstrs.push_back(iterm);
         } else {
+            // Look for potential parallel call function that does not have cilk_spawn that precedes it
             for(Instruction &I : *CBB){
                 if(CallInst * callInst = dyn_cast<CallInst>(&I)){
                     DEBUG(dbgs() << "Instruction to send\n");                            
@@ -755,6 +1117,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
 
         if ( SyncInst * itermSync = dyn_cast<SyncInst>(iterm) ) {
             if(bFoundPotentialCall){
+                // Replace the basic block with set of instruction to create/send work inside the sync 
                 CallInst * callInst = dyn_cast<CallInst>(potentialCall);
                 Value *Two = ConstantInt::get(Int32Ty, 2, /*isSigned=*/false);
                 Value *Three = ConstantInt::get(Int32Ty, 3, /*isSigned=*/false);
@@ -817,7 +1180,6 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     //==========================================================================
     // gGenWorkEntryBB
     // Create FSM for choosing which work to send
-    static IRBuilder<> workFSMB(gGenWorkEntryBB);
 
     // Load the return Address
     Value * PRSCSP  = workFSMB.CreateStructGEP(SeedType::get(C), gSeedLocalVar, (unsigned)SeedType::sp);    
@@ -853,26 +1215,23 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     
     //TODO : Fix this. Hack
     workFSMB.CreateCall(potentialJump, {bA});
-    
+
+
     if(oldDetachBB){
-        //TODO : Fix this. Hack
+        //TODO : Fix this. Hack 
         BasicBlock * cloneOldDetachBB = dyn_cast<BasicBlock>(VMap[oldDetachBB]);
         IRBuilder <> detachB (cloneOldDetachBB->getTerminator());
         detachB.CreateCall(potentialJump, {oldBA});
         detachB.CreateCall(potentialJump, {bA});
-        errs() << "Potential jump\n";
-        cloneOldDetachBB->dump();
-        errs() << "Potential jump end\n";
     }
-    
-    oldBA = bA;
 
+    oldBA = bA;
 
     if(gGenWorkBBArr[detachLevel])
         workFSMB.CreateBr(gGenWorkBBArr[detachLevel]);
 
     workFSMB.SetInsertPoint(ifFalse);
-    gLastFalseBB = ifFalse;
+    gLastFalseBB[syncLevel-1] = ifFalse;
 
     tmpLevel = detachLevel;
     while(tmpLevel > 0){
@@ -900,13 +1259,15 @@ Function *ULIABI::createDetach(DetachInst &Detach,
             workFSMB.CreateBr(gGenWorkBBArr[tmpLevel-1]);
         
         workFSMB.SetInsertPoint(ifFalse);
-        gLastFalseBB = ifFalse;
+        gLastFalseBB[syncLevel-1] = ifFalse;
 
         tmpLevel--;
     }   
-
+    
+    //gGenWorkEntryBB->dump();
    detachLevel++;
    oldDetachBB = detachBB;
+   //F->dump();
    return nullptr;
 }
 
@@ -934,8 +1295,21 @@ void ULIABI::preProcessFunction(Function &F) {
 
     return;
   } 
+  
 
+  // Initialize global variable
   detachLevel = 0;
+  syncLevel = 0;
+  gSlvlI = 0;
+  gCntEqZeroBBList.clear();
+  //gWrapperMap.clear();
+  //gRemoteInletMap.clear();
+  //gLocalInletMap.clear();
+  //gRecvWorkHandlerMap.clear();
+  //gSyncBBMap.clear();
+  gBBtoSyncLevel.clear();  
+  gGenWorkEntryBB = nullptr;
+
   llvm::errs() << "preprocessing " << F.getName() << "...\n";
 
   // Make it non inlinable
@@ -989,7 +1363,8 @@ void ULIABI::preProcessFunction(Function &F) {
           B.CreateCall(disuli, { ZERO });
       }
   }
-  
+
+#if 0  
   Function *RemoteInlet = nullptr;
   // Remote Inlet
   {
@@ -1132,12 +1507,15 @@ void ULIABI::preProcessFunction(Function &F) {
     // Store the wrapper function
     gWrapperMap[&F] =  Wrapper;
   }
+#endif
+
   
   // Work Generation
   {
     B.SetInsertPoint(F.getEntryBlock().getTerminator());
     gSeedLocalVar = B.CreateAlloca(SeedType::get(C), DL.getAllocaAddrSpace(), nullptr, "seed");
     gGenWorkEntryBB = BasicBlock::Create(C, "seedGen", &F);
+
 
     B.SetInsertPoint(gGenWorkEntryBB);
 
@@ -1159,13 +1537,8 @@ void ULIABI::preProcessFunction(Function &F) {
     gIsSuspend = B.CreateCall(Asm);
 
   }
-  
-  // Sync Resume
-  {
-    gSyncResumeBB = BasicBlock::Create(C, "syncResume", &F);
-    B.SetInsertPoint(gSyncResumeBB); B.CreateUnreachable();
-  }
 
+#if 0  
   // Here is work Handler
   {
    SmallVector<Type *, 8> WorkHandlerParamTys(FTy->param_begin(), FTy->param_end());
@@ -1230,6 +1603,7 @@ void ULIABI::preProcessFunction(Function &F) {
    // Store the here is work handler function
    gRecvWorkHandlerMap[&F] =  HereIsWorkHandler;
   }
+#endif
 
 }
 
@@ -1240,7 +1614,8 @@ void ULIABI::postProcessFunction(Function &F) {
     const DataLayout &DL = M->getDataLayout();
     Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
     Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
-
+    
+    // TODO : Handle multiple sync case
     // For pushing and popping the seed 
     //-=======================================================================
     Constant *PRSC_PUSHFRONT_SEEDQ = Get_PRSC_PUSHFRONT_SEEDQ(*M);
@@ -1248,7 +1623,7 @@ void ULIABI::postProcessFunction(Function &F) {
     Constant *POLL = Get_POLL(*M);
     Function *GetSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
     
-    IRBuilder<> B(gFirstDetachBB->getTerminator());
+    IRBuilder<> B(gFirstDetachBB[0]->getTerminator());
     Value * currSp = B.CreateCall(GetSP);    
     Value * pSeedSP  = B.CreateStructGEP(SeedType::get(C), gSeedLocalVar, (unsigned)SeedType::sp);    
     currSp = B.CreateCast(Instruction::IntToPtr, currSp, IntegerType::getInt8Ty(C)->getPointerTo());
@@ -1264,46 +1639,73 @@ void ULIABI::postProcessFunction(Function &F) {
     Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
     Value *ZERO = ConstantInt::get(Int64Ty, 0, /*isSigned=*/false);  
     Value *ZERO32 = ConstantInt::get(Int32Ty, 0x0, /*isSigned=*/false);  
-    B.CreateCall(disuli, { ZERO });
-
-
-    Value * seedStoreIp = B.CreateStore(seedGenAddr, seedIP);
-    Value * pSeedLocal = B.CreateBitCast(gSeedLocalVar, SeedType::get(C)->getPointerTo());
     
+    B.CreateCall(disuli, { ZERO });
+    Value * seedStoreIp = B.CreateStore(seedGenAddr, seedIP);
+    Value * pSeedLocal = B.CreateBitCast(gSeedLocalVar, SeedType::get(C)->getPointerTo());    
     B.CreateCall(PRSC_PUSHFRONT_SEEDQ, pSeedLocal);
-
     // Add potential jump
     Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
     B.CreateCall(potentialJump, {BlockAddress::get(gGenWorkEntryBB)});
 
+    for (unsigned i =1; i<syncLevel; i++){
+        B.SetInsertPoint(gFirstDetachBB[i]->getTerminator());
 
-    B.SetInsertPoint(gLastDetachBB->getTerminator());
-    B.CreateCall(PRSC_POPFRONT_SEEDQ);
-    
-    B.CreateCall(enauli, { NEG_ZERO });
-    B.CreateCall(POLL, { ZERO32 });
+        Value * currSp = B.CreateCall(GetSP);    
+        Value * pSeedSP  = B.CreateStructGEP(SeedType::get(C), gSeedLocalVar, (unsigned)SeedType::sp);    
+        currSp = B.CreateCast(Instruction::IntToPtr, currSp, IntegerType::getInt8Ty(C)->getPointerTo());
+        
+        Value * seedStoreSp = B.CreateStore(currSp, pSeedSP);
+        
+        Value * seedIP  = B.CreateStructGEP(SeedType::get(C), gSeedLocalVar, (unsigned)SeedType::ip);    
+        BlockAddress* seedGenAddr = BlockAddress::get(gGenWorkEntryBB);
+
+        B.CreateCall(disuli, { ZERO });
+        Value * seedStoreIp = B.CreateStore(seedGenAddr, seedIP);
+        Value * pSeedLocal = B.CreateBitCast(gSeedLocalVar, SeedType::get(C)->getPointerTo());    
+        B.CreateCall(PRSC_PUSHFRONT_SEEDQ, pSeedLocal);
+        // Add potential jump
+        Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
+        B.CreateCall(potentialJump, {BlockAddress::get(gGenWorkEntryBB)});
+
+    }
+
+    for (unsigned i =0; i<syncLevel; i++){
+        B.SetInsertPoint(gLastDetachBB[i]->getTerminator());
+        B.CreateCall(PRSC_POPFRONT_SEEDQ);
+        
+        B.CreateCall(enauli, { NEG_ZERO });
+        B.CreateCall(POLL, { ZERO32 });
+    }
     
     // For the sync resume
     //-======================================================================
-    B.SetInsertPoint(gSyncResumeBB);    
-    Instruction * syncTerm = gSyncResumeBB->getTerminator();
     
-    // Fix base pointer
-    Function *SetupRBPfromRSP = Intrinsic::getDeclaration(M, Intrinsic::x86_setup_rbp_from_rsp);
-    B.CreateCall(SetupRBPfromRSP);
+    for (unsigned i = 0; i<syncLevel; i++){
+        B.SetInsertPoint(gSyncResumeBB[i]);    
+        Instruction * syncTerm = gSyncResumeBB[i]->getTerminator();
+    
+        // Fix base pointer
+        Function *SetupRBPfromRSP = Intrinsic::getDeclaration(M, Intrinsic::x86_setup_rbp_from_rsp);
+        B.CreateCall(SetupRBPfromRSP);
 
-    // Branch to the sync
-    B.CreateBr(gSyncBBMap[&F]);
+        // Branch to the sync
+        B.CreateBr(gSyncBBMap[i]);
     
-    // Delete the previous terminator instruction
-    syncTerm->eraseFromParent();
+        // Delete the previous terminator instruction
+        syncTerm->eraseFromParent();
+    }
     
     // For gotStolen
     //-==================================================================
+    // TODO fix this
     for( auto BB : gCntEqZeroBBList ){
         Instruction * term  = BB->getTerminator();
         B.SetInsertPoint(term);
-        B.CreateBr(gSyncBBMap[&F]);
+
+        assert(gBBtoSyncLevel.count(BB) != 0);
+
+        B.CreateBr(gSyncBBMap[gBBtoSyncLevel.lookup(BB)]);
         term->eraseFromParent();
     }
 
