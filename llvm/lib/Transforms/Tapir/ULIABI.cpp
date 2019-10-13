@@ -67,6 +67,7 @@ Value * gSeedLocalVar;
 
 // Check if we should jump to the suspend routine or to steal routine
 Value * gIsSuspend;
+Value * gWork;
 
 // Store basic block that is taken if the join counter == 0 (Basic block is basically a jump to sync statement
 SmallVector<BasicBlock *, 8> gCntEqZeroBBList;
@@ -143,7 +144,7 @@ DEFAULT_GET_LIB_FUNC(PRSC_DEC_JOIN)
 using PRSC_CHECKIFZERO_RESUME_ty = int (Sync*);
 DEFAULT_GET_LIB_FUNC(PRSC_CHECKIFZERO_RESUME)
 
-using PRSC_RESET_WORKSTEAL_ty = void (void);
+using PRSC_RESET_WORKSTEAL_ty = void (unsigned int);
 DEFAULT_GET_LIB_FUNC(PRSC_RESET_WORKSTEAL)
 
 using PRSC_POPFRONT_SEEDQ_ty = void (void);
@@ -169,6 +170,13 @@ DEFAULT_GET_LIB_FUNC(PRSC_PUSHFRONT_WORKQ)
 
 using PRSC_PUSHFRONT_READYQ_ty = void (void *, void*);
 DEFAULT_GET_LIB_FUNC(PRSC_PUSHFRONT_READYQ)
+
+using PRSC_PUSHFRONT_FREEQ_ty = void (Work *);
+DEFAULT_GET_LIB_FUNC(PRSC_PUSHFRONT_FREEQ)
+
+using PRSC_PUSHFRONT_CONTQ_ty = void (Work *);
+DEFAULT_GET_LIB_FUNC(PRSC_PUSHFRONT_CONTQ)
+
 
 using PRSC_INIT_RT_ty = void (void);
 DEFAULT_GET_LIB_FUNC(PRSC_INIT_RT)
@@ -235,9 +243,9 @@ public:
     cache[&C] = ExistingTy;
     StructType *NewTy = StructType::create(C);
     NewTy->setBody(
+        TypeBuilder<Scalar*, X>::get(C), // argv
         TypeBuilder<FP, X>::get(C), // fp
         TypeBuilder<int, X>::get(C), // id
-        TypeBuilder<Scalar*, X>::get(C), // argv
         TypeBuilder<uint, X>::get(C), // argc
         TypeBuilder<Scalar*, X>::get(C), // res
         TypeBuilder<Sync*, X>::get(C), // pSync
@@ -258,9 +266,9 @@ public:
     return ExistingTy;
   }
   enum {
+    argv,
     fp,
     id,
-    argv,
     argc,
     res,
     pSync,
@@ -508,14 +516,37 @@ void ULIABI::GenerateInletEntry(IRBuilder<> & B, Argument & Result, Argument & W
     B.CreateCondBr(checkCntRes, ifCounterZero, ifCounterNotZero);
     B.SetInsertPoint(ifCounterZero);    
     
-    Value *Worksp = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::sp);
-    Value *Workip = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::ip);
-    Constant *PRSC_PUSHFRONT_READYQ = Get_PRSC_PUSHFRONT_READYQ(*M);
-    B.CreateCall(PRSC_PUSHFRONT_READYQ, {Worksp, Workip});
-    B.CreateBr(ifCounterNotZero);
+    //Value *Worksp = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::sp);
+    //Value *Workip = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::ip);
+    
+    //Constant *PRSC_PUSHFRONT_READYQ = Get_PRSC_PUSHFRONT_READYQ(*M);
+    //B.CreateCall(PRSC_PUSHFRONT_READYQ, {Worksp, Workip});
+    
+    Constant *PRSC_PUSHFRONT_CONTQ = Get_PRSC_PUSHFRONT_CONTQ(*M);
+    B.CreateCall(PRSC_PUSHFRONT_CONTQ, &WorkPtr);
+    
 
-    B.SetInsertPoint(ifCounterNotZero);
     B.CreateRetVoid();
+
+    //B.CreateBr(ifCounterNotZero);        
+    B.SetInsertPoint(ifCounterNotZero);
+    
+    Constant *PRSC_PUSHFRONT_FREEQ = Get_PRSC_PUSHFRONT_FREEQ(*M);
+    B.CreateCall(PRSC_PUSHFRONT_FREEQ, &WorkPtr);
+
+    //Value *WorkArgv = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::argv);
+    
+
+    Instruction * retVoid  = B.CreateRetVoid();
+
+    // TODO: Free the memory here 
+    //CallInst * freeWork    = dyn_cast<CallInst>(CallInst::CreateFree(&WorkPtr, retVoid));
+    //CallInst * freeArgv = dyn_cast<CallInst>(CallInst::CreateFree(WorkArgv, freeWork));
+    
+    //freeWork->setTailCall(false); freeArgv->setTailCall(false);
+
+    //ifCounterNotZero->dump();
+
 }
 
 Function * ULIABI::GenerateHereIsWorkHandlerFunc(Function & F, Module * M, LLVMContext & C){
@@ -538,11 +569,10 @@ Function * ULIABI::GenerateHereIsWorkHandlerFunc(Function & F, Module * M, LLVMC
     //assert(RetType == Int32Ty || RetType == Int64Ty);
 
     Type *WorkPtrTy = TypeBuilder<Work*, false>::get(C);
-
-
    
     SmallVector<Type *, 8> WorkHandlerParamTys(FTy->param_begin(), FTy->param_end());
     WorkHandlerParamTys.insert(WorkHandlerParamTys.begin(), VoidPtrTy);
+    WorkHandlerParamTys.insert(WorkHandlerParamTys.begin(), WorkPtrTy);
     WorkHandlerParamTys.insert(WorkHandlerParamTys.begin(), Int64Ty);
     WorkHandlerParamTys.push_back(VoidPtrTy);
     WorkHandlerParamTys.push_back(VoidPtrTy);
@@ -561,22 +591,26 @@ Function * ULIABI::GenerateHereIsWorkHandlerFunc(Function & F, Module * M, LLVMC
    
     IRBuilder<> B(Entry);   
 
-    Constant *PRSC_RESET_WORKSTEAL = Get_PRSC_RESET_WORKSTEAL(*M);
-    B.CreateCall(PRSC_RESET_WORKSTEAL);
 
     Value * from = HereIsWorkHandler->arg_begin();
-    Value * fp = HereIsWorkHandler->arg_begin()+1;   
+    Value * replyWork = HereIsWorkHandler->arg_begin()+1;   
+    Value * fp = HereIsWorkHandler->arg_begin()+2;   
     Value * res = HereIsWorkHandler->arg_end()-1;
     Value * sync = HereIsWorkHandler->arg_end()-2;
     Value * parentSP = HereIsWorkHandler->arg_end()-3;
     Value * parentIP = HereIsWorkHandler->arg_end()-4;   
-    Value * realArgStart = HereIsWorkHandler->arg_begin() + 2;
+    Value * realArgStart = HereIsWorkHandler->arg_begin() + 3;
    
     int numArgs = HereIsWorkHandler->arg_end()-HereIsWorkHandler->arg_begin();
-    int realNumArgs = numArgs - 6;// Remove from, fp, res, syn, parentSP/IP
+    int realNumArgs = numArgs - 7;// Remove from, work, fp, res, syn, parentSP/IP
 
     Value * ARGC =  ConstantInt::get(Int32Ty, realNumArgs, /*isSigned=*/false);
     Value * ONE =  ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
+
+    Value * from32 = B.CreateTrunc(from, Int32Ty);
+    Constant *PRSC_RESET_WORKSTEAL = Get_PRSC_RESET_WORKSTEAL(*M);
+    B.CreateCall(PRSC_RESET_WORKSTEAL, from32);
+
   
     // Check if fp is NULL
     BasicBlock * fpIsNotNull = BasicBlock::Create(C, "fpIsNotNull", HereIsWorkHandler);
@@ -586,16 +620,17 @@ Function * ULIABI::GenerateHereIsWorkHandlerFunc(Function & F, Module * M, LLVMC
     B.CreateCondBr(isFpNull, fpIsNull, fpIsNotNull);
     B.SetInsertPoint(fpIsNotNull);      
 
-    Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt64Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
+    Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt64Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
 
-    Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {fp, ARGC, from, parentIP, parentSP, sync, res, ONE});
+    Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {replyWork, fp, ARGC, from, parentIP, parentSP, sync, res, ONE});
 
-    StoreArgIntoWork(C, B, HereIsWorkHandler, 2, potentialWork, realNumArgs);
+    StoreArgIntoWork(C, B, HereIsWorkHandler, 3, potentialWork, realNumArgs);
 
     Constant * PRSC_PUSHFRONT_WORKQ = Get_PRSC_PUSHFRONT_WORKQ(*M);
     B.CreateCall(PRSC_PUSHFRONT_WORKQ, potentialWork);
-
-    B.CreateRetVoid();
+    
+    //B.CreateRetVoid();
+    B.CreateBr(fpIsNull);
    
     B.SetInsertPoint(fpIsNull);
     B.CreateRetVoid();
@@ -603,10 +638,6 @@ Function * ULIABI::GenerateHereIsWorkHandlerFunc(Function & F, Module * M, LLVMC
     return HereIsWorkHandler;
 }
 
-//TODO :
-// Free the work and its argument
-// free(w); free(w->argv);
-// Can use CallInst::CreateFree
 Function * ULIABI::GenerateRemoteInlet(Function & F, Module * M, LLVMContext & C){
     Function * RemoteInlet = nullptr;
     
@@ -632,8 +663,9 @@ Function * ULIABI::GenerateRemoteInlet(Function & F, Module * M, LLVMContext & C
     FunctionType *InletTy = FunctionType::get(VoidTy, {Int32Ty, UliArgTypeTy, WorkPtrTy, Int32Ty}, /*isVarArg=*/false);
     auto Name = "__prsc_" + F.getName() + "Remote_Inlet";
     RemoteInlet = Function::Create(InletTy, InternalLinkage, Name, M);
-    RemoteInlet->addFnAttr(Attribute::UserLevelInterrupt);
+    RemoteInlet->addFnAttr(Attribute::UserLevelInterrupt);    
     RemoteInlet->setCallingConv(CallingConv::X86_ULI);
+    //RemoteInlet->addFnAttr("disable_tail_calls");
     BasicBlock *Entry = BasicBlock::Create(C, "entry", RemoteInlet);
     IRBuilder<> B(Entry);
     
@@ -647,6 +679,8 @@ Function * ULIABI::GenerateRemoteInlet(Function & F, Module * M, LLVMContext & C
     // Value *FromMatch = B.CreateICmpEQ(&FromArg, &From2Arg);
     
     GenerateInletEntry(B, Result, WorkPtr, RetType, RemoteInlet, M, C, DL);    
+    
+
     gRemoteInletMap[&F] =  RemoteInlet;
 
     return RemoteInlet;
@@ -743,7 +777,7 @@ Function * ULIABI::GenerateWrapperFunc(Function & F, Module * M, LLVMContext & C
     auto Name = "__prsc_" + F.getName() + "Wrapper";
 
     Function *Wrapper = Function::Create(WrapperFTy, InternalLinkage, Name, M);
-    
+
     BasicBlock *Entry = BasicBlock::Create(C, "entry", Wrapper);
 
     IRBuilder<> B(Entry);
@@ -830,7 +864,7 @@ Function * ULIABI::GenerateWrapperFunc(Function & F, Module * M, LLVMContext & C
 
 void ULIABI::BuildSuspendAndStealRoutine (/*input*/CallInst * callInst, Value * returnFromSteal, Value* returnFromSuspend, Function *F, Module *M, LLVMContext & C, /*ouput*/SmallVector<BasicBlock*, 2> &newBB, SmallVector<Instruction*, 2> &delInstrs){
     
-    Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt32Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
+    Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt32Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
 
     IRBuilder<> B(callInst);
     SmallVector<Value*, 8> Args;                                        
@@ -855,9 +889,12 @@ void ULIABI::BuildSuspendAndStealRoutine (/*input*/CallInst * callInst, Value * 
     } 
 
     Value *WorkReplyHandlerPtr = B.CreateBitCast(gRecvWorkHandlerMap.lookup(callFunc), VoidPtrTy);
-
+    
     Args.push_back(WorkReplyHandlerPtr); // Handler
+    
+    Args.push_back(gWork); //  Work pointer
     Args.push_back(WrapperPtr); // Function wrapper
+
 
     int nargc=0;
     // Functions argument
@@ -901,7 +938,7 @@ void ULIABI::BuildSuspendAndStealRoutine (/*input*/CallInst * callInst, Value * 
     B.CreateCondBr(ifSuspendTrue, suspendRoutine, stealRoutine);
     B.SetInsertPoint(suspendRoutine);    
                 
-    Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {WrapperPtr, Argc, N_One, bA, seedSP, PRSCSync, res, Zero});
+    Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {gWork, WrapperPtr, Argc, N_One, bA, seedSP, PRSCSync, res, Zero});
     StoreArgIntoWork(C, B, callInst, 0, potentialWork, nargc);
 
     Constant * PRSC_PUSHFRONT_WORKQ = Get_PRSC_PUSHFRONT_WORKQ(*M);
@@ -928,6 +965,17 @@ void ULIABI::BuildSuspendAndStealRoutine (/*input*/CallInst * callInst, Value * 
 }
 
 void ULIABI::StoreArgIntoWork(LLVMContext &C, IRBuilder<> & B, Value * Arg, int offset, Value * potentialWork, int nargc){
+    Value * pargv  = B.CreateStructGEP(WorkType::get(C), potentialWork, (unsigned)WorkType::argv);    
+    Value * argv = B.CreateLoad(IntegerType::getInt64Ty(C)->getPointerTo(), pargv);
+    Value * argvInt = B.CreateCast(Instruction::PtrToInt, argv, IntegerType::getInt64Ty(C));
+
+    // Set w->argv = w->argv-number of arguments
+    Value * Narg = ConstantInt::get(IntegerType::getInt64Ty(C), nargc*8, /*isSigned=*/false);        
+    Value * argvIntSub  = B.CreateSub(argvInt, Narg);
+    argv = B.CreateCast(Instruction::IntToPtr, argvIntSub, IntegerType::getInt8Ty(C)->getPointerTo());
+    argv =  B.CreateBitCast(argv, IntegerType::getInt64Ty(C)->getPointerTo());    
+    B.CreateStore(argv, pargv);
+
     for(int ii = 0; ii<nargc; ii++){
         CallInst * callInst = nullptr;
         Function * F = nullptr;
@@ -1526,16 +1574,31 @@ void ULIABI::preProcessFunction(Function &F) {
     //==========================================================================
     // Create Prologue for gGenWorkEntryBB
     using AsmPrototype = int (void);
+    using AsmPrototypeLong = long (void);
     FunctionType *FAsmTy =
         TypeBuilder<AsmPrototype, false>::get(B.getContext());
+    FunctionType *FAsmLongTy =
+        TypeBuilder<AsmPrototypeLong, false>::get(B.getContext());
 
+    // Get the type of routine
     Value *Asm = InlineAsm::get(FAsmTy,
                               "movl 0(%rsp), $0\0A\09",
                               "=r,~{dirflag},~{fpsr},~{flags}",
                               /*sideeffects*/ true);
-
     gIsSuspend = B.CreateCall(Asm);
 
+    Value * Asm2 = InlineAsm::get(FAsmLongTy, 
+                         "movq -8(%rsp), $0\0A\09",
+                         "=r,~{dirflag},~{fpsr},~{flags}",
+                         /*sideeffects*/ true);
+
+    gWork = B.CreateCall(Asm2);
+
+    gWork->getType()->dump();
+    gWork = B.CreateCast(Instruction::IntToPtr, gWork, IntegerType::getInt8Ty(C)->getPointerTo());
+    gWork->getType()->dump();
+
+    gWork = B.CreateBitCast(gWork, WorkType::get(C)->getPointerTo());    
   }
 
 #if 0  
@@ -1590,7 +1653,7 @@ void ULIABI::preProcessFunction(Function &F) {
 
    Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {fp, ARGC, from, parentIP, parentSP, sync, res, ONE});
 
-   StoreArgIntoWork(C, B, HereIsWorkHandler, 2, potentialWork, realNumArgs);
+   StoreArgIntoWork(C, B, HereIsWorkHandler, 3, potentialWork, realNumArgs);
 
    Constant * PRSC_PUSHFRONT_WORKQ = Get_PRSC_PUSHFRONT_WORKQ(*M);
    B.CreateCall(PRSC_PUSHFRONT_WORKQ, potentialWork);
