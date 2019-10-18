@@ -171,8 +171,8 @@ DEFAULT_GET_LIB_FUNC(PRSC_PUSHFRONT_WORKQ)
 using PRSC_PUSHFRONT_READYQ_ty = void (void *, void*);
 DEFAULT_GET_LIB_FUNC(PRSC_PUSHFRONT_READYQ)
 
-using PRSC_PUSHFRONT_FREEQ_ty = void (Work *);
-DEFAULT_GET_LIB_FUNC(PRSC_PUSHFRONT_FREEQ)
+using PRSC_END_WORK_ty = void (Work *);
+DEFAULT_GET_LIB_FUNC(PRSC_END_WORK)
 
 using PRSC_PUSHFRONT_CONTQ_ty = void (Work *);
 DEFAULT_GET_LIB_FUNC(PRSC_PUSHFRONT_CONTQ)
@@ -384,8 +384,6 @@ void ULIABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) 
     Module &M = *(Fn.getParent());
 
     BasicBlock * syncBB = SI.getSuccessor(0);
-    // TODO :  sync?sync_region should be the key instead of function since one function can have multiple sync statement 
-    //gSyncBBMap[&Fn] = syncBB;
     gSyncBBMap[gSlvlI] = syncBB;
     gSlvlI++;
 }
@@ -515,38 +513,19 @@ void ULIABI::GenerateInletEntry(IRBuilder<> & B, Argument & Result, Argument & W
 
     B.CreateCondBr(checkCntRes, ifCounterZero, ifCounterNotZero);
     B.SetInsertPoint(ifCounterZero);    
-    
-    //Value *Worksp = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::sp);
-    //Value *Workip = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::ip);
-    
-    //Constant *PRSC_PUSHFRONT_READYQ = Get_PRSC_PUSHFRONT_READYQ(*M);
-    //B.CreateCall(PRSC_PUSHFRONT_READYQ, {Worksp, Workip});
-    
+        
     Constant *PRSC_PUSHFRONT_CONTQ = Get_PRSC_PUSHFRONT_CONTQ(*M);
     B.CreateCall(PRSC_PUSHFRONT_CONTQ, &WorkPtr);
     
 
     B.CreateRetVoid();
 
-    //B.CreateBr(ifCounterNotZero);        
     B.SetInsertPoint(ifCounterNotZero);
     
-    Constant *PRSC_PUSHFRONT_FREEQ = Get_PRSC_PUSHFRONT_FREEQ(*M);
-    B.CreateCall(PRSC_PUSHFRONT_FREEQ, &WorkPtr);
-
-    //Value *WorkArgv = LoadSTyField(B, DL, WorkType::get(C), &WorkPtr, WorkType::argv);
-    
+    Constant *PRSC_END_WORK = Get_PRSC_END_WORK(*M);
+    B.CreateCall(PRSC_END_WORK, &WorkPtr);
 
     Instruction * retVoid  = B.CreateRetVoid();
-
-    // TODO: Free the memory here 
-    //CallInst * freeWork    = dyn_cast<CallInst>(CallInst::CreateFree(&WorkPtr, retVoid));
-    //CallInst * freeArgv = dyn_cast<CallInst>(CallInst::CreateFree(WorkArgv, freeWork));
-    
-    //freeWork->setTailCall(false); freeArgv->setTailCall(false);
-
-    //ifCounterNotZero->dump();
-
 }
 
 Function * ULIABI::GenerateHereIsWorkHandlerFunc(Function & F, Module * M, LLVMContext & C){
@@ -1412,151 +1391,6 @@ void ULIABI::preProcessFunction(Function &F) {
       }
   }
 
-#if 0  
-  Function *RemoteInlet = nullptr;
-  // Remote Inlet
-  {
-    FunctionType *InletTy = FunctionType::get(VoidTy, {Int32Ty, UliArgTypeTy, WorkPtrTy, Int32Ty}, /*isVarArg=*/false);
-    auto Name = "__prsc_" + F.getName() + "Remote_Inlet";
-    RemoteInlet = Function::Create(InletTy, InternalLinkage, Name, M);
-    RemoteInlet->addFnAttr(Attribute::UserLevelInterrupt);
-    RemoteInlet->setCallingConv(CallingConv::X86_ULI);
-    BasicBlock *Entry = BasicBlock::Create(C, "entry", RemoteInlet);
-    IRBuilder<> B(Entry);
-    
-
-    Argument &FromArg = RemoteInlet->arg_begin()[0];
-    Argument &Result = RemoteInlet->arg_begin()[1];
-    Argument &WorkPtr = RemoteInlet->arg_begin()[2];
-    Argument &From2Arg = RemoteInlet->arg_begin()[3];
-     
-    // TODO: assert equal?
-    // Value *FromMatch = B.CreateICmpEQ(&FromArg, &From2Arg);
-    
-    GenerateInletEntry(B, Result, WorkPtr, RetType, RemoteInlet, M, C, DL);    
-    gRemoteInletMap[&F] =  RemoteInlet;
-   
-  }
-
-  // Local inlet
-  Function * localInlet = nullptr;
-  {
-    FunctionType *InletTy = FunctionType::get(VoidTy, {UliArgTypeTy, WorkPtrTy}, /*isVarArg=*/false);
-    auto Name = "__prsc_" + F.getName() + "Local_Inlet";
-    localInlet = Function::Create(InletTy, InternalLinkage, Name, M);
-    BasicBlock *Entry = BasicBlock::Create(C, "entry", localInlet);
-    IRBuilder<> B(Entry);
-    // Generate the disuli here
-    Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
-    Value *ZERO = ConstantInt::get(Int64Ty, 0, /*isSigned=*/false);  
-    B.CreateCall(disuli, { ZERO });
-    
-    // Result is store later in the postProcess once we get the return type
-    Argument &Result = localInlet->arg_begin()[0];
-    Argument &WorkPtr = localInlet->arg_begin()[1];
- 
-    
-    // TODO: assert equal?
-    // Value *FromMatch = B.CreateICmpEQ(&FromArg, &From2Arg);
-    
-    GenerateInletEntry(B, Result, WorkPtr, RetType, localInlet, M, C, DL);    
-    
-    // Generate the enauli here
-    for (auto &BB : *localInlet){
-        Instruction * termInst = BB.getTerminator();
-        if(isa<ReturnInst>(termInst)){
-            B.SetInsertPoint(termInst);
-            Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
-            Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false);      
-            B.CreateCall(enauli, { NEG_ZERO });
-        }
-    }
-    
-
-    gLocalInletMap[&F] =  localInlet;
-    //Inlet->dump();
-  }
-
-
-  // Wrapper function
-  {
-    SmallVector<Type *, 8> WrapperParamTys(FTy->param_begin(), FTy->param_end());
-    WrapperParamTys.insert(WrapperParamTys.begin(), WorkPtrTy);
-
-    FunctionType *WrapperFTy = FunctionType::get(VoidTy, WrapperParamTys, /*isVarArg=*/false);
-
-    auto Name = "__prsc_" + F.getName() + "Wrapper";
-
-    Function *Wrapper = Function::Create(WrapperFTy, InternalLinkage, Name, M);
-    
-    BasicBlock *Entry = BasicBlock::Create(C, "entry", Wrapper);
-
-    IRBuilder<> B(Entry);
-    Function::arg_iterator SecondArg = Wrapper->arg_begin(); ++SecondArg;
-    SmallVector<Value*, 8> Args;
-    for (auto it = SecondArg; it < Wrapper->arg_end(); ++it) {
-      Args.push_back(it);
-    }
-
-    Value *Result = B.CreateCall(&F, Args);
-    if (RetType->isVoidTy()){
-        Result =  ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
-    }
-
-    // TODO: should this be a builtin instead?? Fail on native using ENAULI
-    Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
-    Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false);  
-
-    B.CreateCall(enauli, { NEG_ZERO });
-
-    Value *Work = Wrapper->arg_begin();
-    Value * WorkStolen = LoadSTyField(B, DL, WorkType::get(C), Work, WorkType::stolen);
-    Value *ZERO = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
-    
-    Value * SendResult = nullptr;
-    Value * SendWork = B.CreatePtrToInt(Work, UliArgTypeTy);;
-    
-    if (RetType->isVoidTy()){
-       SendResult = ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
-       SendResult = B.CreatePtrToInt(SendResult, UliArgTypeTy);
-    }else {
-       SendResult = B.CreateZExtOrBitCast(Result, UliArgTypeTy);
-    }
-
-    BasicBlock *BBremoteInlet = BasicBlock::Create(C, "remoteInlet", Wrapper);
-    BasicBlock *BBlocalInlet = BasicBlock::Create(C, "localInlet", Wrapper);
-    Value * ifZero = B.CreateICmpEQ(WorkStolen, ZERO);
-    B.CreateCondBr(ifZero, BBlocalInlet, BBremoteInlet);
-    
-    B.SetInsertPoint(BBlocalInlet);
-
-    B.CreateCall(localInlet, {SendResult, Work});
-    B.CreateRetVoid();
-
-    B.SetInsertPoint(BBremoteInlet);
-
-    Value *WorkSrc = LoadSTyField(B, DL, WorkType::get(C), Work, WorkType::src);
-    Value *Zero = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
-    Value *InletPtr = B.CreateBitCast(RemoteInlet, VoidPtrTy);
-    
-    // threadId need to be thread_local
-    Constant *threadIdGlobal = M->getOrInsertGlobal("threadId", Int32Ty);
-    assert(threadIdGlobal);
-    GlobalVariable *gVar = M->getNamedGlobal("threadId");
-    gVar->setThreadLocal(true);
-
-    Value *threadId = B.CreateLoad(gVar, "threadId");
-
-    Function *UliSend = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_send);
-
-    B.CreateCall(UliSend, {WorkSrc, Zero, InletPtr, SendResult, SendWork, threadId});
-    B.CreateRetVoid();
-    
-    // Store the wrapper function
-    gWrapperMap[&F] =  Wrapper;
-  }
-#endif
-
   
   // Work Generation
   {
@@ -1600,73 +1434,6 @@ void ULIABI::preProcessFunction(Function &F) {
 
     gWork = B.CreateBitCast(gWork, WorkType::get(C)->getPointerTo());    
   }
-
-#if 0  
-  // Here is work Handler
-  {
-   SmallVector<Type *, 8> WorkHandlerParamTys(FTy->param_begin(), FTy->param_end());
-   WorkHandlerParamTys.insert(WorkHandlerParamTys.begin(), VoidPtrTy);
-   WorkHandlerParamTys.insert(WorkHandlerParamTys.begin(), Int64Ty);
-   WorkHandlerParamTys.push_back(VoidPtrTy);
-   WorkHandlerParamTys.push_back(VoidPtrTy);
-   WorkHandlerParamTys.push_back(SyncType::get(C)->getPointerTo());
-   WorkHandlerParamTys.push_back(VoidPtrTy);
-
-   FunctionType *WorkHandlerFTy = FunctionType::get(VoidTy, WorkHandlerParamTys, /*isVarArg=*/false);
-
-   auto Name = "__prsc_" + F.getName() + "HereIsWorkHandler";
-   
-   Function *HereIsWorkHandler = Function::Create(WorkHandlerFTy, InternalLinkage, Name, M);
-   HereIsWorkHandler->setCallingConv(CallingConv::X86_ULI);
-   HereIsWorkHandler->addFnAttr(Attribute::UserLevelInterrupt);
-   
-   BasicBlock *Entry = BasicBlock::Create(C, "entry", HereIsWorkHandler);
-   
-   IRBuilder<> B(Entry);   
-
-   Constant *PRSC_RESET_WORKSTEAL = Get_PRSC_RESET_WORKSTEAL(*M);
-   B.CreateCall(PRSC_RESET_WORKSTEAL);
-
-   Value * from = HereIsWorkHandler->arg_begin();
-   Value * fp = HereIsWorkHandler->arg_begin()+1;   
-   Value * res = HereIsWorkHandler->arg_end()-1;
-   Value * sync = HereIsWorkHandler->arg_end()-2;
-   Value * parentSP = HereIsWorkHandler->arg_end()-3;
-   Value * parentIP = HereIsWorkHandler->arg_end()-4;   
-   Value * realArgStart = HereIsWorkHandler->arg_begin() + 2;
-   
-   int numArgs = HereIsWorkHandler->arg_end()-HereIsWorkHandler->arg_begin();
-   int realNumArgs = numArgs - 6;// Remove from, fp, res, syn, parentSP/IP
-
-   Value * ARGC =  ConstantInt::get(Int32Ty, realNumArgs, /*isSigned=*/false);
-   Value * ONE =  ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
-  
-   // Check if fp is NULL
-   BasicBlock * fpIsNotNull = BasicBlock::Create(C, "fpIsNotNull", HereIsWorkHandler);
-   BasicBlock * fpIsNull = BasicBlock::Create(C, "fpIsNull", HereIsWorkHandler);
-   Value * isFpNull = B.CreateICmpEQ(fp, ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo()) );
-   
-   B.CreateCondBr(isFpNull, fpIsNull, fpIsNotNull);
-   B.SetInsertPoint(fpIsNotNull);      
-
-   Constant *PRSC_CREATE_WORK = M->getOrInsertFunction("PRSC_CREATE_WORK", WorkType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C), IntegerType::getInt64Ty(C), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), SyncType::get(C)->getPointerTo(), IntegerType::getInt8Ty(C)->getPointerTo(), IntegerType::getInt32Ty(C)); 
-
-   Value * potentialWork = B.CreateCall(PRSC_CREATE_WORK, {fp, ARGC, from, parentIP, parentSP, sync, res, ONE});
-
-   StoreArgIntoWork(C, B, HereIsWorkHandler, 3, potentialWork, realNumArgs);
-
-   Constant * PRSC_PUSHFRONT_WORKQ = Get_PRSC_PUSHFRONT_WORKQ(*M);
-   B.CreateCall(PRSC_PUSHFRONT_WORKQ, potentialWork);
-
-   B.CreateRetVoid();
-   
-   B.SetInsertPoint(fpIsNull);
-   B.CreateRetVoid();
-    
-   // Store the here is work handler function
-   gRecvWorkHandlerMap[&F] =  HereIsWorkHandler;
-  }
-#endif
 
 }
 
