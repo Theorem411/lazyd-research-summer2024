@@ -5,3 +5,6 @@ Using LLVM project for implicit seed
 
 - Example of compiling the program :
 ../../../uli-llvm/build/bin/clang++ -o test_uli-fsim -Xclang -fenable-uli-transform -DULIFSIM -Xclang -fenable-uli-rewrite -rdynamic  -ggdb -O0 -Wall -fno-omit-frame-pointer -I../lib -L../lib test_uli.cpp -lsuli -lflazy -lpthread  -lc++abi -lunwind 
+
+- To run the program
+LD_LIBRARY_PATH=$LD_LIBRARY_PATH:../compiler/build/lib ./test_uli-fsim
