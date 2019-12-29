@@ -11,6 +11,8 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/MDBuilder.h"
 #include "llvm/Transforms/ULI/HandleInlets.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
@@ -64,9 +66,13 @@ bool HandleInletsPass::handlePotentialJump(BasicBlock &BB) {
     
     auto terminator = BB.getTerminator();
 
-    auto cond = CallInst::Create(returnTrue, "", terminator);
+    auto OpaqueTrueTy = FunctionType::get(BoolTy, false);
+    auto OpaqueTrue = InlineAsm::get(OpaqueTrueTy, "xor $0, $0",  "=r,~{dirflag},~{fpsr},~{flags}", false);
 
-    auto branch = BranchInst::Create(afterBB, InletBlock, cond);
+    auto cond = CallInst::Create(OpaqueTrue, "", terminator);
+
+    auto branch = BranchInst::Create(InletBlock, afterBB, cond);
+    branch->setMetadata(LLVMContext::MD_prof, MDBuilder(branch->getContext()).createBranchWeights(1, 99));
 
     ReplaceInstWithInst(terminator, branch);
 
@@ -78,10 +84,7 @@ bool HandleInletsPass::handlePotentialJump(BasicBlock &BB) {
 
 bool HandleInletsPass::runInitialization(Module &M) {
     auto &C = M.getContext();
-    auto boolTy = Type::getInt1Ty(C);
-    auto returnTrueTy = FunctionType::get(boolTy, false);
-    returnTrue = Function::Create(returnTrueTy, Function::ExternalLinkage, "returnTrue", &M);
-    returnTrue->setCallingConv(CallingConv::C);
+    BoolTy = Type::getInt1Ty(C);
     return true;
 }
 

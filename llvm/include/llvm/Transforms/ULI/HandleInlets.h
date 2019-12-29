@@ -25,7 +25,7 @@ struct HandleInletsPass
     : public PassInfoMixin<HandleInletsPass> {
 
 
-  llvm::Function *returnTrue;
+  llvm::Type *BoolTy;
 
   bool handlePotentialJump(BasicBlock &BB);
 public:
