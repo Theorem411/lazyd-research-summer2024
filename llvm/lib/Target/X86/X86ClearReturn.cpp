@@ -84,8 +84,7 @@ namespace {
         
         unsigned StackPtr = TRI->getStackRegister();
         
-        // TODO : Change Attribute::NoInline to Attribute::Forkable 
-        if (Fn.hasFnAttribute(Attribute::NoInline)){
+        if (Fn.hasFnAttribute(Attribute::Forkable)){
             for (auto mb = MF.begin(); mb != MF.end(); ++mb) {
                 for (auto inst = mb->begin(); inst != mb->end(); ++inst) {
                     if (inst->getOpcode() == X86::RET || inst->getOpcode() == X86::RETL || inst->getOpcode() == X86::RETQ) {
