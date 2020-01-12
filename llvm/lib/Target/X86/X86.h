@@ -126,6 +126,9 @@ FunctionPass *createX86DomainReassignmentPass();
 /// encoding when possible in order to reduce code size.
 FunctionPass *createX86EvexToVexInsts();
 
+FunctionPass *createX86ClearReturn();
+void initializeX86ClearReturnPass(PassRegistry &);
+
 /// This pass creates the thunks for the retpoline feature.
 FunctionPass *createX86IndirectThunksPass();
 
