@@ -205,6 +205,7 @@ TapirToTargetImpl::outlineAllTasks(Function &F,
       TFToOutline[SubTF].remapOutlineInfo(VMap, InputMap);
   }
 
+
   // Insert calls to outlined helpers for taskframe roots.
   for (Spindle *TF : TI.getRootTask()->taskframe_roots())
     TFToOutline[TF].replaceReplCall(
