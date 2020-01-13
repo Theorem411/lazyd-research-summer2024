@@ -2100,6 +2100,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     }
   }
 
+
   if (((!HasFP && NumBytes) || PushedRegs) && NeedsDwarfCFI) {
     // Mark end of stack pointer adjustment.
     if (!HasFP && NumBytes) {
@@ -2113,6 +2114,22 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     // Emit DWARF info specifying the offsets of the callee-saved registers.
     emitCalleeSavedFrameMoves(MBB, MBBI, DL, true);
   }
+
+  if (!Fn.hasFnAttribute(Attribute::UserLevelInterrupt)){ 
+      if (((!HasFP && NumBytes) || PushedRegs) && NeedsDwarfCFI) {
+          // Mark end of stack pointer adjustment.
+          if (!HasFP && NumBytes) {
+              // Define the current CFA rule to use the provided offset.
+              assert(StackSize);
+              BuildCFI(MBB, MBBI, DL, MCCFIInstruction::createDefCfaOffset(
+                                                                           nullptr, -StackSize + stackGrowth));
+          }
+          
+          // Emit DWARF info specifying the offsets of the callee-saved registers.
+          emitCalleeSavedFrameMoves(MBB, MBBI, DL);
+      }
+  }
+ 
 
   // X86 Interrupt handling function cannot assume anything about the direction
   // flag (DF in EFLAGS register). Clear this flag by creating "cld" instruction
