@@ -701,6 +701,28 @@ MCSymbol *MachineFunction::getPICBaseSymbol() const {
                                Twine(getFunctionNumber()) + "$pb");
 }
 
+
+/// \name PRSC label
+/// \{
+
+/// Return a new label
+MCSymbol * MachineFunction::getLabel(){
+    MCSymbol *Label = Ctx.createTempSymbol();
+    return Label;
+}
+
+/// Map steal handler basic block's name to its entry label
+void MachineFunction::addStealHandler2LabelMap(StringRef name, MCSymbol * label){
+    Ctx.StealHandler2LabelMap[ name ]  = label;
+} 
+
+/// Map name of call inst to forkable function to its return address label
+void MachineFunction::addReturnAddr2LabelMap  (StringRef name, MCSymbol * label){
+    Ctx.ReturnAddr2LabelMap[ name ]  = label;
+}
+
+/// \}
+
 /// \name Exception Handling
 /// \{
 
@@ -710,7 +732,7 @@ MachineFunction::getOrCreateLandingPadInfo(MachineBasicBlock *LandingPad) {
   for (unsigned i = 0; i < N; ++i) {
     LandingPadInfo &LP = LandingPads[i];
     if (LP.LandingPadBlock == LandingPad)
-      return LP;
+        return LP;
   }
 
   LandingPads.push_back(LandingPadInfo(LandingPad));
@@ -769,6 +791,7 @@ MCSymbol *MachineFunction::addLandingPad(MachineBasicBlock *LandingPad) {
 
   return LandingPadLabel;
 }
+
 
 void MachineFunction::addCatchTypeInfo(MachineBasicBlock *LandingPad,
                                        ArrayRef<const GlobalValue *> TyInfo) {

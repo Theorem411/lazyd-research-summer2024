@@ -1540,6 +1540,11 @@ bool FastISel::selectInstruction(const Instruction *I) {
     if (F && F->getIntrinsicID() == Intrinsic::trap &&
         Call->hasFnAttr("trap-func-name"))
       return false;
+
+
+    // Don't handle a call inst that calls a forkable function. Use SelectionDAGBuilder instead
+    if( F && F->hasFnAttribute(Attribute::Forkable) )
+        return false;
   }
 
   // First, try doing target-independent selection.

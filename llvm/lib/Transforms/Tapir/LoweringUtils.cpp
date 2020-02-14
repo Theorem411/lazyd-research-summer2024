@@ -54,8 +54,6 @@ TapirTarget *llvm::getTapirTargetFromID(Module &M, TapirTargetID ID) {
     return new OpenMPABI(M);
   case TapirTargetID::Qthreads:
     return new QthreadsABI(M);
-  case TapirTargetID::ULI:
-    return new ULIABI(M);
   default:
     llvm_unreachable("Invalid TapirTargetID");
   }

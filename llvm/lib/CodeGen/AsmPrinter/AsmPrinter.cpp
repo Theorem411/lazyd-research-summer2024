@@ -1280,6 +1280,7 @@ void AsmPrinter::emitFunctionBody() {
     emitBasicBlockStart(MBB);
     DenseMap<StringRef, unsigned> MnemonicCounts;
     for (auto &MI : MBB) {
+
       // Print the assembly for the instruction.
       if (!MI.isPosition() && !MI.isImplicitDef() && !MI.isKill() &&
           !MI.isDebugInstr()) {
@@ -1745,6 +1746,33 @@ bool AsmPrinter::doFinalization(Module &M) {
   // we can conditionalize accesses based on whether or not it is nullptr.
   MF = nullptr;
 
+
+  // Create the PreHash Section
+  MCSection *PreHashSection = getObjFileLowering().getPreHashSection();
+  if ( PreHashSection){
+      OutStreamer->SwitchSection( PreHashSection);
+      EmitAlignment(2);
+      
+      // Emit symbol to indicate the start of PreHash table
+      MCSymbol *PreHashSym =  OutContext.getOrCreateSymbol(Twine("Pre_Hash_table"));
+      OutStreamer->EmitLabel(PreHashSym);
+  
+      // Populate the content of PreHash table
+      for(auto &KV :M.CallStealMap){     
+          MCSymbol * raLabel = OutContext.ReturnAddr2LabelMap[KV.first->getName()];
+          MCSymbol * bbLabel = OutContext.StealHandler2LabelMap[KV.second->getName()];
+
+          EmitLabelPlusOffset(raLabel, 0, 8, false);
+          EmitLabelPlusOffset(bbLabel, 0, 8, false);
+   
+      }
+      
+      // Emit symbol to indicate the end of PreHash table
+      MCSymbol *PreHashSymEnd =  OutContext.getOrCreateSymbol(Twine("Pre_Hash_table_end"));
+      OutStreamer->EmitLabel(PreHashSymEnd);
+
+  }
+  
   // Gather all GOT equivalent globals in the module. We really need two
   // passes over the globals: one to compute and another to avoid its emission
   // in EmitGlobalVariable, otherwise we would not be able to handle cases
@@ -3322,7 +3350,7 @@ void AsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
   if (MBB.hasAddressTaken()) {
     if (isVerbose())
       OutStreamer->AddComment("Block address taken");
-
+    
     // MBBs can have their address taken as part of CodeGen without having
     // their corresponding BB's address taken in IR
     if (BB && BB->hasAddressTaken())

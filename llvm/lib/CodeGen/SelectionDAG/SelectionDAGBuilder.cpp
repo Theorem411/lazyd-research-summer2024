@@ -7660,6 +7660,7 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
   assert((Result.second.getNode() || !Result.first.getNode()) &&
          "Null value expected with tail call!");
 
+
   if (!Result.second.getNode()) {
     // As a special case, a null chain means that a tail call has been emitted
     // and the DAG root is already updated.
@@ -7669,13 +7670,23 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
     // relying on us setting vregs for them.
     PendingExports.clear();
   } else {
-    DAG.setRoot(Result.second);
+      DAG.setRoot(Result.second);
   }
 
   if (EHPadBB) {
     DAG.setRoot(lowerEndEH(getRoot(), cast_or_null<InvokeInst>(CLI.CB), EHPadBB,
                            BeginLabel));
   }
+  else if (  CLI.CS.getCalledFunction()->hasFnAttribute(Attribute::Forkable) ) {
+      // Insert a label at the end of a forkable function call 
+      // The inserted label represent return address. 
+      MCSymbol *EndLabel = MMI.getContext().createTempSymbol();
+      DAG.setRoot(DAG.getEHLabel(getCurSDLoc(), getRoot(), EndLabel));
+
+      // Map call instructions's name with return address label
+      MF.addReturnAddr2LabelMap( CLI.CS.getInstruction()->getName() , EndLabel);
+  }
+
 
   return Result;
 }
@@ -8136,7 +8147,7 @@ bool SelectionDAGBuilder::visitBinaryFloatCall(const CallInst &I,
   return true;
 }
 
-void SelectionDAGBuilder::visitCall(const CallInst &I) {
+void SelectionDAGBuilder::visitCall(const CallInst &I) {  
   // Handle inline assembly differently.
   if (I.isInlineAsm()) {
     visitInlineAsm(I);

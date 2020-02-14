@@ -1070,6 +1070,20 @@ public:
     CatchretTargets.push_back(Target);
   }
 
+  /// \name PRSC
+  /// \{
+    
+  /// Return a new label
+  MCSymbol * getLabel();
+
+  /// Map steal handler basic block's name to its entry label
+  void addStealHandler2LabelMap(StringRef name, MCSymbol * label);
+
+  /// Map name of call inst to forkable function to its return address label 
+  void addReturnAddr2LabelMap  (StringRef name, MCSymbol * label); 
+
+  /// \}
+
   /// \name Exception Handling
   /// \{
 

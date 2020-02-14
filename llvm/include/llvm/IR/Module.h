@@ -168,6 +168,7 @@ public:
     ModuleFlagEntry(ModFlagBehavior B, MDString *K, Metadata *V)
         : Behavior(B), Key(K), Val(V) {}
   };
+  
 
 /// @}
 /// @name Member Variables
@@ -195,6 +196,7 @@ private:
                                   ///< Format: (arch)(sub)-(vendor)-(sys0-(abi)
   NamedMDSymTabType NamedMDSymTab;  ///< NamedMDNode names.
   DataLayout DL;                  ///< DataLayout associated with the module
+
   StringMap<unsigned>
       CurrentIntrinsicIds; ///< Keep track of the current unique id count for
                            ///< the specified intrinsic basename.
@@ -216,6 +218,13 @@ public:
   /// The module destructor. This will dropAllReferences.
   ~Module();
 
+
+  // TODO : Proper get set
+  DenseMap<Instruction*, BasicBlock *> CallStealMap; /// Map callInst to steal request handler basic block
+  DenseMap<BasicBlock*,  bool> StealHandlerExists;   /// If entry exists, then basic block is a steal request handler basic block
+
+
+  
 /// @}
 /// @name Module Level Accessors
 /// @{

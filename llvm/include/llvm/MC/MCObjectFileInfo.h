@@ -76,6 +76,11 @@ protected:
   /// to emit them into.
   MCSection *CompactUnwindSection = nullptr;
 
+
+  /// Section used to create the hash table in linker / runtime
+  /// Contains label representing return addr of forkable function , the callsite's gotstolen and steal request handler basic block
+  MCSection *PreHashSection;
+
   // Dwarf sections for debug info.  If a target supports debug info, these must
   // be set.
   MCSection *DwarfAbbrevSection = nullptr;
@@ -276,6 +281,9 @@ public:
   MCSection *getDwarfFrameSection() const { return DwarfFrameSection; }
   MCSection *getDwarfPubNamesSection() const { return DwarfPubNamesSection; }
   MCSection *getDwarfPubTypesSection() const { return DwarfPubTypesSection; }
+   
+  MCSection *getPreHashSection() const { return PreHashSection;}
+  
   MCSection *getDwarfGnuPubNamesSection() const {
     return DwarfGnuPubNamesSection;
   }
