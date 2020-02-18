@@ -7677,7 +7677,7 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
     DAG.setRoot(lowerEndEH(getRoot(), cast_or_null<InvokeInst>(CLI.CB), EHPadBB,
                            BeginLabel));
   }
-  else if (  CLI.CS.getCalledFunction()->hasFnAttribute(Attribute::Forkable) ) {
+  else if (  CLI.CS.getCalledFunction() && CLI.CS.getCalledFunction()->hasFnAttribute(Attribute::Forkable) ) {
       // Insert a label at the end of a forkable function call 
       // The inserted label represent return address. 
       MCSymbol *EndLabel = MMI.getContext().createTempSymbol();

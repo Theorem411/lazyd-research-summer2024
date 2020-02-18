@@ -1172,7 +1172,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         }                  
     }        
 
-     for (auto In : delInstrs){
+    for (auto In : delInstrs){
         Instruction& inst = *In;
         inst.eraseFromParent(); // delete instrs
     }
@@ -1222,6 +1222,7 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     BasicBlock * ifTrue = BasicBlock::Create(C, "TrueBB", F);
     BasicBlock * ifFalse = BasicBlock::Create(C, "FalseBB", F);
 
+    // Compare with >= detach BB and <= continueBB
     BlockAddress* bA = BlockAddress::get(detachBB);   
     Value * cmpRes = workFSMB.CreateICmpUGE(pRA,bA);
 
@@ -1257,9 +1258,11 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     if(gGenWorkBBArr[detachLevel])
         workFSMB.CreateBr(gGenWorkBBArr[detachLevel]);
 
+    // If false (not true)
     workFSMB.SetInsertPoint(ifFalse);
     gLastFalseBB[syncLevel-1] = ifFalse;
 
+    // Compare with the gotstolen label
     tmpLevel = detachLevel;
     while(tmpLevel > 0){
         //assert(false && "Not working yet, code needs update");
