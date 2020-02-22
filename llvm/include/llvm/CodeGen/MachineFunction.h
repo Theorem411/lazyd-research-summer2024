@@ -1079,6 +1079,9 @@ public:
   /// Map steal handler basic block's name to its entry label
   void addStealHandler2LabelMap(StringRef name, MCSymbol * label);
 
+  /// Map stolen handler basic block's name to its entry label
+  void addStolenHandler2LabelMap(StringRef name, MCSymbol * label);
+
   /// Map name of call inst to forkable function to its return address label 
   void addReturnAddr2LabelMap  (StringRef name, MCSymbol * label); 
 

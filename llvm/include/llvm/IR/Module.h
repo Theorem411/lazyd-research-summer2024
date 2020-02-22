@@ -168,6 +168,12 @@ public:
     ModuleFlagEntry(ModFlagBehavior B, MDString *K, Metadata *V)
         : Behavior(B), Key(K), Val(V) {}
   };
+
+  
+  struct PreHashEntry {
+      BasicBlock * stealHandler;
+      BasicBlock * stolenHandler;
+  };
   
 
 /// @}
@@ -220,8 +226,9 @@ public:
 
 
   // TODO : Proper get set
-  DenseMap<Instruction*, BasicBlock *> CallStealMap; /// Map callInst to steal request handler basic block
+  DenseMap<Instruction*, PreHashEntry> CallStealMap; /// Map callInst to steal request and got stolen handler basic block
   DenseMap<BasicBlock*,  bool> StealHandlerExists;   /// If entry exists, then basic block is a steal request handler basic block
+  DenseMap<BasicBlock*,  bool> StolenHandlerExists;   /// If entry exists, then basic block is a got-stolen  handler basic block
 
 
   

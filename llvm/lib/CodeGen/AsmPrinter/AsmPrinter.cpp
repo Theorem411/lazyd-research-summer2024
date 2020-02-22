@@ -1760,11 +1760,17 @@ bool AsmPrinter::doFinalization(Module &M) {
       // Populate the content of PreHash table
       for(auto &KV :M.CallStealMap){     
           MCSymbol * raLabel = OutContext.ReturnAddr2LabelMap[KV.first->getName()];
-          MCSymbol * bbLabel = OutContext.StealHandler2LabelMap[KV.second->getName()];
+          MCSymbol * stealLabel = OutContext.StealHandler2LabelMap[KV.second.stealHandler->getName()];
+          MCSymbol * stolenLabel = OutContext.StolenHandler2LabelMap[KV.second.stolenHandler->getName()];
+          
+          
+          assert(raLabel != NULL);
+          assert(stealLabel  != NULL);
+          assert(stolenLabel  != NULL);
 
           EmitLabelPlusOffset(raLabel, 0, 8, false);
-          EmitLabelPlusOffset(bbLabel, 0, 8, false);
-   
+          EmitLabelPlusOffset(stealLabel, 0, 8, false);
+          EmitLabelPlusOffset(stolenLabel, 0, 8, false);
       }
       
       // Emit symbol to indicate the end of PreHash table

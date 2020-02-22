@@ -7685,6 +7685,13 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
 
       // Map call instructions's name with return address label
       MF.addReturnAddr2LabelMap( CLI.CS.getInstruction()->getName() , EndLabel);
+
+      if(MF.getFunction().getParent()->StolenHandlerExists.lookup( CLI.CS.getInstruction()->getParent()  )){       
+        // Map got-stolen handler basic block with a its entry label
+        MF.addStolenHandler2LabelMap(CLI.CS.getInstruction()->getParent()->getName(), EndLabel);        
+      }
+
+
   }
 
 
