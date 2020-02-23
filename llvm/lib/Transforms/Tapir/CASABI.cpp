@@ -36,6 +36,8 @@
 #include "llvm/Transforms/Utils/TapirUtils.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
+//TODO : Bug in -O0 in fib_sp
+//TODO : Proper Stacklet in runtime
 //TODO : Code refactoring
 //TODO : Design document
 
@@ -49,7 +51,10 @@ ValueToValueMapTy VMap;
 ValueToValueMapTy VMapGH; 
 // Contain original fast path
 SmallVector<BasicBlock*, 8> bbV2Clone;
-
+// JoinCntr
+Value * joinCntr;
+// Resume_parent
+BasicBlock * resume_parent;
 
 /// Helper methods for storing to and loading from struct fields.
 static Value *GEP(IRBuilder<> &B, Value *Base, int field) {
@@ -91,17 +96,21 @@ using TypeBuilderCache = std::map<LLVMContext *, StructType *>;
   }
 
 
-using PUSH_SS_ty = void (void *);
-DEFAULT_GET_LIB_FUNC(PUSH_SS)
+using push_ss_ty = void (void *);
+DEFAULT_GET_LIB_FUNC(push_ss)
 
-using POP_SS_ty = void (void );
-DEFAULT_GET_LIB_FUNC(POP_SS)
+using pop_ss_ty = void (void );
+DEFAULT_GET_LIB_FUNC(pop_ss)
 
-using DEC_SS_ty = void (void );
-DEFAULT_GET_LIB_FUNC(DEC_SS)
+using dec_ss_ty = void (void );
+DEFAULT_GET_LIB_FUNC(dec_ss)
 
-//using RESUME2SCHEDULER_ty = void (void * , void * , void *, long, long, int * );
-//DEFAULT_GET_LIB_FUNC(RESUME2SCHEDULER);
+using resume2scheduler_ty = void (void );
+DEFAULT_GET_LIB_FUNC(resume2scheduler);
+
+using suspend2scheduler_ty = void (int * );
+DEFAULT_GET_LIB_FUNC(suspend2scheduler);
+
 
 Value *CASABI::lowerGrainsizeCall(CallInst *GrainsizeCall) {
   assert(false);
@@ -123,6 +132,17 @@ void CASABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) 
     Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
     Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
 
+    // Common Used Function
+    Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
+    Function * getSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
+    Function * setupRBPfromRSPinRBP = Intrinsic::getDeclaration(M, Intrinsic::x86_setup_rbp_from_sp_in_rbp);
+    Constant * PUSH_SS = Get_push_ss(*M);
+    Constant * POP_SS = Get_pop_ss(*M);
+    Constant * resume2scheduler = Get_resume2scheduler(*M);
+    Value * OneByte = ConstantInt::get(Int64Ty, 8, /*isSigned=*/false);
+    Value * TwoByte = ConstantInt::get(Int64Ty, 16, /*isSigned=*/false);
+
+
     // Fast Path
     // ----------------------------------------------
     {
@@ -142,9 +162,25 @@ void CASABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) 
 
         IRBuilder<> slowBuilder( syncBB->getTerminator()  );
 
+        // Create an epilogue before sync instruction
+        using AsmTypI = void ( int* );
+        FunctionType *FAsmTypI = TypeBuilder<AsmTypI, false>::get(C);
+        Value *Asm = InlineAsm::get(FAsmTypI, "movq $0, 0(%rsp)\0A\09", "r,~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+        // Store the result to storeInst
+        Value * pJoinCntr = slowBuilder.CreateBitCast(joinCntr, IntegerType::getInt32Ty(C)->getPointerTo());
+        slowBuilder.CreateCall(Asm, pJoinCntr);
+
+        using AsmTypV = void ( void* );
+        FunctionType *FAsmTypV = TypeBuilder<AsmTypV, false>::get(C);
+        Asm = InlineAsm::get(FAsmTypV, "movq $0, 16(%rsp)\0A\09", "r,~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+        slowBuilder.CreateCall(Asm, BlockAddress::get( resume_parent ));
+        
+        slowBuilder.CreateCall(resume2scheduler);
+
 
         // Look for the reattach inst
-        // Add an epilogue just before it
+        // Add a prologue after it
+        haveVisited.clear();
         bbList.push_back(syncBB);
         while(!bbList.empty()){
             bb = bbList.back();
@@ -157,9 +193,10 @@ void CASABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) 
                 // Don't push anymore if we encountered reattach instruction
                 ReattachInst * reattachInst = dyn_cast<ReattachInst>( bb->getTerminator() );
                 BasicBlock   * startOfStealHandler = reattachInst->getDetachContinue();
-                slowBuilder.SetInsertPoint( startOfStealHandler->getFirstNonPHIOrDbgOrLifetime() );
+                slowBuilder.SetInsertPoint( startOfStealHandler->getFirstNonPHIOrDbgOrLifetime() ); 
                 
-                //slowBuilder.CreateCall(RESUME2SCHEDULER, {NEG_ZERO});
+                // Prologue
+                slowBuilder.CreateCall(setupRBPfromRSPinRBP);
             } else {
                 for( pred_iterator PI = pred_begin(bb); PI!=pred_end(bb); PI++ ){                
                     bbList.push_back(*PI);
@@ -193,8 +230,9 @@ Function *CASABI::createDetach(DetachInst &Detach,
     Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
     Function * getSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
     Function * setupRBPfromRSPinRBP = Intrinsic::getDeclaration(M, Intrinsic::x86_setup_rbp_from_sp_in_rbp);
-    Constant * PUSH_SS = Get_PUSH_SS(*M);
-    Constant * POP_SS = Get_POP_SS(*M);
+    Constant * PUSH_SS = Get_push_ss(*M);
+    Constant * POP_SS = Get_pop_ss(*M);
+    Constant * suspend2scheduler = Get_suspend2scheduler(*M);
     Value * OneByte = ConstantInt::get(Int64Ty, 8, /*isSigned=*/false);
 
 
@@ -234,10 +272,19 @@ Function *CASABI::createDetach(DetachInst &Detach,
         IRBuilder<> builder(detachBB->getFirstNonPHIOrDbgOrLifetime()); 
         builder.CreateCall(potentialJump, {BlockAddress::get( stolenhandler )});
 
+        builder.SetInsertPoint(stolenhandler->getTerminator());
+        Value * pJoinCntr = builder.CreateBitCast(joinCntr, IntegerType::getInt32Ty(C)->getPointerTo());
+        builder.CreateCall(suspend2scheduler, pJoinCntr);
+        
+        Instruction * iterm = stolenhandler->getTerminator();
+        BranchInst *resumeBr = BranchInst::Create(resume_parent);
+        ReplaceInstWithInst(iterm, resumeBr);
+
         for( Instruction &II : *detachBB){
           if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->getIntrinsicID() != Intrinsic::x86_uli_potential_jump){                    
             // Associate callsite instruction with got-stolen handler
             M->CallStealMap[&II].stolenHandler = stolenhandler;
+            outs() << "Stolen " << stolenhandler << "\n";
             break;
           }
         } 
@@ -264,7 +311,15 @@ Function *CASABI::createDetach(DetachInst &Detach,
 
         IRBuilder<> fastBuilder(detachBB->getFirstNonPHIOrDbgOrLifetime()); 
         
+        // Build the Fast Path Prologue
+        // push_ss((void*) (builtin_sp() - 8) );
+        Value * SPVal = fastBuilder.CreateCall(getSP);
+        Value * SPValInt = fastBuilder.CreateCast(Instruction::PtrToInt, SPVal, IntegerType::getInt64Ty(C));
+        Value * ppRA  = fastBuilder.CreateSub(SPValInt, OneByte);
+        ppRA = fastBuilder.CreateCast(Instruction::IntToPtr, ppRA, IntegerType::getInt8Ty(C)->getPointerTo());
+        fastBuilder.CreateCall(PUSH_SS, {ppRA});
 
+        haveVisited.clear();
         bbList.push_back(detachBB);
         while(!bbList.empty()){
             bb = bbList.back();
@@ -276,16 +331,7 @@ Function *CASABI::createDetach(DetachInst &Detach,
             if ( (term = dyn_cast<ReattachInst>( bb->getTerminator() ))  ){
                 // Don't push anymore if we encountered reattach instruction
                 prevReattachInst = dyn_cast<ReattachInst>( bb->getTerminator() );
-                startOfStealHandler = prevReattachInst->getDetachContinue();
-                fastBuilder.SetInsertPoint( startOfStealHandler->getFirstNonPHIOrDbgOrLifetime() );
-                
-                // Build the Fast Path Prologue
-                // push_ss((void*) (builtin_sp() - 8) );
-                Value * SPVal = fastBuilder.CreateCall(getSP);
-                Value * SPValInt = fastBuilder.CreateCast(Instruction::PtrToInt, SPVal, IntegerType::getInt64Ty(C));
-                Value * ppRA  = fastBuilder.CreateSub(SPValInt, OneByte);
-                ppRA = fastBuilder.CreateCast(Instruction::IntToPtr, ppRA, IntegerType::getInt8Ty(C)->getPointerTo());
-                fastBuilder.CreateCall(PUSH_SS, {ppRA});
+                startOfStealHandler = prevReattachInst->getDetachContinue();               
 
             } else {
                 for( pred_iterator PI = pred_begin(bb); PI!=pred_end(bb); PI++ ){                
@@ -311,7 +357,23 @@ Function *CASABI::createDetach(DetachInst &Detach,
             }            
         }
 
+
+        for( Instruction &II : *detachBB){
+            if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->getIntrinsicID() != Intrinsic::x86_uli_potential_jump){
+                BasicBlock * stealhandler = dyn_cast<BasicBlock>(VMap[startOfStealHandler]);                    
+                // Associate callsite instruction with steal handler
+                M->CallStealMap[&II].stealHandler = stealhandler;
+                // Indicate the steal hander basic block needs a label
+                M->StealHandlerExists[stealhandler] = true;
+                    
+                dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);
+                break;
+            }
+        }
+
+
         bbList.clear();
+        haveVisited.clear();
         // Look for the reattach inst
         // Add an epilogue just before it
         bbList.push_back(detachBB);
@@ -322,6 +384,7 @@ Function *CASABI::createDetach(DetachInst &Detach,
                 continue;
             }
             haveVisited[bb] = true;
+            
             if ( (term = dyn_cast<ReattachInst>( bb->getTerminator() ))  ){
                 // Don't push anynore if we encountered reattach instruction
                 fastBuilder.SetInsertPoint(bb->getTerminator());
@@ -357,17 +420,7 @@ Function *CASABI::createDetach(DetachInst &Detach,
         ReattachInst * prevReattachInst = NULL;
 
         IRBuilder<> slowBuilder(detachBB->getFirstNonPHIOrDbgOrLifetime()); 
-     
-        using AsmPrototypeVoidStar = void* (void);
-        using AsmPrototypeVoidStarStar = void** (void);
-        using AsmPrototypeLong = long (void);
-
-        Value * newrsp; // void *
-        Value * otherproc; // long
-        Value * addrOfRA_2; // void ** 
-        Value * resumePoint; // void *
-        Value * otherptr; // long
-
+        haveVisited.clear();
         bbList.push_back(detachBB);
         while(!bbList.empty()){
             bb = bbList.back();
@@ -383,67 +436,8 @@ Function *CASABI::createDetach(DetachInst &Detach,
                 slowBuilder.SetInsertPoint( startOfStealHandler->getFirstNonPHIOrDbgOrLifetime() );
   
                 // __builtin_setup_rbp_from_sp_in_rbp();
-                slowBuilder.CreateCall(setupRBPfromRSPinRBP);
+                //slowBuilder.CreateCall(setupRBPfromRSPinRBP);
                 
-
-                /*
-                  Value * newrsp; // void *
-                  Value * otherproc; // long
-                  Value * addrOfRA_2; // void ** 
-                  Value * resumePoint; // void *
-                  Value * otherptr; // long
-                 */
-                
-                FunctionType *FAsmVoidStarTy =
-                    TypeBuilder<AsmPrototypeVoidStar, false>::get(C);
-                FunctionType *FAsmVoidStarStarTy =
-                    TypeBuilder<AsmPrototypeVoidStarStar, false>::get(C);
-                FunctionType *FAsmLongTy =
-                    TypeBuilder<AsmPrototypeLong, false>::get(C);
-
-                /*
-                  asm volatile("movq %%rsp, %[ARG]\n\t":[ARG] "=r" (newrsp));
-                  asm volatile("movq 0(%%rsp), %[ARG]\n\t":[ARG] "=r" (otherproc));
-                  asm volatile("movq -8(%%rsp), %[ARG]\n\t":[ARG] "=r" (addrOfRA_2));
-                  asm volatile("movq -16(%%rsp), %[ARG]\n\t":[ARG] "=r" (resumePoint));
-                  asm volatile("movq -24(%%rsp), %[ARG]\n\t":[ARG] "=r" (otherptr));
-                 */
-
-                // Get the type of routine
-                Value *Asm = InlineAsm::get(FAsmVoidStarTy,
-                                            "movq %rsp, $0\0A\09",
-                                            "=r,~{dirflag},~{fpsr},~{flags}",
-                                            /*sideeffects*/ true);
-                newrsp = slowBuilder.CreateCall(Asm);
-
-                Asm = InlineAsm::get(FAsmLongTy, 
-                                     "movq 0(%rsp), $0\0A\09",
-                                     "=r,~{dirflag},~{fpsr},~{flags}",
-                                     /*sideeffects*/ true);
-
-                otherproc = slowBuilder.CreateCall(Asm);
-
-                Asm = InlineAsm::get(FAsmVoidStarStarTy, 
-                                     "movq -8(%rsp), $0\0A\09",
-                                     "=r,~{dirflag},~{fpsr},~{flags}",
-                                     /*sideeffects*/ true);
-
-                addrOfRA_2 = slowBuilder.CreateCall(Asm);
-
-                Asm = InlineAsm::get(FAsmVoidStarStarTy, 
-                                     "movq -16(%rsp), $0\0A\09",
-                                     "=r,~{dirflag},~{fpsr},~{flags}",
-                                     /*sideeffects*/ true);
-
-                resumePoint = slowBuilder.CreateCall(Asm);
-
-                Asm = InlineAsm::get(FAsmLongTy, 
-                                     "movq -24(%rsp), $0\0A\09",
-                                     "=r,~{dirflag},~{fpsr},~{flags}",
-                                     /*sideeffects*/ true);
-                
-                otherptr = slowBuilder.CreateCall(Asm);
-
                 
             } else {
                 for( pred_iterator PI = pred_begin(bb); PI!=pred_end(bb); PI++ ){                
@@ -453,7 +447,7 @@ Function *CASABI::createDetach(DetachInst &Detach,
         }
         
         bbList.clear();
-
+        haveVisited.clear();
         // Look for the reattach inst
         // Add an epilogue just before it
         bbList.push_back(detachBB);
@@ -485,10 +479,19 @@ Function *CASABI::createDetach(DetachInst &Detach,
 
 void CASABI::preProcessFunction(Function &F) {
 
+  Module *M = F.getParent();
+  LLVMContext& C = M->getContext();
+  const DataLayout &DL = M->getDataLayout();
+  Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
+  Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
+
+  Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
+  IRBuilder<> builder( C );
+
+
   // Add Thread initialization and deinitialization on the main function
   // TODO : Make this optional
   if ( F.getName() == "main") {
-    Type *Int32Ty = TypeBuilder<int32_t, false>::get(F.getContext());
     
     IRBuilder<> B(F.getEntryBlock().getTerminator());
     
@@ -502,14 +505,6 @@ void CASABI::preProcessFunction(Function &F) {
     return;
   } 
   
-  Module *M = F.getParent();
-  LLVMContext& C = M->getContext();
-
-  Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
-  IRBuilder<> builder( C );
-
-
-
   // Clone the function, create the slow path
   // Clone the basic block
   // -------------------------------------------------------------------------
@@ -582,15 +577,16 @@ void CASABI::preProcessFunction(Function &F) {
   for (auto pBB : bbV2Clone){
       if( SyncInst *SI = dyn_cast<SyncInst>(pBB->getTerminator()) ){
           Function *SetupRBPfromRSP = Intrinsic::getDeclaration(M, Intrinsic::x86_setup_rbp_from_rsp);
-          Constant * DEC_SS = Get_DEC_SS(*M);
+          Constant * DEC_SS = Get_dec_ss(*M);
           // Resume Parent path
           {
-              BasicBlock * resume_parent = BasicBlock::Create(C, "resume_parent", &F);
+              resume_parent = BasicBlock::Create(C, "resume_parent", &F);
               IRBuilder <> B(resume_parent);
               B.CreateCall(SetupRBPfromRSP);
               B.CreateCall(DEC_SS);
               B.CreateBr(SI->getSuccessor(0));
-        
+              
+              // Add a potential jump from entry to resume_parent block
               builder.SetInsertPoint(entryBB->getTerminator());
               builder.CreateCall(potentialJump, {BlockAddress::get(resume_parent)});
 
@@ -598,6 +594,22 @@ void CASABI::preProcessFunction(Function &F) {
       }
   }
 
+
+  // --------------------------------------------------------------
+  // Count the number of children
+  int nChild = 1; // Oldest child
+  for (auto pBB : bbV2Clone){
+      if( isa<DetachInst>(pBB->getTerminator()) ){
+          nChild++;
+      }
+  }
+
+  // Create the join counter
+  builder.SetInsertPoint(entryBB->getFirstNonPHIOrDbgOrLifetime());
+  joinCntr = builder.CreateAlloca(Int32Ty, DL.getAllocaAddrSpace(), nullptr, "joincntr");
+  Value * nChildIR = ConstantInt::get(Int32Ty, nChild, /*isSigned=*/false);
+  builder.CreateStore(nChildIR,  joinCntr);
+  
   return;
 }
 

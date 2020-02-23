@@ -528,7 +528,7 @@ void X86PassConfig::addPostRegAlloc() {
 }
 
 void X86PassConfig::addPreSched2() { 
-    //addPass(createX86ClearReturn()); // Don't need it for now
+    addPass(createX86ClearReturn()); 
     addPass(createX86ExpandPseudoPass());
  }
 
