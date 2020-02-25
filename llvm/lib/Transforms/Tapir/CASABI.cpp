@@ -40,7 +40,7 @@
 //TODO : Proper Stacklet in runtime
 //TODO : Code refactoring
 //TODO : Design document
-
+//TODO : Proper got stolen handler steal handler request (current implementaiton is bad)
 using namespace llvm;
 
 #define DEBUG_TYPE "casabi"
@@ -111,6 +111,18 @@ DEFAULT_GET_LIB_FUNC(resume2scheduler);
 using suspend2scheduler_ty = void (int * );
 DEFAULT_GET_LIB_FUNC(suspend2scheduler);
 
+using initworkers_env_ty = void (void );
+DEFAULT_GET_LIB_FUNC(initworkers_env);
+
+using deinitworkers_env_ty = void (void );
+DEFAULT_GET_LIB_FUNC(deinitworkers_env);
+
+using deinitperworkers_sync_ty = void(int, int);
+DEFAULT_GET_LIB_FUNC(deinitperworkers_sync);
+
+using initperworkers_sync_ty = void(int, int);
+DEFAULT_GET_LIB_FUNC(initperworkers_sync);
+
 
 Value *CASABI::lowerGrainsizeCall(CallInst *GrainsizeCall) {
   assert(false);
@@ -162,6 +174,7 @@ void CASABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) 
 
         IRBuilder<> slowBuilder( syncBB->getTerminator()  );
 
+#if 0
         // Create an epilogue before sync instruction
         using AsmTypI = void ( int* );
         FunctionType *FAsmTypI = TypeBuilder<AsmTypI, false>::get(C);
@@ -176,8 +189,6 @@ void CASABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) 
         slowBuilder.CreateCall(Asm, BlockAddress::get( resume_parent ));
         
         slowBuilder.CreateCall(resume2scheduler);
-
-
         // Look for the reattach inst
         // Add a prologue after it
         haveVisited.clear();
@@ -203,6 +214,7 @@ void CASABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) 
                 }
             }
         }
+#endif
 
     }
 
@@ -233,6 +245,7 @@ Function *CASABI::createDetach(DetachInst &Detach,
     Constant * PUSH_SS = Get_push_ss(*M);
     Constant * POP_SS = Get_pop_ss(*M);
     Constant * suspend2scheduler = Get_suspend2scheduler(*M);
+    Constant * resume2scheduler = Get_resume2scheduler(*M);
     Value * OneByte = ConstantInt::get(Int64Ty, 8, /*isSigned=*/false);
 
 
@@ -281,10 +294,13 @@ Function *CASABI::createDetach(DetachInst &Detach,
         ReplaceInstWithInst(iterm, resumeBr);
 
         for( Instruction &II : *detachBB){
-          if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->getIntrinsicID() != Intrinsic::x86_uli_potential_jump){                    
+            II.dump();
+          if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->hasFnAttribute(Attribute::Forkable)){                    
             // Associate callsite instruction with got-stolen handler
             M->CallStealMap[&II].stolenHandler = stolenhandler;
+          
             outs() << "Stolen " << stolenhandler << "\n";
+            outs() << "II : "<< II.getName() <<  " stolenhandler : " << stolenhandler->getName() << "\n"; 
             break;
           }
         } 
@@ -319,54 +335,20 @@ Function *CASABI::createDetach(DetachInst &Detach,
         ppRA = fastBuilder.CreateCast(Instruction::IntToPtr, ppRA, IntegerType::getInt8Ty(C)->getPointerTo());
         fastBuilder.CreateCall(PUSH_SS, {ppRA});
 
-        haveVisited.clear();
-        bbList.push_back(detachBB);
-        while(!bbList.empty()){
-            bb = bbList.back();
-            bbList.pop_back();
-            if ( (haveVisited.lookup(bb)) ){
-                continue;
-            }
-            haveVisited[bb] = true;
-            if ( (term = dyn_cast<ReattachInst>( bb->getTerminator() ))  ){
-                // Don't push anymore if we encountered reattach instruction
-                prevReattachInst = dyn_cast<ReattachInst>( bb->getTerminator() );
-                startOfStealHandler = prevReattachInst->getDetachContinue();               
-
-            } else {
-                for( pred_iterator PI = pred_begin(bb); PI!=pred_end(bb); PI++ ){                
-                    bbList.push_back(*PI);
-                }
-            }
-        }
-        
-        // Look for the forkable function. 
-        if(prevReattachInst){
-            BasicBlock * prevReattachBB = prevReattachInst->getParent();
-            for( Instruction &II : *prevReattachBB){
-                if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->getIntrinsicID() != Intrinsic::x86_uli_potential_jump){
-                    BasicBlock * stealhandler = dyn_cast<BasicBlock>(VMap[startOfStealHandler]);                    
-                    // Associate callsite instruction with steal handler
-                    M->CallStealMap[&II].stealHandler = stealhandler;
-                    // Indicate the steal hander basic block needs a label
-                    M->StealHandlerExists[stealhandler] = true;
-                    
-                    dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);
-                    break;
-                }
-            }            
-        }
-
-
+        outs() << "------\n";
+        // Book Keeping
+        startOfStealHandler = continueBB;
         for( Instruction &II : *detachBB){
-            if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->getIntrinsicID() != Intrinsic::x86_uli_potential_jump){
+            II.dump();
+            if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->hasFnAttribute(Attribute::Forkable) ){
                 BasicBlock * stealhandler = dyn_cast<BasicBlock>(VMap[startOfStealHandler]);                    
                 // Associate callsite instruction with steal handler
                 M->CallStealMap[&II].stealHandler = stealhandler;
                 // Indicate the steal hander basic block needs a label
-                M->StealHandlerExists[stealhandler] = true;
-                    
-                dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);
+                M->StealHandlerExists[stealhandler] = true;                    
+
+                II.dump();
+                outs() << "II : "<< II.getName() <<  " stealhandler : " << stealhandler->getName() << "\n"; 
                 break;
             }
         }
@@ -419,38 +401,17 @@ Function *CASABI::createDetach(DetachInst &Detach,
         BasicBlock   * startOfStealHandler= NULL;
         ReattachInst * prevReattachInst = NULL;
 
-        IRBuilder<> slowBuilder(detachBB->getFirstNonPHIOrDbgOrLifetime()); 
-        haveVisited.clear();
-        bbList.push_back(detachBB);
-        while(!bbList.empty()){
-            bb = bbList.back();
-            bbList.pop_back();
-            if ( (haveVisited.lookup(bb)) ){
-                continue;
-            }
-            haveVisited[bb] = true;
-            if ( (term = dyn_cast<ReattachInst>( bb->getTerminator() ))  ){
-                // Don't push anymore if we encountered reattach instruction
-                prevReattachInst = dyn_cast<ReattachInst>( bb->getTerminator() );
-                startOfStealHandler = prevReattachInst->getDetachContinue();
-                slowBuilder.SetInsertPoint( startOfStealHandler->getFirstNonPHIOrDbgOrLifetime() );
-  
-                // __builtin_setup_rbp_from_sp_in_rbp();
-                //slowBuilder.CreateCall(setupRBPfromRSPinRBP);
-                
-                
-            } else {
-                for( pred_iterator PI = pred_begin(bb); PI!=pred_end(bb); PI++ ){                
-                    bbList.push_back(*PI);
-                }
-            }
-        }
+        IRBuilder<> slowBuilder(continueBB->getFirstNonPHIOrDbgOrLifetime()); 
+        startOfStealHandler = continueBB;        
+        //__builtin_setup_rbp_from_sp_in_rbp();
+        slowBuilder.CreateCall(setupRBPfromRSPinRBP);
+               
         
         bbList.clear();
         haveVisited.clear();
         // Look for the reattach inst
         // Add an epilogue just before it
-        bbList.push_back(detachBB);
+        bbList.push_back(continueBB);
         while(!bbList.empty()){
             bb = bbList.back();
             bbList.pop_back();
@@ -458,12 +419,23 @@ Function *CASABI::createDetach(DetachInst &Detach,
                 continue;
             }
             haveVisited[bb] = true;
-            if ( (term = dyn_cast<ReattachInst>( bb->getTerminator() ))  ){
+            if ( (term = dyn_cast<ReattachInst>( bb->getTerminator())) || ( term = dyn_cast<SyncInst>( bb->getTerminator())) ){
                 // Don't push anynore if we encountered reattach instruction
                 slowBuilder.SetInsertPoint(bb->getTerminator());
 
+                using AsmTypI = void ( int* );
+                FunctionType *FAsmTypI = TypeBuilder<AsmTypI, false>::get(C);
+                Value *Asm = InlineAsm::get(FAsmTypI, "movq $0, 0(%rsp)\0A\09", "r,~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+                // Store the result to storeInst
+                Value * pJoinCntr = slowBuilder.CreateBitCast(joinCntr, IntegerType::getInt32Ty(C)->getPointerTo());
+                slowBuilder.CreateCall(Asm, pJoinCntr);
 
-                //slowBuilder.CreateCall(RESUME2SCHEDULER, {addrOfRA_2, , newrsp, otherproc, otherptr, });
+                using AsmTypV = void ( void* );
+                FunctionType *FAsmTypV = TypeBuilder<AsmTypV, false>::get(C);
+                Asm = InlineAsm::get(FAsmTypV, "movq $0, 16(%rsp)\0A\09", "r,~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+                slowBuilder.CreateCall(Asm, BlockAddress::get( resume_parent ));        
+                slowBuilder.CreateCall(resume2scheduler);
+
             } else {
                 for( succ_iterator SI = succ_begin(bb); SI!=succ_end(bb); SI++ ){                
                     bbList.push_back(*SI);
@@ -485,6 +457,14 @@ void CASABI::preProcessFunction(Function &F) {
   Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
   Type *Int64Ty = TypeBuilder<int64_t, false>::get(C);
 
+  Value * ONE = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
+  Value * ZERO = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
+
+  Constant * INITWORKERS_ENV = Get_initworkers_env(*M);
+  Constant * DEINITWORKERS_ENV = Get_deinitworkers_env(*M);
+  Constant * INITPERWORKERS_SYNC = Get_initperworkers_sync(*M);
+  Constant * DEINITPERWORKERS_SYNC = Get_deinitperworkers_sync(*M);
+
   Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
   IRBuilder<> builder( C );
 
@@ -494,11 +474,15 @@ void CASABI::preProcessFunction(Function &F) {
   if ( F.getName() == "main") {
     
     IRBuilder<> B(F.getEntryBlock().getTerminator());
-    
+    B.CreateCall(INITWORKERS_ENV);
+    B.CreateCall(INITPERWORKERS_SYNC,  {ZERO, ONE});
+
     for (auto &BB : F){
       Instruction * termInst = BB.getTerminator();
       if(isa<ReturnInst>(termInst)){
           B.SetInsertPoint(termInst);
+          B.CreateCall(DEINITPERWORKERS_SYNC, { ZERO, ONE});
+          B.CreateCall(DEINITWORKERS_ENV);
       }
     }   
 
@@ -553,7 +537,9 @@ void CASABI::preProcessFunction(Function &F) {
                            nullptr, nullptr);
       }
   }
-
+  
+  // --------------------------------------------------------------
+  // Fixed clone inst. 
   // In slow path
   // 1. Looked for alloca inst.
   // 2. Replace all uses with the original instruction
@@ -571,6 +557,22 @@ void CASABI::preProcessFunction(Function &F) {
       II->eraseFromParent();
   }
 
+
+  // -------------------------------------------------
+  // Add forkable attribute
+  for (auto pBB : bbV2Clone){
+      if (DetachInst * DI = dyn_cast<DetachInst>(pBB->getTerminator())){          
+          BasicBlock * detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
+          for( Instruction &II : *detachBlock ) {
+              if( isa<CallInst>(&II) ) {
+                II.dump();
+                dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);                
+            }
+          }
+      }
+  }
+
+  outs() << "Preprocess\n";
 
   // -------------------------------------------------------------
   // Create the resume path
@@ -808,6 +810,8 @@ void CASABI::postProcessFunction(Function &F) {
         }
     }
     
+
+
     return;
 }
 
