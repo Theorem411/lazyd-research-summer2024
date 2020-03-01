@@ -1030,7 +1030,7 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
 
   ReturnBlock = getJumpDestInCurrentScope("return");
 
-  if (D) {
+  if ( D && isa<FunctionDecl>(D)){
     const FunctionDecl * FD = cast<FunctionDecl>(D);
 
     FunctionDecl *ContainedInlet = nullptr;
