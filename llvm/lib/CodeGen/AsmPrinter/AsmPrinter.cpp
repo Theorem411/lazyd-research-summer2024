@@ -82,6 +82,7 @@
 #include "llvm/IR/PseudoProbe.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
+#include "llvm/IR/TypeBuilder.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDirectives.h"
@@ -1748,35 +1749,50 @@ bool AsmPrinter::doFinalization(Module &M) {
 
 
   // Create the PreHash Section
-  MCSection *PreHashSection = getObjFileLowering().getPreHashSection();
-  if ( PreHashSection){
-      OutStreamer->SwitchSection( PreHashSection);
-      EmitAlignment(2);
+  if (!M.CallStealMap.empty()){
+      MCSection *PreHashSection = getObjFileLowering().getPreHashSection();
+      if (PreHashSection){
+          OutStreamer->SwitchSection( PreHashSection);
+          EmitAlignment(2);
       
-      // Emit symbol to indicate the start of PreHash table
-      MCSymbol *PreHashSym =  OutContext.getOrCreateSymbol(Twine("Pre_Hash_table"));
-      OutStreamer->EmitLabel(PreHashSym);
-  
-      // Populate the content of PreHash table
-      for(auto &KV :M.CallStealMap){     
-          MCSymbol * raLabel = OutContext.ReturnAddr2LabelMap[KV.first->getName()];
-          MCSymbol * stealLabel = OutContext.StealHandler2LabelMap[KV.second.stealHandler->getName()];
-          MCSymbol * stolenLabel = OutContext.StolenHandler2LabelMap[KV.second.stolenHandler->getName()];
-          
-          
-          assert(raLabel != NULL);
-          assert(stealLabel  != NULL);
-          assert(stolenLabel  != NULL);
+      
+          Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());      
+          M.getOrInsertGlobal("Pre_Hash_table", VoidPtrTy);
+          GlobalVariable * preHashTable = M.getNamedGlobal("Pre_Hash_table");
+          preHashTable->setLinkage(GlobalValue::ExternalLinkage);
+          MCSymbol *PreHashSym = getSymbol(preHashTable);
+          EmitLinkage(preHashTable, PreHashSym);
 
-          EmitLabelPlusOffset(raLabel, 0, 8, false);
-          EmitLabelPlusOffset(stealLabel, 0, 8, false);
-          EmitLabelPlusOffset(stolenLabel, 0, 8, false);
+          OutStreamer->EmitLabel(PreHashSym);
+           
+          // Populate the content of PreHash table
+          for(auto &KV :M.CallStealMap){     
+          
+              //outs() << __FILE__ << " ra : " << KV.first << " steal " << KV.second.stealHandler << " stolen " << KV.second.stolenHandler << " \n ";
+
+              MCSymbol * raLabel = OutContext.ReturnAddr2LabelMap[KV.first->getName()];
+              MCSymbol * stealLabel = OutContext.StealHandler2LabelMap[KV.second.stealHandler->getName()];
+              MCSymbol * stolenLabel = OutContext.StolenHandler2LabelMap[KV.second.stolenHandler->getName()];
+          
+          
+              assert(raLabel != NULL);
+              assert(stealLabel  != NULL);
+              assert(stolenLabel  != NULL);
+
+              EmitLabelPlusOffset(raLabel, 0, 8, false);
+              EmitLabelPlusOffset(stealLabel, 0, 8, false);
+              EmitLabelPlusOffset(stolenLabel, 0, 8, false);
+          }
+
+          M.getOrInsertGlobal("Pre_Hash_table_end", VoidPtrTy);
+          GlobalVariable * preHashTableEnd = M.getNamedGlobal("Pre_Hash_table_end");
+          preHashTableEnd->setLinkage(GlobalValue::ExternalLinkage);
+          MCSymbol *PreHashSymEnd = getSymbol(preHashTableEnd);
+          EmitLinkage(preHashTableEnd, PreHashSymEnd);
+
+      
+          OutStreamer->EmitLabel(PreHashSymEnd);
       }
-      
-      // Emit symbol to indicate the end of PreHash table
-      MCSymbol *PreHashSymEnd =  OutContext.getOrCreateSymbol(Twine("Pre_Hash_table_end"));
-      OutStreamer->EmitLabel(PreHashSymEnd);
-
   }
   
   // Gather all GOT equivalent globals in the module. We really need two
