@@ -54,6 +54,8 @@
 #include "llvm/Transforms/Vectorize/LoopVectorize.h"
 #include "llvm/Transforms/Vectorize/SLPVectorizer.h"
 #include "llvm/Transforms/Vectorize/VectorCombine.h"
+// CNP : Added to transform potential jump immediately after Tapir Runtime transformation 
+#include "llvm/Transforms/ULI/HandleInlets.h"
 
 using namespace llvm;
 
@@ -739,6 +741,11 @@ void PassManagerBuilder::populateModulePassManager(
     if (TapirTargetID::None != TapirTarget) {
       MPM.add(createTaskCanonicalizePass());
       MPM.add(createLowerTapirToTargetPass());
+      
+      //TODO : Make sure to run this if use cas/uli
+      // Immediately transform potential jump
+      MPM.add(createHandleInletsPass());
+
       // The lowering pass may leave cruft around.  Clean it up.
       MPM.add(createCFGSimplificationPass());
       MPM.add(createAlwaysInlinerLegacyPass());
@@ -1123,6 +1130,13 @@ void PassManagerBuilder::populateModulePassManager(
     // Clean it up.
     MPM.add(createCFGSimplificationPass(
         SimplifyCFGOptions().convertSwitchRangeToICmp(true)));
+
+    //TODO : Make sure to run this if use cas/uli
+    // Immediately transform potential jump
+    MPM.add(createHandleInletsPass());
+    MPM.add(createCFGSimplificationPass(
+        SimplifyCFGOptions().convertSwitchRangeToICmp(true)));
+
     MPM.add(createPostOrderFunctionAttrsLegacyPass());
     if (OptLevel > 2)
       MPM.add(createArgumentPromotionPass()); // Scalarize uninlined fn args

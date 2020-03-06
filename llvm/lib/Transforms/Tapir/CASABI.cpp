@@ -284,23 +284,25 @@ Function *CASABI::createDetach(DetachInst &Detach,
         // Add potential jump from detachBB to got stolen handler
         IRBuilder<> builder(detachBB->getFirstNonPHIOrDbgOrLifetime()); 
         builder.CreateCall(potentialJump, {BlockAddress::get( stolenhandler )});
-
+        
         builder.SetInsertPoint(stolenhandler->getTerminator());
         Value * pJoinCntr = builder.CreateBitCast(joinCntr, IntegerType::getInt32Ty(C)->getPointerTo());
         builder.CreateCall(suspend2scheduler, pJoinCntr);
         
+
         Instruction * iterm = stolenhandler->getTerminator();
         BranchInst *resumeBr = BranchInst::Create(resume_parent);
         ReplaceInstWithInst(iterm, resumeBr);
+
+        // Split basic block here. Used as hack to reload join counter in -0O
+        stolenhandler->splitBasicBlock(stolenhandler->getTerminator()->getPrevNode());
+
 
         for( Instruction &II : *detachBB){
             II.dump();
           if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->hasFnAttribute(Attribute::Forkable)){                    
             // Associate callsite instruction with got-stolen handler
-            M->CallStealMap[&II].stolenHandler = stolenhandler;
-          
-            outs() << "Stolen " << stolenhandler << "\n";
-            outs() << "II : "<< II.getName() <<  " stolenhandler : " << stolenhandler->getName() << "\n"; 
+            M->CallStealMap[&II].stolenHandler = stolenhandler;          
             break;
           }
         } 
@@ -405,7 +407,6 @@ Function *CASABI::createDetach(DetachInst &Detach,
         startOfStealHandler = continueBB;        
         //__builtin_setup_rbp_from_sp_in_rbp();
         slowBuilder.CreateCall(setupRBPfromRSPinRBP);
-               
         
         bbList.clear();
         haveVisited.clear();
@@ -435,6 +436,19 @@ Function *CASABI::createDetach(DetachInst &Detach,
                 Asm = InlineAsm::get(FAsmTypV, "movq $0, 16(%rsp)\0A\09", "r,~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
                 slowBuilder.CreateCall(Asm, BlockAddress::get( resume_parent ));        
                 slowBuilder.CreateCall(resume2scheduler);
+
+#if 0
+                // Collect the instruction being called, get the return variable and argument used
+                for (auto &II : *bb){
+                    if (isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->hasFnAttribute(Attribute::Forkable) ){
+                        CallInst * cl = dyn_cast<CallInst>(&II);
+                        outs() << "Instruction being spawned\n";
+                        cl->dump();
+                        outs() << "=========================\n";
+                        
+                    }
+                }
+#endif
 
             } else {
                 for( succ_iterator SI = succ_begin(bb); SI!=succ_end(bb); SI++ ){                
