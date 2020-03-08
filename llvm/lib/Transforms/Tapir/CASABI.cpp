@@ -282,7 +282,8 @@ Function *CASABI::createDetach(DetachInst &Detach,
         }
 
         // Add potential jump from detachBB to got stolen handler
-        IRBuilder<> builder(detachBB->getFirstNonPHIOrDbgOrLifetime()); 
+        // Add potential jump after "spawn to fib" to avoid merging the gotstolen handler and the detachBlock
+        IRBuilder<> builder(detachBB->getTerminator()); 
         builder.CreateCall(potentialJump, {BlockAddress::get( stolenhandler )});
         
         builder.SetInsertPoint(stolenhandler->getTerminator());
@@ -299,7 +300,6 @@ Function *CASABI::createDetach(DetachInst &Detach,
 
 
         for( Instruction &II : *detachBB){
-            II.dump();
           if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->hasFnAttribute(Attribute::Forkable)){                    
             // Associate callsite instruction with got-stolen handler
             M->CallStealMap[&II].stolenHandler = stolenhandler;          
@@ -337,11 +337,9 @@ Function *CASABI::createDetach(DetachInst &Detach,
         ppRA = fastBuilder.CreateCast(Instruction::IntToPtr, ppRA, IntegerType::getInt8Ty(C)->getPointerTo());
         fastBuilder.CreateCall(PUSH_SS, {ppRA});
 
-        outs() << "------\n";
         // Book Keeping
         startOfStealHandler = continueBB;
         for( Instruction &II : *detachBB){
-            II.dump();
             if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->hasFnAttribute(Attribute::Forkable) ){
                 BasicBlock * stealhandler = dyn_cast<BasicBlock>(VMap[startOfStealHandler]);                    
                 // Associate callsite instruction with steal handler
@@ -349,8 +347,6 @@ Function *CASABI::createDetach(DetachInst &Detach,
                 // Indicate the steal hander basic block needs a label
                 M->StealHandlerExists[stealhandler] = true;                    
 
-                II.dump();
-                outs() << "II : "<< II.getName() <<  " stealhandler : " << stealhandler->getName() << "\n"; 
                 break;
             }
         }
@@ -442,9 +438,6 @@ Function *CASABI::createDetach(DetachInst &Detach,
                 for (auto &II : *bb){
                     if (isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->hasFnAttribute(Attribute::Forkable) ){
                         CallInst * cl = dyn_cast<CallInst>(&II);
-                        outs() << "Instruction being spawned\n";
-                        cl->dump();
-                        outs() << "=========================\n";
                         
                     }
                 }
@@ -487,7 +480,8 @@ void CASABI::preProcessFunction(Function &F) {
   // TODO : Make this optional
   if ( F.getName() == "main") {
     
-    IRBuilder<> B(F.getEntryBlock().getTerminator());
+    // Initialize the PRSC at the beginning of main
+    IRBuilder<> B(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
     B.CreateCall(INITWORKERS_ENV);
     B.CreateCall(INITPERWORKERS_SYNC,  {ZERO, ONE});
 
@@ -579,14 +573,11 @@ void CASABI::preProcessFunction(Function &F) {
           BasicBlock * detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
           for( Instruction &II : *detachBlock ) {
               if( isa<CallInst>(&II) ) {
-                II.dump();
                 dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);                
             }
           }
       }
   }
-
-  outs() << "Preprocess\n";
 
   // -------------------------------------------------------------
   // Create the resume path
@@ -817,10 +808,10 @@ void CASABI::postProcessFunction(Function &F) {
     }
 
     for(auto &KV :liveInBB){
-        outs() << "Basic block " << KV.first->getName() << "\n";
+        //outs() << "Basic block " << KV.first->getName() << "\n";
         
         for(AllocaInst * AI : KV.second){ 
-            outs() << "Alloca inst : " << AI->getName() << "\n";
+            //outs() << "Alloca inst : " << AI->getName() << "\n";
         }
     }
     
