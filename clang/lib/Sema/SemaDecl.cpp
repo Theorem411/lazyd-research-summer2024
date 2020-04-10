@@ -8669,7 +8669,6 @@ static FunctionDecl *CreateNewFunctionDecl(Sema &SemaRef, Declarator &D,
       }
       AttrListIt = AttrListIt->getNext();
     }
-
     if (isInlet || isUserLevelInterrupt) {
       ASTContext &Context = SemaRef.getASTContext();
 
@@ -9593,6 +9592,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       ProcessorFrom->setImplicit();
       Params.push_back(ProcessorFrom);
     }
+
 
     if (D.getDeclSpec().isInletSpecified()) {
       // Add implicit void * environment argument
@@ -14453,7 +14453,6 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D,
   else
     FD = cast<FunctionDecl>(D);
 
-
   // Do not push if it is a lambda because one is already pushed when building
   // the lambda in ActOnStartOfLambdaDefinition().
   if (!isLambdaCallOperator(FD))
@@ -14466,6 +14465,7 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D,
     // function that we are currently inside of while parsing this inlet
     FD->inletSetContainingFunction(getCurFunctionDecl());
   }
+
 
   // Check for defining attributes before the check for redefinition.
   if (const auto *Attr = FD->getAttr<AliasAttr>()) {
@@ -14521,7 +14521,7 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D,
     RebuildLambdaScopeInfo(cast<CXXMethodDecl>(D), *this);
   } else {
     // Enter a new function scope
-    PushFunctionScope();
+    PushFunctionScope(isInlet);
   }
 
   // Builtin functions cannot be defined.
@@ -15083,7 +15083,6 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
 
   if (!IsInstantiation)
     PopDeclContext();
-
   if (FD->isInletSpecified()) {
     assert(isa<InletScopeInfo>(FunctionScopes.back()));
     InletScopeInfo *ISI = cast<InletScopeInfo>(FunctionScopes.back());

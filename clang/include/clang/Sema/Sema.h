@@ -1888,7 +1888,7 @@ public:
 
   Scope *getScopeForContext(DeclContext *Ctx);
 
-  void PushFunctionScope();
+  void PushFunctionScope(bool isInlet = false);
   void PushBlockScope(Scope *BlockScope, BlockDecl *Block);
   sema::LambdaScopeInfo *PushLambdaScope();
 

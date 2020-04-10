@@ -2055,18 +2055,27 @@ Scope *Sema::getScopeForContext(DeclContext *Ctx) {
 }
 
 /// Enter a new function scope
-void Sema::PushFunctionScope() {
+void Sema::PushFunctionScope( bool isInlet ) {
 
   if (FunctionScopes.empty() && CachedFunctionScope) {
     // Use CachedFunctionScope to avoid allocating memory when possible.
     CachedFunctionScope->Clear();
     FunctionScopes.push_back(CachedFunctionScope.release());
-  } else if (FunctionScopes.size() > 1) {
+  } else if (FunctionScopes.size() > 1 && isInlet) {
     InletScopeInfo *ISI = new InletScopeInfo(getDiagnostics());
     FunctionScopes.push_back(ISI);
-  } else {
-    FunctionScopes.push_back(new FunctionScopeInfo(getDiagnostics()));
+    if (LangOpts.OpenMP)
+      pushOpenMPFunctionRegion();          
+    return;
+  } else if(FunctionScopes.size() == 1) {
+    FunctionScopes.back()->Clear();
+    FunctionScopes.push_back(FunctionScopes.back());
+    if (LangOpts.OpenMP)
+      pushOpenMPFunctionRegion();
+    return;
   }
+
+  FunctionScopes.push_back(new FunctionScopeInfo(getDiagnostics()));
   if (LangOpts.OpenMP)
     pushOpenMPFunctionRegion();
 }
