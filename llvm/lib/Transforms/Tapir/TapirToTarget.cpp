@@ -477,7 +477,12 @@ bool TapirToTargetImpl::processFunction(
   return ChangedCFG || !NewHelpers.empty();
 }
 
+
 bool TapirToTargetImpl::run() {
+
+  // Store the type of backend used by Tapir
+  M.setTapirTarget(ClTapirTarget);
+
   // Add functions that detach to the work list.
   SmallVector<Function *, 4> WorkList;
   {

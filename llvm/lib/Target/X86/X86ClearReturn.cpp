@@ -21,6 +21,7 @@
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Target/TargetOptions.h"
+
 #include <cstdlib>
 
 // This file contains the X86 implementation of clearing the return address to zero once it is used.
@@ -75,8 +76,8 @@ namespace {
         //const TargetFrameLowering *TFI = MF.getSubtarget<X86Subtarget>().getFrameLowering();
         //bool Uses64BitFramePtr = STI.isTarget64BitLP64() || STI.isTargetNaCl64();
         
-
         const Function &Fn = MF.getFunction();
+        const Module * M = Fn.getParent();
         const X86Subtarget &STI = MF.getSubtarget<X86Subtarget>();
         const X86RegisterInfo *TRI = STI.getRegisterInfo();
         const X86InstrInfo &TII = *STI.getInstrInfo();
@@ -84,7 +85,7 @@ namespace {
         
         unsigned StackPtr = TRI->getStackRegister();
         
-        if (Fn.hasFnAttribute(Attribute::Forkable)){
+        if ( Fn.hasFnAttribute(Attribute::Forkable) && M->getTapirTarget() == TapirTargetType::CAS ){
             for (auto mb = MF.begin(); mb != MF.end(); ++mb) {
                 for (auto inst = mb->begin(); inst != mb->end(); ++inst) {
                     if (inst->getOpcode() == X86::RET || inst->getOpcode() == X86::RETL || inst->getOpcode() == X86::RETQ) {

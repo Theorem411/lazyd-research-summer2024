@@ -39,6 +39,8 @@
 #include <string>
 #include <vector>
 
+#include "llvm/Transforms/Tapir/TapirTypes.h"
+
 namespace llvm {
 
 class Error;
@@ -171,9 +173,11 @@ public:
 
   
   struct PreHashEntry {
-      BasicBlock * stealHandler;
-      BasicBlock * stolenHandler;
+      BasicBlock * stealHandler;   ///< Store the steal handler
+      BasicBlock * stolenHandler;  ///< Store the gotstolen handler
   };
+   
+  TapirTargetType  TapirType;      ///< Used to indicate the backend used by Tapir
   
 
 /// @}
@@ -288,7 +292,6 @@ public:
   /// addition, the random stream will be reproducible across LLVM
   /// versions when the pass does not change.
   std::unique_ptr<RandomNumberGenerator> createRNG(const StringRef Name) const;
-
   /// Return true if size-info optimization remark is enabled, false
   /// otherwise.
   bool shouldEmitInstrCountChangedRemark() {
@@ -320,6 +323,9 @@ public:
     if (!GlobalScopeAsm.empty() && GlobalScopeAsm.back() != '\n')
       GlobalScopeAsm += '\n';
   }
+  
+  /// Store the backend used by Tapir (misleading name: setTapirTarget does not change the backend used by Tapir, only store the backend used by Tapir)
+  void setTapirTarget(TapirTargetType tapirTargetType){ TapirType = tapirTargetType; }
 
   /// Append to the module-scope inline assembly blocks.
   /// A trailing newline is added if the input doesn't have one.
