@@ -68,6 +68,11 @@ public:
   struct PRSC_Desc {};
   struct Seed {};
 
+  bool isULIorCAS() const override {
+    return true;
+  }
+  
+
 private:
     void BuildSuspendAndStealRoutine (/*input*/CallInst * callInst, Value * returnFromSteal, Value* returnFromSuspend, Function *F, Module *M, LLVMContext & C, /*ouput*/SmallVector<BasicBlock*, 2> &newBB, SmallVector<Instruction*, 2> &delInstrs);
     

@@ -552,7 +552,6 @@ ValueSet getTapirLoopInputs(TapirLoopInfo *TL, ValueSet &TaskInputs);
 Instruction *replaceLoopWithCallToOutline(
     TapirLoopInfo *TL, TaskOutlineInfo &Out,
     SmallVectorImpl<Value *> &OutlineInputs);
-
 }  // end namepsace llvm
 
 #endif

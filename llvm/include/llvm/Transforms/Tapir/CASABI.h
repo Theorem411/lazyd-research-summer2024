@@ -63,6 +63,11 @@ public:
   void postProcessFunction(Function &F) override final;
   void postProcessHelper(Function &F) override final;
 
+  bool isULIorCAS() const override {
+    return true;
+  }
+
+
   struct Sync {};
   struct Work {};
   struct PRSC_Desc {};
