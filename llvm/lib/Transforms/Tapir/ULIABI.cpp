@@ -106,23 +106,30 @@ DEFAULT_GET_LIB_FUNC(pop_ss)
 using dec_ss_ty = void (void );
 DEFAULT_GET_LIB_FUNC(dec_ss)
 
+using DISULI_ty = void (void);
+DEFAULT_GET_LIB_FUNC(DISULI)
+
+using ENAULI_ty = void (void);
+DEFAULT_GET_LIB_FUNC(ENAULI)
+
+
 using resume2scheduler_ty = void (void );
-DEFAULT_GET_LIB_FUNC(resume2scheduler);
+DEFAULT_GET_LIB_FUNC(resume2scheduler)
 
 using suspend2scheduler_ty = void (int * );
-DEFAULT_GET_LIB_FUNC(suspend2scheduler);
+DEFAULT_GET_LIB_FUNC(suspend2scheduler)
 
 using initworkers_env_ty = void (void );
-DEFAULT_GET_LIB_FUNC(initworkers_env);
+DEFAULT_GET_LIB_FUNC(initworkers_env)
 
 using deinitworkers_env_ty = void (void );
-DEFAULT_GET_LIB_FUNC(deinitworkers_env);
+DEFAULT_GET_LIB_FUNC(deinitworkers_env)
 
 using deinitperworkers_sync_ty = void(int, int);
-DEFAULT_GET_LIB_FUNC(deinitperworkers_sync);
+DEFAULT_GET_LIB_FUNC(deinitperworkers_sync)
 
 using initperworkers_sync_ty = void(int, int);
-DEFAULT_GET_LIB_FUNC(initperworkers_sync);
+DEFAULT_GET_LIB_FUNC(initperworkers_sync)
 
 
 Value *ULIABI::lowerGrainsizeCall(CallInst *GrainsizeCall) {
@@ -201,8 +208,13 @@ Function *ULIABI::createDetach(DetachInst &Detach,
     Function * getSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
     Function * setupRBPfromRSPinRBP = Intrinsic::getDeclaration(M, Intrinsic::x86_setup_rbp_from_sp_in_rbp);
     
-    Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
-    Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
+    //Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
+    //Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
+
+
+    Constant * DISULI = Get_DISULI(*M);
+    Constant * ENAULI = Get_ENAULI(*M);
+    
 
     Constant * PUSH_SS = Get_push_ss(*M);
     Constant * POP_SS = Get_pop_ss(*M);
@@ -296,7 +308,8 @@ Function *ULIABI::createDetach(DetachInst &Detach,
         Value * SPValInt = fastBuilder.CreateCast(Instruction::PtrToInt, SPVal, IntegerType::getInt64Ty(C));
         Value * ppRA  = fastBuilder.CreateSub(SPValInt, OneByte);
         ppRA = fastBuilder.CreateCast(Instruction::IntToPtr, ppRA, IntegerType::getInt8Ty(C)->getPointerTo());
-        fastBuilder.CreateCall(enauli, {NEG_ZERO}); 
+        //fastBuilder.CreateCall(enauli, {NEG_ZERO}); 
+        fastBuilder.CreateCall(ENAULI); 
         fastBuilder.CreateCall(PUSH_SS, {ppRA});
 
 
@@ -332,7 +345,8 @@ Function *ULIABI::createDetach(DetachInst &Detach,
                 // Don't push anynore if we encountered reattach instruction
                 fastBuilder.SetInsertPoint(bb->getTerminator());
                 fastBuilder.CreateCall(POP_SS);
-                fastBuilder.CreateCall(disuli, { ZERO });
+                //fastBuilder.CreateCall(disuli, { ZERO });
+                fastBuilder.CreateCall(DISULI);
 
 
             } else {
@@ -593,10 +607,13 @@ void ULIABI::postProcessFunction(Function &F) {
     Type *Int32Ty = TypeBuilder<int32_t, false>::get(C);
   
     // Add enauli at the beginning of a function
-    Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
+    //Function * enauli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_enable);
+    Constant * ENAULI = Get_ENAULI(*M);
+
     Value *NEG_ZERO = ConstantInt::get(Int64Ty, 0xFFFFFFFFFFFFFFFF, /*isSigned=*/false);  
     Value *ZERO32 = ConstantInt::get(Int32Ty, 0x0, /*isSigned=*/false);  
-    B.CreateCall(enauli, { NEG_ZERO });
+    //B.CreateCall(enauli, { NEG_ZERO });
+    B.CreateCall(ENAULI);
 
     
     // Make sure to add DISULI at the end of a function
@@ -605,9 +622,12 @@ void ULIABI::postProcessFunction(Function &F) {
         Instruction * termInst = BB.getTerminator();
         if(isa<ReturnInst>(termInst)){
             B.SetInsertPoint(termInst);
-            Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
+            //Function * disuli = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_disable);
+            Constant * DISULI = Get_DISULI(*M);
+
             Value *ZERO = ConstantInt::get(Int64Ty, 0, /*isSigned=*/false);  
-            B.CreateCall(disuli, { ZERO });
+            //B.CreateCall(disuli, { ZERO });
+            B.CreateCall(DISULI);
         }
     }
 
