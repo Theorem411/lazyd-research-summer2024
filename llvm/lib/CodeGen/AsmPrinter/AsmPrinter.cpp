@@ -1773,15 +1773,21 @@ bool AsmPrinter::doFinalization(Module &M) {
               MCSymbol * raLabel = OutContext.ReturnAddr2LabelMap[KV.first->getName()];
               MCSymbol * stealLabel = OutContext.StealHandler2LabelMap[KV.second.stealHandler->getName()];
               MCSymbol * stolenLabel = OutContext.StolenHandler2LabelMap[KV.second.stolenHandler->getName()];
-          
-          
+              
               assert(raLabel != NULL);
               assert(stealLabel  != NULL);
               assert(stolenLabel  != NULL);
-
+              
               EmitLabelPlusOffset(raLabel, 0, 8, false);
               EmitLabelPlusOffset(stealLabel, 0, 8, false);
               EmitLabelPlusOffset(stolenLabel, 0, 8, false);
+          
+              if(KV.second.unwindHandler){
+                  MCSymbol * unwindLabel = OutContext.StealHandler2LabelMap[KV.second.unwindHandler->getName()];
+                  assert(unwindLabel != NULL);
+                  EmitLabelPlusOffset(unwindLabel, 0, 8, false);
+              }
+
           }
 
           M.getOrInsertGlobal("Pre_Hash_table_end", VoidPtrTy);

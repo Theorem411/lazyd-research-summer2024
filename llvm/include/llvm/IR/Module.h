@@ -175,6 +175,7 @@ public:
   struct PreHashEntry {
       BasicBlock * stealHandler;   ///< Store the steal handler
       BasicBlock * stolenHandler;  ///< Store the gotstolen handler
+      BasicBlock * unwindHandler; ///< Store the unwind handler
   };
    
   TapirTargetType  TapirType;      ///< Used to indicate the backend used by Tapir
