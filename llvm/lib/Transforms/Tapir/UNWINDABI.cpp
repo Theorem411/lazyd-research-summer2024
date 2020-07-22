@@ -36,10 +36,10 @@
 #include "llvm/Transforms/Utils/TapirUtils.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
+//TODO : Resume converted work from gotstolen
 
 //TODO : Code refactoring
 //TODO : Design document
-//TODO : Need to manually add the function, can not inline it directly
 using namespace llvm;
 
 #define DEBUG_TYPE "unwindabi"
@@ -56,6 +56,9 @@ static Value * joinCntrUNWIND;
 static BasicBlock * resume_parent_unwind;
 // unwind entry
 static BasicBlock * unwind_entry;
+static BasicBlock * stolenhandler;
+// Slow path
+static BasicBlock * slowPathBB;
 
 
 /// Helper methods for storing to and loading from struct fields.
@@ -121,6 +124,9 @@ DEFAULT_GET_LIB_FUNC(exit);
 using mysetjmp_callee_ty = int (void **);
 DEFAULT_GET_LIB_FUNC(mysetjmp_callee);
 
+using mylongjmp_callee_ty = void (void **);
+DEFAULT_GET_LIB_FUNC(mylongjmp_callee);
+
 using savecontext_ty = int (void);
 DEFAULT_GET_LIB_FUNC(savecontext);
 
@@ -142,9 +148,7 @@ DEFAULT_GET_LIB_FUNC(deinitperworkers_sync)
 using initperworkers_sync_ty = void(int, int);
 DEFAULT_GET_LIB_FUNC(initperworkers_sync)
 
-
 #define UNWINDRTS_FUNC(name, CGF) Get__unwindrts_##name(CGF)
-
 
 /// \brief Helper to find a function with the given name, creating it if it
 /// doesn't already exist. If the function needed to be created then return
@@ -176,7 +180,6 @@ static bool GetOrCreateFunction(const char *FnName, Module& M,
   // and the body still needs to be added
   return false;
 }
-
 
 /*
   Refer to uli/cas_ws/lib/unwind_scheduler.h mysetjmp_callee
@@ -231,6 +234,35 @@ static Function *Get__unwindrts_mysetjmp_callee(Module& M) {
     return Fn;
 }
 
+
+/*
+  Refer to uli/cas_ws/lib/unwind_scheduler.h mylongjmp_callee
+*/
+static Function *Get__unwindrts_mylongjmp_callee(Module& M) {
+    // Inline assembly to move the callee saved regist to rdi
+    Function *Fn = nullptr;
+
+    if (GetOrCreateFunction<mylongjmp_callee_ty>("mylongjmp_callee_llvm", M, Fn))
+        return Fn;
+
+    LLVMContext &Ctx = M.getContext();
+    const DataLayout &DL = M.getDataLayout();
+
+    BasicBlock *Entry                 = BasicBlock::Create(Ctx, "entry", Fn);    
+    Function::arg_iterator args = Fn->arg_begin();
+    Value *argsCtx = &*args;
+
+    using AsmTypCallee = void ( void** );
+    FunctionType *FAsmTypCallee = TypeBuilder<AsmTypCallee, false>::get(Ctx);
+
+    Value *Asm = InlineAsm::get(FAsmTypCallee, "movq $0, %rdi\nmovq 0(%rdi), %rbp\nmovq 16(%rdi), %rsp\nmovq 24(%rdi), %rbx\nmovq 32(%rdi), %r12\nmovq 40(%rdi), %r13\nmovq 48(%rdi), %r14\nmovq 56(%rdi), %r15\njmpq *8(%rdi)", "r,~{rdi},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+
+    IRBuilder<> B(Entry);    
+    B.CreateCall(Asm, argsCtx);
+    B.CreateRetVoid();
+    return Fn;
+}
+
 /// \brief Get or create a LLVM function for savecontext.
 /// It is equivalent to the following C code
 /// Refer to uli/cas_ws/lib/scheduler.c savecontext 
@@ -254,6 +286,7 @@ static Function *Get__unwindrts_savecontext(Module& M) {
   BasicBlock *AddrNull              = BasicBlock::Create(Ctx, "addrNull", Fn);
   BasicBlock *KeepUnwinding         = BasicBlock::Create(Ctx, "keepUnwinding", Fn);     
   BasicBlock *CheckRA               = BasicBlock::Create(Ctx, "checkRA", Fn);     
+  BasicBlock *FinishUnwinding       = BasicBlock::Create(Ctx, "finishUnwinding", Fn);     
 
   Type *Int32Ty = TypeBuilder<int32_t, false>::get(Ctx);
   Value *ZERO = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
@@ -288,6 +321,11 @@ static Function *Get__unwindrts_savecontext(Module& M) {
   GlobalVariable * gWorkContext = M.getNamedGlobal("workctx_arr");
   gWorkContext->setLinkage(GlobalValue::ExternalLinkage);
 
+  M.getOrInsertGlobal("unwindCtx", TypeBuilder<workcontext_ty,false>::get(Ctx) );
+  GlobalVariable * gUnwindContext = M.getNamedGlobal("unwindCtx");
+  gUnwindContext->setLinkage(GlobalValue::ExternalLinkage);
+  gUnwindContext->setThreadLocal(true);
+
   Constant * EXIT = Get_exit(M);
 
   IRBuilder<> B(Entry);
@@ -313,8 +351,12 @@ static Function *Get__unwindrts_savecontext(Module& M) {
       Value * loadIdx2 = B.CreateLoad( idx2 );
       Value * idx1 = B.CreateInBoundsGEP(loadIdx2, seedOffset);
       Value * loadIdx1bitcast = B.CreateConstInBoundsGEP2_64( idx1, 0, 0);
-      Constant* MYSETJMP_CALLEE = UNWINDRTS_FUNC(mysetjmp_callee, M);           
-      
+      Constant* MYSETJMP_CALLEE = UNWINDRTS_FUNC(mysetjmp_callee, M);
+
+
+      Constant* MYLONGJMP_CALLEE = UNWINDRTS_FUNC(mylongjmp_callee, M);
+      Value * unwindCtxLoad = B.CreateConstInBoundsGEP2_64( gUnwindContext, 0, 0 );
+
       // seed_ptr--;
       Value * addPtr = B. CreateConstGEP1_32(gSeed_ptrVal,  -1);
       B.CreateStore(addPtr, gSeed_ptr);              
@@ -342,9 +384,7 @@ static Function *Get__unwindrts_savecontext(Module& M) {
           // Reach top of stack
           {
               B.SetInsertPoint(ReachTopStack);
-              B.CreateCall(EXIT, {ZERO});
-              B.CreateBr(ThiefEntry);
-              //B.CreateUnreachable();
+              B.CreateBr(FinishUnwinding);
           }
           
           // Attempt Keep unwinding
@@ -355,13 +395,11 @@ static Function *Get__unwindrts_savecontext(Module& M) {
               Value * addBitCastVal = B.CreateBitCast(addPtrVal, addPtrVal->getType()->getPointerTo());
 
               Value * pred1 = B.CreateICmpEQ( addBitCastVal, 
-                                              ConstantPointerNull::get(dyn_cast<PointerType>(addBitCastVal->getType())));
-              
+                                              ConstantPointerNull::get(dyn_cast<PointerType>(addBitCastVal->getType())));              
               B.CreateCondBr(pred1, AddrNull, CheckRA);
 
               B.SetInsertPoint(AddrNull);
-              B.CreateCall(EXIT, {ZERO});
-              B.CreateBr( ThiefEntry);
+              B.CreateBr(FinishUnwinding);
               
               B.SetInsertPoint(CheckRA);
               Value * loadAddr1  = B.CreateLoad(addBitCastVal);
@@ -371,14 +409,21 @@ static Function *Get__unwindrts_savecontext(Module& M) {
               B.CreateCondBr(pred2, KeepUnwinding, ReachAlreadyConverted);
               {
                   B.SetInsertPoint( ReachAlreadyConverted );
-                  B.CreateCall(EXIT, {ZERO});
-                  B.CreateBr(ThiefEntry);
+                  B.CreateBr(FinishUnwinding);
               }
 
               {
                   B.SetInsertPoint( KeepUnwinding );           
                   B.CreateRet(ZERO);
               }
+          }
+          
+          // Finish Unwinding
+          {
+              B.SetInsertPoint(FinishUnwinding);
+              Value * result = B.CreateCall(MYLONGJMP_CALLEE, {unwindCtxLoad});
+              dyn_cast<CallInst>(result)->setCallingConv(CallingConv::Fast);
+              B.CreateBr(ThiefEntry);
           }
       }
   }  
@@ -393,8 +438,7 @@ Value *UNWINDABI::lowerGrainsizeCall(CallInst *GrainsizeCall) {
 }
 
 void UNWINDABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) {    
-    SyncInst* syncClone = dyn_cast<SyncInst>(VMapUNWIND[&SI]);
-    
+    SyncInst* syncClone = dyn_cast<SyncInst>(VMapUNWIND[&SI]);    
     BasicBlock * curBB = SI.getParent();
     Function * F = curBB->getParent();
     Module * M = F->getParent();
@@ -416,7 +460,6 @@ void UNWINDABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFram
     Constant * resume2scheduler = Get_resume2scheduler(*M);
     Value * OneByte = ConstantInt::get(Int64Ty, 8, /*isSigned=*/false);
     Value * TwoByte = ConstantInt::get(Int64Ty, 16, /*isSigned=*/false);
-
 
     // Fast Path
     // ----------------------------------------------
@@ -462,11 +505,9 @@ Function *UNWINDABI::createDetach(DetachInst &Detach,
     Function * potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
     Function * getSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
     Function * setupRBPfromRSPinRBP = Intrinsic::getDeclaration(M, Intrinsic::x86_setup_rbp_from_sp_in_rbp);
-    
 
     Constant * DISULI = Get_DISULI(*M);
     Constant * ENAULI = Get_ENAULI(*M);
-    
 
     Constant * PUSH_SS = Get_push_ss(*M);
     Constant * POP_SS = Get_pop_ss(*M);
@@ -497,7 +538,7 @@ Function *UNWINDABI::createDetach(DetachInst &Detach,
     
         // Perform the actual cloning
         BasicBlock * detachBB = Detach.getDetached(); 
-        BasicBlock * stolenhandler      = CloneBasicBlock(detachBB, VMapUNWINDGH, ".gotstolen", F, nullptr, &DIFinder);
+        stolenhandler      = CloneBasicBlock(detachBB, VMapUNWINDGH, ".gotstolen", F, nullptr, &DIFinder);
         VMapUNWINDGH[detachBB]      = stolenhandler;        
      
         // --------------------------------------------------------------
@@ -513,11 +554,14 @@ Function *UNWINDABI::createDetach(DetachInst &Detach,
         
         builder.SetInsertPoint(stolenhandler->getTerminator());
         Value * pJoinCntr = builder.CreateBitCast(joinCntrUNWIND, IntegerType::getInt32Ty(C)->getPointerTo());
-        builder.CreateCall(suspend2scheduler, pJoinCntr);
         
+        // Perform synchronizatoin here        
+        builder.CreateCall(suspend2scheduler, pJoinCntr);        
+        // Create a potential jump to unwindentry
+        //builder.CreateCall(potentialJump, {BlockAddress::get( unwind_entry )});       
 
-        Instruction * iterm = stolenhandler->getTerminator();
-        BranchInst *resumeBr = BranchInst::Create(resume_parent_unwind);
+        Instruction * iterm = stolenhandler->getTerminator();                
+        BranchInst *resumeBr = BranchInst::Create(unwind_entry);
         ReplaceInstWithInst(iterm, resumeBr);
 
         // Split basic block here. Used as hack to reload join counter in -0O
@@ -562,17 +606,20 @@ Function *UNWINDABI::createDetach(DetachInst &Detach,
         ppRA = fastBuilder.CreateCast(Instruction::IntToPtr, ppRA, IntegerType::getInt8Ty(C)->getPointerTo());
         Value * result = fastBuilder.CreateCall(PUSH_SS, {ppRA});
 
+        fastBuilder.CreateCall(potentialJump, {BlockAddress::get( unwind_entry )});
+        //fastBuilder.CreateCall(potentialJump, {BlockAddress::get( stolenhandler )});
+        
         // Book Keeping
         startOfStealHandler = continueBB;
         for( Instruction &II : *detachBB){
             if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->hasFnAttribute(Attribute::Forkable) ){
                 BasicBlock * stealhandler = dyn_cast<BasicBlock>(VMapUNWIND[startOfStealHandler]);                    
                 // Associate callsite instruction with steal handler
-                M->CallStealMap[&II].stealHandler = stealhandler;
+                M->CallStealMap[&II].stealHandler = slowPathBB;
                 // Associate callsite instruction with unwind handler
                 M->CallStealMap[&II].unwindHandler = unwind_entry;
                 // Indicate the steal hander basic block needs a label
-                M->StealHandlerExists[stealhandler] = true;                    
+                M->StealHandlerExists[M->CallStealMap[&II].stealHandler] = true;                    
                 break;
             }
         }
@@ -753,7 +800,7 @@ void UNWINDABI::preProcessFunction(Function &F) {
      
       if(pBB == entryBB){
           builder.SetInsertPoint(entryBB->getTerminator());
-          builder.CreateCall(potentialJump, {BlockAddress::get(bbC)});
+          //slowPathBB = bbC;          
       }
 
   }
@@ -802,6 +849,7 @@ void UNWINDABI::preProcessFunction(Function &F) {
       }
   }
 
+
   // -------------------------------------------------------------
   // Create the resume path
   for (auto pBB : bbV2CloneUNWIND){
@@ -828,17 +876,29 @@ void UNWINDABI::preProcessFunction(Function &F) {
               B.CreateBr(SI->getSuccessor(0));
               
               // Add a potential jump from entry to resume_parent_unwind block
-              builder.SetInsertPoint(entryBB->getTerminator());
-              builder.CreateCall(potentialJump, {BlockAddress::get(resume_parent_unwind)});
+              //builder.SetInsertPoint(entryBB->getTerminator());
+              //builder.CreateCall(potentialJump, {BlockAddress::get(resume_parent_unwind)});
           }
       }
   }
 
   // -------------------------------------------------------------
+  // Create the slow path entry
+  {
+      slowPathBB =  BasicBlock::Create(C, "SlowPathEntry", &F);
+      // TODO Call the slow 
+      IRBuilder <> B(slowPathBB);
+      Function * slowPathFunction = dyn_cast<Function>(M->getOrInsertFunction( "SlowPathFunction", TypeBuilder<void (void) , false>::get(M->getContext())));
+      B.CreateCall(slowPathFunction);
+      B.CreateBr(resume_parent_unwind);
+  }
+
+
+  // -------------------------------------------------------------
   // Create the unwind path
   {
       unwind_entry = BasicBlock::Create(C, "unwind_path", &F);
-      BasicBlock * unwind_true  = BasicBlock::Create(C, "unwind_true", &F);
+      //BasicBlock * unwind_true  = BasicBlock::Create(C, "unwind_true", &F);
       BasicBlock * unwind_false = BasicBlock::Create(C, "unwind_false", &F);
       
       IRBuilder <> B(unwind_entry);
@@ -847,7 +907,7 @@ void UNWINDABI::preProcessFunction(Function &F) {
       DebugLoc DL = DILocation::get(SP->getContext(), SP->getLine(), 1, SP);
       B.SetCurrentDebugLocation(DL);
 
-      B.CreateCall(potentialJump, {BlockAddress::get( resume_parent_unwind )});
+      //B.CreateCall(potentialJump, {BlockAddress::get( resume_parent_unwind )});
 
 #if 1
       Constant * SAVECONTEXT = UNWINDRTS_FUNC(savecontext, *M);
@@ -856,16 +916,14 @@ void UNWINDABI::preProcessFunction(Function &F) {
 #endif
       Constant * EXIT = Get_exit(*M);
       
-      //Value * result = B.CreateCall(EXIT,  {ZERO});
       Value * result = B.CreateCall(SAVECONTEXT);
     
 
       Value * isEqOne = B.CreateICmpEQ(result, ONE);
-      B.CreateCondBr(isEqOne, unwind_true, unwind_false);
+      B.CreateCondBr(isEqOne, slowPathBB, unwind_false);
 
-      B.SetInsertPoint(unwind_true);
-      B.CreateCall(EXIT, {ZERO});
-      B.CreateBr(unwind_false);
+      //B.SetInsertPoint(unwind_true);      
+      //B.CreateBr(slowPathBB);
 
       B.SetInsertPoint(unwind_false);
 
@@ -876,8 +934,8 @@ void UNWINDABI::preProcessFunction(Function &F) {
       else
           assert(0 && "Return type not supported yet");
 
-      builder.SetInsertPoint(entryBB->getTerminator());
-      builder.CreateCall(potentialJump, {BlockAddress::get(unwind_entry)});
+      //builder.SetInsertPoint(entryBB->getTerminator());
+      //builder.CreateCall(potentialJump, {BlockAddress::get(unwind_entry)});
 
       // TODO : Inline be move to the Post Processing, when everything is complete 
       llvm::InlineFunctionInfo ifi;
