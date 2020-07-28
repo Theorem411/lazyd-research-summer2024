@@ -37,7 +37,9 @@
 #include "llvm/Transforms/Utils/TapirUtils.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
-//TODO : Resume converted work from gotstolen
+//TODO : Resume work once second child is finished
+//FIXME : When using polling and finish unwinding, do not go to gotstolen handler immediately since you are overwriting the value x
+// Need to goto suspend2scheulder without overwriting x
 
 //TODO : Code refactoring
 //TODO : Design document
@@ -84,13 +86,13 @@ DEFAULT_GET_LIB_FUNC(ENAULI)
 using exit_ty = void (int);
 DEFAULT_GET_LIB_FUNC(exit)
 
-using mysetjmp_callee_ty = int (void **);
+using mysetjmp_callee_ty = int (void**);
 DEFAULT_GET_LIB_FUNC(mysetjmp_callee)
 
-using mylongjmp_callee_ty = void (void **);
+using mylongjmp_callee_ty = void (void**);
 DEFAULT_GET_LIB_FUNC(mylongjmp_callee)
 
-using savecontext_ty = int (void);
+using savecontext_ty = int (void**);
 DEFAULT_GET_LIB_FUNC(savecontext)
 
 using resume2scheduler_ty = void (void );
@@ -112,6 +114,20 @@ using initperworkers_sync_ty = void(int, int);
 DEFAULT_GET_LIB_FUNC(initperworkers_sync)
 
 #define UNWINDRTS_FUNC(name, CGF) Get__unwindrts_##name(CGF)
+
+static GlobalVariable* GetGlobalVariable(const char* GlobalName, Type* GlobalType, Module& M, bool localThread=false){    
+  GlobalVariable* globalVar = M.getNamedGlobal(GlobalName);
+  if(globalVar){
+      return globalVar;
+  }
+  
+  globalVar = dyn_cast<GlobalVariable>(M.getOrInsertGlobal(GlobalName, GlobalType));
+  globalVar->setLinkage(GlobalValue::ExternalLinkage);  
+  if(localThread)
+      globalVar->setThreadLocal(true);
+
+  return globalVar; 
+}
 
 /// \brief Helper to find a function with the given name, creating it if it
 /// doesn't already exist. If the function needed to be created then return
@@ -145,7 +161,6 @@ static bool GetOrCreateFunction(const char *FnName, Module& M,
 static Function *Get__unwindrts_mysetjmp_callee(Module& M) {
     // Inline assembly to move the callee saved regist to rdi
     Function *Fn = nullptr;
-
     if (GetOrCreateFunction<mysetjmp_callee_ty>("mysetjmp_callee_llvm", M, Fn))
         return Fn;
 
@@ -162,7 +177,6 @@ static Function *Get__unwindrts_mysetjmp_callee(Module& M) {
     Function::arg_iterator args = Fn->arg_begin();
     Value* argsCtx = &*args;
 
-
     using AsmTypeCallee = void (void**);
     FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(Ctx);
 
@@ -177,7 +191,7 @@ static Function *Get__unwindrts_mysetjmp_callee(Module& M) {
     auto OpaqueTrue = InlineAsm::get(OpaqueTrueTy, "xor $0, $0",  "=r,~{dirflag},~{fpsr},~{flags}", false);
     Value* res = B.CreateCall(OpaqueTrue);
        
-    B.CreateCondBr(res, NormalExit, ThiefExit);
+    B.CreateCondBr(res, ThiefExit, NormalExit);
     {
         B.SetInsertPoint(NormalExit);
         B.CreateRet(ZERO);
@@ -242,46 +256,18 @@ static Function *Get__unwindrts_savecontext(Module& M) {
 
   Type *Int32Ty = TypeBuilder<int32_t, false>::get(Ctx);
   Value *ZERO = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
-  Value *EIGHT = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, /*isSigned=*/false);  
+  Value *ONE_64T = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 1, /*isSigned=*/false);  
   Value *ONE = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);  
   
-  M.getOrInsertGlobal("seed_ptr", TypeBuilder<addr_ty*, false>::get(Ctx) );
-  GlobalVariable * gSeed_ptr = M.getNamedGlobal("seed_ptr");
-  gSeed_ptr->setLinkage(GlobalValue::ExternalLinkage);
-  gSeed_ptr->setThreadLocal(true);
-
-  M.getOrInsertGlobal("seed_sp", TypeBuilder<addr_ty*, false>::get(Ctx) );
-  GlobalVariable * gSeed_sp = M.getNamedGlobal("seed_sp");
-  gSeed_sp->setLinkage(GlobalValue::ExternalLinkage);
-  gSeed_sp->setThreadLocal(true);
-  
-  M.getOrInsertGlobal("threadId", TypeBuilder<int, false>::get(Ctx) );
-  GlobalVariable * gThreadId = M.getNamedGlobal("threadId");
-  gThreadId->setLinkage(GlobalValue::ExternalLinkage);
-  gThreadId->setThreadLocal(true);
-
-  M.getOrInsertGlobal("seed_bp",  TypeBuilder<addr_ty**, false>::get(Ctx)  );
-  GlobalVariable * gSeed_bp = M.getNamedGlobal("seed_bp");
-  gSeed_bp->setLinkage(GlobalValue::ExternalLinkage);
-
-  M.getOrInsertGlobal("unwindRetAddr", TypeBuilder<addr_ty, false>::get(Ctx)  );
-  GlobalVariable * gUnwindRetAddr = M.getNamedGlobal("unwindRetAddr");
-  gUnwindRetAddr->setLinkage(GlobalValue::ExternalLinkage);
-  gUnwindRetAddr->setThreadLocal(true);
-
-  M.getOrInsertGlobal("gotstolenRetAddr", TypeBuilder<addr_ty, false>::get(Ctx)  );
-  GlobalVariable * gGotstolenRetAddr = M.getNamedGlobal("gotstolenRetAddr");
-  gGotstolenRetAddr->setLinkage(GlobalValue::ExternalLinkage);
-  gGotstolenRetAddr->setThreadLocal(true);
-
-  M.getOrInsertGlobal("workctx_arr", TypeBuilder<workcontext_ty,false>::get(Ctx)->getPointerTo()->getPointerTo() );
-  GlobalVariable * gWorkContext = M.getNamedGlobal("workctx_arr");
-  gWorkContext->setLinkage(GlobalValue::ExternalLinkage);
-
-  M.getOrInsertGlobal("unwindCtx", TypeBuilder<workcontext_ty,false>::get(Ctx) );
-  GlobalVariable * gUnwindContext = M.getNamedGlobal("unwindCtx");
-  gUnwindContext->setLinkage(GlobalValue::ExternalLinkage);
-  gUnwindContext->setThreadLocal(true);
+  GlobalVariable* gSeed_ptr = GetGlobalVariable("seed_ptr", TypeBuilder<addr_ty*, false>::get(Ctx), M, true); 
+  GlobalVariable* gSeed_sp = GetGlobalVariable("seed_sp", TypeBuilder<addr_ty*, false>::get(Ctx), M, true); 
+  GlobalVariable* gThreadId = GetGlobalVariable("threadId", TypeBuilder<int, false>::get(Ctx), M, true); 
+  GlobalVariable* gSeed_bp = GetGlobalVariable("seed_bp", TypeBuilder<addr_ty**, false>::get(Ctx), M);
+  GlobalVariable* gUnwindRetAddr = GetGlobalVariable("unwindRetAddr", TypeBuilder<addr_ty, false>::get(Ctx), M, true);
+  GlobalVariable* gGotstolenRetAddr = GetGlobalVariable("gotstolenRetAddr", TypeBuilder<addr_ty, false>::get(Ctx), M, true);
+  GlobalVariable* gWorkContext = GetGlobalVariable("workctx_arr", 
+                                                   TypeBuilder<workcontext_ty,false>::get(Ctx)->getPointerTo()->getPointerTo(), M);
+  GlobalVariable* gUnwindContext = GetGlobalVariable("unwindCtx", TypeBuilder<workcontext_ty, false>::get(Ctx), M, true);
 
   IRBuilder<> B(Entry);
   {
@@ -293,18 +279,20 @@ static Function *Get__unwindrts_savecontext(Module& M) {
 
       Value * bp_location = B.CreateInBoundsGEP(gSeed_bpVal, gThreadIdVal); 
       Value * gSeed_bpEntry = B.CreateLoad(bp_location);    
-      
-      //Value * cvrt2 = B.CreateCast(Instruction::PtrToInt, gSeed_bpEntry, Type::getInt32Ty(Ctx));
-      //Value * cvrt1 = B.CreateCast(Instruction::PtrToInt, gSeed_ptrVal, Type::getInt32Ty(Ctx));    
-      //Value * seedOffset = B.CreateSub(cvrt1, cvrt2);    
       Value* seedOffset = B.CreatePtrDiff(gSeed_ptrVal, gSeed_bpEntry);
 
       ///    void ** ctx  = (void**) workctx_arr[threadId][ptr]; 
-      Value * workCtxLoad = B.CreateLoad( gWorkContext);
-      Value * idx2 = B.CreateInBoundsGEP(workCtxLoad, gThreadIdVal);
-      Value * loadIdx2 = B.CreateLoad( idx2 );
-      Value * idx1 = B.CreateInBoundsGEP(loadIdx2, seedOffset);
-      Value * loadIdx1bitcast = B.CreateConstInBoundsGEP2_64( idx1, 0, 0);
+#if 0
+      Value* workCtxLoad = B.CreateLoad(gWorkContext);
+      Value* idx2 = B.CreateInBoundsGEP(workCtxLoad, gThreadIdVal);
+      Value* loadIdx2 = B.CreateLoad(idx2 );
+      Value* idx1 = B.CreateInBoundsGEP(loadIdx2, seedOffset);
+      Value* loadIdx1bitcast = B.CreateConstInBoundsGEP2_64( idx1, 0, 0);
+#else      
+      Function::arg_iterator args = Fn->arg_begin();
+      Value* loadIdx1bitcast = &*args;
+#endif
+      
       Constant* MYSETJMP_CALLEE = UNWINDRTS_FUNC(mysetjmp_callee, M);
       Constant* MYLONGJMP_CALLEE = UNWINDRTS_FUNC(mylongjmp_callee, M);
       Value * unwindCtxLoad = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
@@ -316,11 +304,7 @@ static Function *Get__unwindrts_savecontext(Module& M) {
       Value* result = B.CreateCall(MYSETJMP_CALLEE, {loadIdx1bitcast});  
       dyn_cast<CallInst>(result)->setCallingConv(CallingConv::Fast);      
       
-      Value* savedPc =  B.CreateConstGEP1_32(loadIdx1bitcast, 1);   
-      B.CreateStore( BlockAddress::get(ThiefEntry), savedPc);
-    
-      Value * isEqOne = B.CreateICmpEQ(result, ONE);      
-  
+      Value * isEqOne = B.CreateICmpEQ(result, ONE);        
       B.CreateCondBr(isEqOne, ThiefEntry, AttemptUnwinding);
       
       //Thief entry
@@ -344,7 +328,7 @@ static Function *Get__unwindrts_savecontext(Module& M) {
           Value* loadGotStolenAddr = B.CreateLoad(gGotstolenRetAddr);                            
           B.CreateStore(loadGotStolenAddr, pPseedLoad);
 
-          Value* isEqOne = B.CreateICmpEQ(seedOffset, EIGHT);
+          Value* isEqOne = B.CreateICmpEQ(seedOffset, ONE_64T);
           B.CreateCondBr(isEqOne, ReachTopStack, AttemptUnwindCont);
           
           // Reach top of stack
@@ -666,9 +650,33 @@ void UNWINDABI::createUnwindHandler(Function& F) {
     Value* ONE = B.getInt32(1);
     Value* ZERO = B.getInt32(0);
 
-    Constant* SAVECONTEXT = UNWINDRTS_FUNC(savecontext, *M);
-    Value* result = B.CreateCall(SAVECONTEXT);    
+    GlobalVariable* gSeed_ptr = GetGlobalVariable("seed_ptr", TypeBuilder<addr_ty*, false>::get(C), *M, true); 
+    GlobalVariable* gThreadId = GetGlobalVariable("threadId", TypeBuilder<int, false>::get(C), *M, true); 
+    GlobalVariable* gSeed_bp = GetGlobalVariable("seed_bp", TypeBuilder<addr_ty**, false>::get(C), *M);       
+    GlobalVariable* gWorkContext = GetGlobalVariable("workctx_arr", 
+                                                       TypeBuilder<workcontext_ty,false>::get(C)->getPointerTo()->getPointerTo(), *M);
+    
+    ///    unsigned ptr = (seed_ptr - seed_bp[threadId]);      
+    Value* gThreadIdVal = B.CreateLoad(gThreadId);
+    Value* gSeed_bpVal = B.CreateLoad(gSeed_bp);        
+    Value* bp_location = B.CreateInBoundsGEP(gSeed_bpVal, gThreadIdVal); 
+    Value* gSeed_bpEntry = B.CreateLoad(bp_location);    
+  
+    Value* gSeed_ptrVal = B.CreateLoad(gSeed_ptr);      
+    Value* seedOffset = B.CreatePtrDiff(gSeed_ptrVal, gSeed_bpEntry);
 
+    Value* workCtxLoad = B.CreateLoad(gWorkContext);
+    Value* idx2 = B.CreateInBoundsGEP(workCtxLoad, gThreadIdVal);
+    Value* loadIdx2 = B.CreateLoad(idx2 );
+    Value* idx1 = B.CreateInBoundsGEP(loadIdx2, seedOffset);
+    Value* loadIdx1bitcast = B.CreateConstInBoundsGEP2_64(idx1, 0, 0);
+    
+    Value* savedPc = B.CreateConstGEP1_32(loadIdx1bitcast, 1);   
+    B.CreateStore(BlockAddress::get(slowPathPrologue), savedPc);    
+  
+    Constant* SAVECONTEXT = UNWINDRTS_FUNC(savecontext, *M);
+    Value* result = B.CreateCall(SAVECONTEXT, {loadIdx1bitcast});        
+    
     Value* isEqOne = B.CreateICmpEQ(result, ONE);
     B.CreateCondBr(isEqOne, slowPathPrologue, unwindSaveCtx);
 
@@ -756,11 +764,9 @@ void UNWINDABI::createSlowPathEpilogue(Function& F, Value* workCtx) {
     dyn_cast<CallInst>(result)->setCallingConv(CallingConv::Fast);    
     
     Value* savedPc =  B.CreateConstGEP1_32(workCtx, 1);   
-    B.CreateStore( BlockAddress::get(restorePath), savedPc);
-    
+    B.CreateStore( BlockAddress::get(restorePath), savedPc);    
 
-    Value* isEqOne = B.CreateICmpEQ(result, ONE);    
-       
+    Value* isEqOne = B.CreateICmpEQ(result, ONE);           
     BasicBlock* suspendPath = BasicBlock::Create(C, "suspend.path", &F);
     B.CreateCondBr(isEqOne, restorePath, suspendPath);    
     
@@ -768,8 +774,8 @@ void UNWINDABI::createSlowPathEpilogue(Function& F, Value* workCtx) {
     llvm::InlineFunction(dyn_cast<CallInst>(result), ifi);
 
     B.SetInsertPoint(suspendPath);                       
-    //Function * suspendFcn = dyn_cast<Function>(M->getOrInsertFunction( "SuspendFcn", TypeBuilder<void (void) , false>::get(M->getContext())));
-    //B.CreateCall(suspendFcn);
+    Function* resume2scheduler = dyn_cast<Function>(M->getOrInsertFunction( "resume2scheduler", TypeBuilder<void (void**) , false>::get(M->getContext())));
+    B.CreateCall(resume2scheduler, {workCtx});
     B.CreateBr(restorePath);        
 }
 
