@@ -37,10 +37,6 @@
 #include "llvm/Transforms/Utils/TapirUtils.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
-//TODO : Resume work once second child is finished
-//FIXME : When using polling and finish unwinding, do not go to gotstolen handler immediately since you are overwriting the value x
-// Need to goto suspend2scheulder without overwriting x
-
 //TODO : Code refactoring
 //TODO : Design document
 using namespace llvm;
@@ -107,11 +103,19 @@ DEFAULT_GET_LIB_FUNC(initworkers_env)
 using deinitworkers_env_ty = void (void );
 DEFAULT_GET_LIB_FUNC(deinitworkers_env)
 
+using isunwind_triggered_ty = int (void);
+DEFAULT_GET_LIB_FUNC(isunwind_triggered)
+
+using initiate_unwindstack_ty = void (void);
+DEFAULT_GET_LIB_FUNC(initiate_unwindstack)
+
 using deinitperworkers_sync_ty = void(int, int);
 DEFAULT_GET_LIB_FUNC(deinitperworkers_sync)
 
 using initperworkers_sync_ty = void(int, int);
 DEFAULT_GET_LIB_FUNC(initperworkers_sync)
+
+using unwind_poll_ty = int(void);
 
 #define UNWINDRTS_FUNC(name, CGF) Get__unwindrts_##name(CGF)
 
@@ -158,13 +162,13 @@ static bool GetOrCreateFunction(const char *FnName, Module& M,
 /*
   Refer to uli/cas_ws/lib/unwind_scheduler.h mysetjmp_callee
 */
-static Function *Get__unwindrts_mysetjmp_callee(Module& M) {
+static Function* Get__unwindrts_mysetjmp_callee(Module& M) {
     // Inline assembly to move the callee saved regist to rdi
-    Function *Fn = nullptr;
+    Function* Fn = nullptr;
     if (GetOrCreateFunction<mysetjmp_callee_ty>("mysetjmp_callee_llvm", M, Fn))
         return Fn;
 
-    LLVMContext &Ctx = M.getContext();
+    LLVMContext& Ctx = M.getContext();
 
     BasicBlock* Entry                 = BasicBlock::Create(Ctx, "mysethjmp.entry", Fn);
     BasicBlock* NormalExit            = BasicBlock::Create(Ctx, "normal.exit", Fn);
@@ -198,8 +202,6 @@ static Function *Get__unwindrts_mysetjmp_callee(Module& M) {
     }
     {        
         B.SetInsertPoint(ThiefExit);
-        // Force to create the return label. 
-        //B.CreateFence(AtomicOrdering::SequentiallyConsistent);
         B.CreateRet(ONE);
     }
 
@@ -208,18 +210,70 @@ static Function *Get__unwindrts_mysetjmp_callee(Module& M) {
 
 
 /*
+  Refer to uli/cas_ws/lib/unwind_scheduler.h unwind_poll
+ */
+static Function* Get__unwindrts_unwind_poll(Module& M) {
+  Function* Fn = nullptr;
+  if (GetOrCreateFunction<unwind_poll_ty>("unwind_poll_llvm", M, Fn))
+    return Fn;
+  LLVMContext& Ctx = M.getContext();
+  
+  BasicBlock* PollEntry = BasicBlock::Create(Ctx, "poll.entry", Fn);
+  BasicBlock* StartUnwind = BasicBlock::Create(Ctx, "start.unwind", Fn);
+  BasicBlock* ResumeParent = BasicBlock::Create(Ctx, "resume.parent", Fn);
+  BasicBlock* InitiateUnwind = BasicBlock::Create(Ctx, "initiate.unwind", Fn); 
+
+  IRBuilder<> B(PollEntry);
+  
+  Value *ONE = B.getInt32(1);
+  Value *ZERO = B.getInt32(0);
+  
+  Constant *ISUNWINDTRIGGERED = Get_isunwind_triggered(M);
+
+  Value *res1 = B.CreateCall(ISUNWINDTRIGGERED);                
+  Value *isEqOne = B.CreateICmpEQ(res1, ONE);
+  
+  B.CreateCondBr(isEqOne, StartUnwind, ResumeParent);
+  B.SetInsertPoint(StartUnwind);
+  
+  Constant *MYSETJMP_CALLEE = UNWINDRTS_FUNC(mysetjmp_callee, M);
+  GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", TypeBuilder<workcontext_ty,false>::get(Ctx), M, true);
+  Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
+  Value *res2 = B.CreateCall(MYSETJMP_CALLEE, {gunwind_ctx});
+  isEqOne = B.CreateICmpEQ(res2, ONE);
+
+  B.CreateCondBr(isEqOne, ResumeParent, InitiateUnwind);
+
+  llvm::InlineFunctionInfo ifi;
+  llvm::InlineFunction(dyn_cast<CallInst>(res2), ifi, nullptr, true);              
+  
+  B.SetInsertPoint(InitiateUnwind);
+  Constant *INITIATEUNWINDSTACK = Get_initiate_unwindstack(M);
+  B.CreateCall(INITIATEUNWINDSTACK);
+  //Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, 1);   
+  //B.CreateStore(BlockAddress::get(ResumeParent), savedPc);    
+  B.CreateRet(ONE);
+
+  B.SetInsertPoint(ResumeParent);
+  B.CreateRet(ZERO);
+
+  return Fn;    
+}
+
+
+/*
   Refer to uli/cas_ws/lib/unwind_scheduler.h mylongjmp_callee
 */
 static Function *Get__unwindrts_mylongjmp_callee(Module& M) {
-    Function *Fn = nullptr;
+    Function* Fn = nullptr;
     if (GetOrCreateFunction<mylongjmp_callee_ty>("mylongjmp_callee_llvm", M, Fn))
         return Fn;
 
-    LLVMContext &Ctx = M.getContext();
+    LLVMContext& Ctx = M.getContext();
 
-    BasicBlock *Entry           = BasicBlock::Create(Ctx, "mylongjmp.entry", Fn);    
+    BasicBlock* Entry           = BasicBlock::Create(Ctx, "mylongjmp.entry", Fn);    
     Function::arg_iterator args = Fn->arg_begin();
-    Value *argsCtx = &*args;
+    Value* argsCtx = &*args;
 
     using AsmTypCallee = void ( void** );
     FunctionType *FAsmTypCallee = TypeBuilder<AsmTypCallee, false>::get(Ctx);
@@ -237,11 +291,11 @@ static Function *Get__unwindrts_mylongjmp_callee(Module& M) {
 ///
 /// }
 static Function *Get__unwindrts_savecontext(Module& M) {
-  Function *Fn = nullptr;
+  Function* Fn = nullptr;
   if (GetOrCreateFunction<savecontext_ty>("savecontext_llvm", M, Fn))
     return Fn;
 
-  LLVMContext &Ctx = M.getContext();
+  LLVMContext& Ctx = M.getContext();
 
   BasicBlock *Entry                 = BasicBlock::Create(Ctx, "unwind.entry", Fn);
   BasicBlock *ThiefEntry            = BasicBlock::Create(Ctx, "unwind.thief.entry", Fn);
@@ -260,13 +314,10 @@ static Function *Get__unwindrts_savecontext(Module& M) {
   Value *ONE = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);  
   
   GlobalVariable* gSeed_ptr = GetGlobalVariable("seed_ptr", TypeBuilder<addr_ty*, false>::get(Ctx), M, true); 
-  GlobalVariable* gSeed_sp = GetGlobalVariable("seed_sp", TypeBuilder<addr_ty*, false>::get(Ctx), M, true); 
   GlobalVariable* gThreadId = GetGlobalVariable("threadId", TypeBuilder<int, false>::get(Ctx), M, true); 
   GlobalVariable* gSeed_bp = GetGlobalVariable("seed_bp", TypeBuilder<addr_ty**, false>::get(Ctx), M);
   GlobalVariable* gUnwindRetAddr = GetGlobalVariable("unwindRetAddr", TypeBuilder<addr_ty, false>::get(Ctx), M, true);
   GlobalVariable* gGotstolenRetAddr = GetGlobalVariable("gotstolenRetAddr", TypeBuilder<addr_ty, false>::get(Ctx), M, true);
-  GlobalVariable* gWorkContext = GetGlobalVariable("workctx_arr", 
-                                                   TypeBuilder<workcontext_ty,false>::get(Ctx)->getPointerTo()->getPointerTo(), M);
   GlobalVariable* gUnwindContext = GetGlobalVariable("unwindCtx", TypeBuilder<workcontext_ty, false>::get(Ctx), M, true);
 
   IRBuilder<> B(Entry);
@@ -282,23 +333,15 @@ static Function *Get__unwindrts_savecontext(Module& M) {
       Value* seedOffset = B.CreatePtrDiff(gSeed_ptrVal, gSeed_bpEntry);
 
       ///    void ** ctx  = (void**) workctx_arr[threadId][ptr]; 
-#if 0
-      Value* workCtxLoad = B.CreateLoad(gWorkContext);
-      Value* idx2 = B.CreateInBoundsGEP(workCtxLoad, gThreadIdVal);
-      Value* loadIdx2 = B.CreateLoad(idx2 );
-      Value* idx1 = B.CreateInBoundsGEP(loadIdx2, seedOffset);
-      Value* loadIdx1bitcast = B.CreateConstInBoundsGEP2_64( idx1, 0, 0);
-#else      
       Function::arg_iterator args = Fn->arg_begin();
       Value* loadIdx1bitcast = &*args;
-#endif
       
       Constant* MYSETJMP_CALLEE = UNWINDRTS_FUNC(mysetjmp_callee, M);
       Constant* MYLONGJMP_CALLEE = UNWINDRTS_FUNC(mylongjmp_callee, M);
       Value * unwindCtxLoad = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
 
-      // seed_ptr--;
-      Value * addPtr = B. CreateConstGEP1_32(gSeed_ptrVal,  -1);
+      // seed_ptr = 0;
+      Value * addPtr = B. CreateConstGEP1_32(gSeed_ptrVal,  0);
       B.CreateStore(addPtr, gSeed_ptr);              
       
       Value* result = B.CreateCall(MYSETJMP_CALLEE, {loadIdx1bitcast});  
@@ -321,7 +364,7 @@ static Function *Get__unwindrts_savecontext(Module& M) {
           // void** addrRA = ((void**)*(seed_ptr)); 
           // *addrRa = gotStolenRetAddr;
           Value* pSeedLoad = B.CreateLoad(gSeed_ptr);
-          Value* pSeedLoadAdd = B. CreateConstGEP1_32(pSeedLoad,  1);
+          Value* pSeedLoadAdd = B. CreateConstGEP1_32(pSeedLoad,  0);
           Value* seedLoad = B.CreateLoad(pSeedLoadAdd);
           Value* pPseedLoad = B.CreateBitCast(seedLoad, TypeBuilder<addr_ty*, false>::get(Ctx));
           //Value* addrRa = B.CreateLoad(pPseedLoad);
@@ -341,6 +384,9 @@ static Function *Get__unwindrts_savecontext(Module& M) {
           {
               B.SetInsertPoint( AttemptUnwindCont);            
 
+              Value * addPtr = B. CreateConstGEP1_32(gSeed_ptrVal,  -1);
+              B.CreateStore(addPtr, gSeed_ptr);        
+      
               Value * addPtrVal = B.CreateLoad(addPtr);
               Value * addBitCastVal = B.CreateBitCast(addPtrVal, addPtrVal->getType()->getPointerTo());
 
@@ -389,11 +435,6 @@ static Function *Get__unwindrts_savecontext(Module& M) {
 
 void UNWINDABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) {         
     
-    BasicBlock * curBB = SI.getParent();
-    Function * F = curBB->getParent();
-    Module * M = F->getParent();
-    LLVMContext& C = M->getContext();
-    
     // Fast Path
     // ----------------------------------------------
     {
@@ -414,8 +455,7 @@ void UNWINDABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFram
                 }
             
             }
-        
-   
+           
             Value::use_iterator UI = CI->use_begin(), E = CI->use_end();
             for (; UI != E;) {
                 Use &U = *UI;
@@ -493,8 +533,7 @@ void UNWINDABI::createGotStolenHandler(DetachInst& Detach) {
 
 void UNWINDABI::createSlowPathFcn(DetachInst& Detach) {
     BasicBlock* curBB = Detach.getParent();
-    Function* F = curBB->getParent();
-    Module* M = F->getParent();    
+    Function* F = curBB->getParent();    
 
     static ValueToValueMapTy VMapSlowPath; 
     DebugInfoFinder DIFinder;      
@@ -532,8 +571,6 @@ void UNWINDABI::createSlowPathFcn(DetachInst& Detach) {
 
     Instruction* itermSlowPathPrologue = slowPathPrologue->getTerminator();  
     Instruction* itermSlowPathFcn =slowPathFcn->getTerminator();
-
-    BasicBlock* succ = slowPathPrologue->getSingleSuccessor();
     
     BranchInst* resume2SlowPathFcn = BranchInst::Create(slowPathFcn);
     BranchInst* resume2slowPathEpilogue = BranchInst::Create(slowPathEpilogue);        
@@ -628,7 +665,6 @@ Function* UNWINDABI::createDetach(DetachInst &Detach,
 }
 
 void UNWINDABI::createRestorePath(Function& F, SyncInst * SI) {
-    Module* M = F.getParent();
     IRBuilder <> B(restorePath);    
 
     // Restore path
@@ -726,6 +762,83 @@ void UNWINDABI::instrumentMainFcn(Function& F) {
     }   
 }
 
+void UNWINDABI::instrumentSpawningFcn(Function& F) {
+    Module* M = F.getParent();
+    LLVMContext &Ctx = M->getContext();
+    IRBuilder<> B(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+
+    Value *ONE = B.getInt32(1);
+    Value *ZERO = B.getInt32(0);
+
+    Constant* UNWIND_POLL = UNWINDRTS_FUNC(unwind_poll, *M);    
+
+    // Get debug info
+    DISubprogram *SP = F.getSubprogram();
+    DebugLoc DL = DILocation::get(SP->getContext(), SP->getLine(), 1, SP);
+    B.SetCurrentDebugLocation(DL);
+
+    Value* res = B.CreateCall(UNWIND_POLL);    
+    Instruction* isEqOne = dyn_cast<Instruction>(B.CreateICmpEQ(res, ONE));
+    BasicBlock *returnToUnwindBB = BasicBlock::Create(Ctx, "returnto.unwind", &F);
+
+    BasicBlock* afterBB = F.getEntryBlock().splitBasicBlock(isEqOne->getNextNode());
+    auto branch = BranchInst::Create(returnToUnwindBB, afterBB, isEqOne);
+    
+    auto terminator = F.getEntryBlock().getTerminator();    
+    ReplaceInstWithInst(terminator, branch);
+
+    llvm::InlineFunctionInfo ifi;
+    llvm::InlineFunction(dyn_cast<CallInst>(res), ifi, nullptr, true);
+    
+    B.SetInsertPoint(returnToUnwindBB);
+    GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", TypeBuilder<workcontext_ty,false>::get(Ctx), *M, true);
+    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
+    Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, 1);   
+    B.CreateStore(BlockAddress::get(afterBB), savedPc);     
+    if(F.getReturnType()->isVoidTy())
+        B.CreateRetVoid();
+    else if (F.getReturnType()->isIntegerTy())
+        B.CreateRet(ZERO);
+    else
+        assert(0 && "Return type not supported yet");
+    
+    for (auto &BB : F){
+        Instruction * termInst = BB.getTerminator();
+        if(isa<ReturnInst>(termInst)){            
+            B.SetInsertPoint(termInst);
+            Value* res = B.CreateCall(UNWIND_POLL);
+
+            Instruction* isEqOne = dyn_cast<Instruction>(B.CreateICmpEQ(res, ONE));
+            BasicBlock *returnToUnwindBB = BasicBlock::Create(Ctx, "returnto.unwind2", &F);
+
+            BasicBlock* afterBB = BB.splitBasicBlock(isEqOne->getNextNode());
+            auto branch = BranchInst::Create(returnToUnwindBB, afterBB, isEqOne);
+    
+            auto terminator = BB.getTerminator();    
+            ReplaceInstWithInst(terminator, branch);
+    
+            llvm::InlineFunctionInfo ifi;
+            llvm::InlineFunction(dyn_cast<CallInst>(res), ifi, nullptr, true);
+    
+
+            B.SetInsertPoint(returnToUnwindBB);
+            Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, 1);   
+            B.CreateStore(BlockAddress::get(afterBB), savedPc);    
+  
+            
+            if(F.getReturnType()->isVoidTy())
+                B.CreateRetVoid();
+            else if (F.getReturnType()->isIntegerTy())
+                B.CreateRet(ZERO);
+            else
+                assert(0 && "Return type not supported yet");
+
+            break;
+        }
+    }   
+
+}
+
 Value* UNWINDABI::createSlowPathPrologue(Function& F) {
     Module* M = F.getParent();
     LLVMContext& C = M->getContext();
@@ -736,12 +849,6 @@ Value* UNWINDABI::createSlowPathPrologue(Function& F) {
     Value* Asm = InlineAsm::get(FAsmTypCallee, "movq %rdi, $0\n", "=r,~{rdi},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);    
     Value* workCtx = B.CreateCall(Asm);
 
-    // TODO get the argument from the runtime
-
-    // TODO Call the slow 
-    //Function * slowPathFunction = dyn_cast<Function>(M->getOrInsertFunction( "SlowPathFunction", TypeBuilder<void (void) , false>::get(M->getContext())));
-    //B.CreateCall(slowPathFunction);
-    
     B.CreateBr(slowPathEpilogue);
 
     return workCtx;
@@ -789,7 +896,7 @@ void UNWINDABI::preProcessFunction(Function &F) {
   if ( F.getName() == "main") {
       instrumentMainFcn(F); 
       return;
-  } 
+  }
   
   // -------------------------------------------------
   // Add forkable attribute
@@ -803,6 +910,9 @@ void UNWINDABI::preProcessFunction(Function &F) {
           }
       }
   }
+
+  // Insert polling in prologue and epilogue
+  instrumentSpawningFcn(F);
 
   // -------------------------------------------------------------
   // Create the resume path

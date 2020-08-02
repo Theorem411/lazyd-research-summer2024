@@ -66,6 +66,7 @@ private:
     void createSlowPathEpilogue(Function& F, Value* workCtx);
     Value* createSlowPathPrologue(Function& F);
     void instrumentMainFcn(Function& F);
+    void instrumentSpawningFcn(Function& F);
     void createUnwindHandler(Function& F);
     void createRestorePath(Function& F, SyncInst * SI);
     void createFastPath(DetachInst& Detach); 
