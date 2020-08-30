@@ -21,6 +21,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Transforms/Tapir/TapirTargetIDs.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
+#include "llvm/Analysis/LoopInfo.h"
 
 namespace llvm {
 
@@ -552,6 +553,7 @@ ValueSet getTapirLoopInputs(TapirLoopInfo *TL, ValueSet &TaskInputs);
 Instruction *replaceLoopWithCallToOutline(
     TapirLoopInfo *TL, TaskOutlineInfo &Out,
     SmallVectorImpl<Value *> &OutlineInputs);
+
 }  // end namepsace llvm
 
 #endif

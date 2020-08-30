@@ -15,6 +15,8 @@
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/TapirTaskInfo.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/LoopPass.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/PassManager.h"
@@ -57,6 +59,13 @@ public:
   }
 
   bool run();
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<LoopInfoWrapperPass>();
+    AU.addRequired<AssumptionCacheTracker>();
+    AU.addRequired<DominatorTreeWrapperPass>();
+
+  }
 
 private:
   bool unifyReturns(Function &F);
@@ -517,8 +526,11 @@ bool TapirToTargetImpl::run() {
   while (!WorkList.empty()) {
     // Process the next function.
     Function *F = WorkList.pop_back_val();
-    SmallVector<Function *, 4> NewHelpers;
+    LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
+    DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(*F).getDomTree();
+    AssumptionCacheTracker &ACT = getAnalysis<AssumptionCacheTracker>();
 
+    SmallVector<Function *, 4> NewHelpers;
     Changed |= processFunction(*F, NewHelpers);
 
     // Check the generated helper functions to see if any need to be processed,

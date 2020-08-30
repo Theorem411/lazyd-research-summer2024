@@ -7650,6 +7650,18 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
     (void)getRoot();
     DAG.setRoot(lowerStartEH(getControlRoot(), EHPadBB, BeginLabel));
     CLI.setChain(getRoot());
+
+  } else if (  CLI.CS.getCalledFunction() && CLI.CS.getCalledFunction()->hasFnAttribute(Attribute::Forkable)  ) {
+      // Insert a label at the front of a forkable function call 
+      // The inserted label represent return address.       
+      MCSymbol *StartLabel = MMI.getContext().createTempSymbol();
+      DAG.setRoot(DAG.getEHLabel(getCurSDLoc(), getRoot(), StartLabel));
+      CLI.setChain(getRoot());
+
+      if( MF.getFunction().getParent()->CallStealMap.lookup( CLI.CS.getInstruction()).stealHandler ){
+        // Map call instructions's name with return address label
+        MF.addReturnAddr2LabelMap((CLI.CS.getInstruction()->getName() + "_start").str() , StartLabel);
+      }
   }
 
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
@@ -7686,14 +7698,13 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
 
       if( MF.getFunction().getParent()->CallStealMap.lookup( CLI.CS.getInstruction()).stealHandler ){
         // Map call instructions's name with return address label
-        MF.addReturnAddr2LabelMap( CLI.CS.getInstruction()->getName() , EndLabel);
+        MF.addReturnAddr2LabelMap( (CLI.CS.getInstruction()->getName() + "_end").str() , EndLabel);
       }
 
       if(MF.getFunction().getParent()->StolenHandlerExists.lookup( CLI.CS.getInstruction()->getParent()  )){       
         // Map got-stolen handler basic block with a its entry label
         MF.addStolenHandler2LabelMap(CLI.CS.getInstruction()->getParent()->getName(), EndLabel);        
       }
-
   }
 
   return Result;

@@ -60,6 +60,7 @@ public:
   bool isULIorCAS() const override {
     return true;
   }
+ 
   
 
 private:
@@ -71,7 +72,10 @@ private:
     void createRestorePath(Function& F, SyncInst * SI);
     void createFastPath(DetachInst& Detach); 
     void createGotStolenHandler(DetachInst& Detach);
-    void createSlowPathFcn(DetachInst& Detach);
+    void createSlowPathFcn(DetachInst& Detach);   
+    bool isContinuationTre(Function &F);
+
+    bool isTre;
 };
 
 }  // end of llvm namespace
