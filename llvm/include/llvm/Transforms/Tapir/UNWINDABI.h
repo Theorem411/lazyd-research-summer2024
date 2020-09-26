@@ -19,64 +19,67 @@
 #include "llvm/IR/IRBuilder.h"
 
 namespace llvm {
-class Value;
+  class Value;
 
-class UNWINDABILoopSpawning : public LoopOutline {
-public:
-  UNWINDABILoopSpawning(Loop *OrigLoop, unsigned Grainsize, ScalarEvolution &SE,
-                      LoopInfo *LI, DominatorTree *DT, AssumptionCache *AC,
-                      OptimizationRemarkEmitter &ORE)
+  class UNWINDABILoopSpawning : public LoopOutline {
+  public:
+    UNWINDABILoopSpawning(Loop *OrigLoop, unsigned Grainsize, ScalarEvolution &SE,
+			  LoopInfo *LI, DominatorTree *DT, AssumptionCache *AC,
+			  OptimizationRemarkEmitter &ORE)
       : LoopOutline(OrigLoop, SE, LI, DT, AC, ORE)
-  {}
-  bool processLoop();
-  virtual ~UNWINDABILoopSpawning() {}
+    {}
+    bool processLoop();
+    virtual ~UNWINDABILoopSpawning() {}
 
-protected:
-};
+  protected:
+  };
 
-class UNWINDABI : public TapirTarget {
-public:
-  UNWINDABI();
-  Value *lowerGrainsizeCall(CallInst *GrainsizeCall) override final;
+  class UNWINDABI : public TapirTarget {
+  public:
+    UNWINDABI();
+    Value *lowerGrainsizeCall(CallInst *GrainsizeCall) override final;
 
-  void createSync(SyncInst &inst, ValueToValueMapTy &DetachCtxToStackFrame) override final;
+    void createSync(SyncInst &inst, ValueToValueMapTy &DetachCtxToStackFrame) override final;
   
-  /// @brief Create the gotstolen path 
-  Function *createDetach(DetachInst &Detach,
-                         ValueToValueMapTy &DetachCtxToStackFrame,
-                         DominatorTree &DT, AssumptionCache &AC) override final;
+    /// @brief Create the gotstolen path 
+    Function *createDetach(DetachInst &Detach,
+			   ValueToValueMapTy &DetachCtxToStackFrame,
+			   DominatorTree &DT, AssumptionCache &AC) override final;
 
-  /// @brief Create the unwind block here, the prologue to slow path, the epilogue of slow path
-  /// the restore entry
-  void preProcessFunction(Function &F) override final;
-  void postProcessFunction(Function &F) override final;
-  void postProcessHelper(Function &F) override final;
+    /// @brief Create the unwind block here, the prologue to slow path, the epilogue of slow path
+    /// the restore entry
+    void preProcessFunction(Function &F) override final;
+    void postProcessFunction(Function &F) override final;
+    void postProcessHelper(Function &F) override final;
 
-  struct Sync {};
-  struct Work {};
-  struct PRSC_Desc {};
-  struct Seed {};
+    struct Sync {};
+    struct Work {};
+    struct PRSC_Desc {};
+    struct Seed {};
 
-  bool isULIorCAS() const override {
-    return true;
-  }
+    bool isULIorCAS() const override {
+      return true;
+    }
  
   
 
-private:
-    void createSlowPathEpilogue(Function& F, Value* workCtx);
+  private:
+    void createSlowPathEpilogue(Function& F, Instruction* SI, Value* workCtx, BasicBlock* restorePath);
+    //void createSlowPathEpilogue(Function& F, Value* workCtx);
     Value* createSlowPathPrologue(Function& F);
     void instrumentMainFcn(Function& F);
     void instrumentSpawningFcn(Function& F);
     void createUnwindHandler(Function& F);
     void createRestorePath(Function& F, SyncInst * SI);
     void createFastPath(DetachInst& Detach); 
-    void createGotStolenHandler(DetachInst& Detach);
-    void createSlowPathFcn(DetachInst& Detach);   
+    BasicBlock * createGotStolenHandler(DetachInst& Detach);
+    void createJumpTableInit(DetachInst& Detach, BasicBlock * GotstolenHandler);
+    void createJumpTable(DetachInst& Detach, BasicBlock * Continuation);
+    BasicBlock * createSlowPathFcn(DetachInst& Detach);   
     bool isContinuationTre(Function &F);
 
     bool isTre;
-};
+  };
 
 }  // end of llvm namespace
 

@@ -53,15 +53,24 @@ static ValueToValueMapTy VMapSlowPath;
 static BasicBlock* slowPathPrologue;
 static BasicBlock* slowPathEpilogue;
 static BasicBlock* unwindPathEntry;
-static BasicBlock* stolenHandlerPathEntry;
-static BasicBlock* slowPathFcn;
+//static BasicBlock* stolenHandlerPathEntry;
+//static BasicBlock* slowPathFcn;
 static BasicBlock* restorePath;
+static BasicBlock* unwindJumpTableInit;
+static BasicBlock* unwindJumpTable;
+static BasicBlock* returnInUnwind;
 
-#define DEFAULT_GET_LIB_FUNC(name)                          \
-  static Constant *Get_##name(Module& M) {                  \
-    return M.getOrInsertFunction( #name,                    \
-        TypeBuilder< name##_ty, false>::get(M.getContext()) \
-      );                                                    \
+static Value * gworkCtx;
+static Value * joinCntr;
+static Value * encodedPc;
+
+static int encodedPcCntr = 0;
+
+#define DEFAULT_GET_LIB_FUNC(name)					\
+  static Constant *Get_##name(Module& M) {				\
+    return M.getOrInsertFunction( #name,				\
+				  TypeBuilder< name##_ty, false>::get(M.getContext()) \
+				  );					\
   }
 
 using addr_ty = void *;
@@ -125,13 +134,13 @@ using unwind_poll_ty = int(void);
 static GlobalVariable* GetGlobalVariable(const char* GlobalName, Type* GlobalType, Module& M, bool localThread=false){    
   GlobalVariable* globalVar = M.getNamedGlobal(GlobalName);
   if(globalVar){
-      return globalVar;
+    return globalVar;
   }
   
   globalVar = dyn_cast<GlobalVariable>(M.getOrInsertGlobal(GlobalName, GlobalType));
   globalVar->setLinkage(GlobalValue::ExternalLinkage);  
   if(localThread)
-      globalVar->setThreadLocal(true);
+    globalVar->setThreadLocal(true);
 
   return globalVar; 
 }
@@ -166,55 +175,55 @@ static bool GetOrCreateFunction(const char *FnName, Module& M,
   Refer to uli/cas_ws/lib/unwind_scheduler.h mysetjmp_callee
 */
 static Function* Get__unwindrts_mysetjmp_callee(Module& M) {
-    // Inline assembly to move the callee saved regist to rdi
-    Function* Fn = nullptr;
-    if (GetOrCreateFunction<mysetjmp_callee_ty>("mysetjmp_callee_llvm", M, Fn))
-        return Fn;
-
-    LLVMContext& Ctx = M.getContext();
-
-    BasicBlock* Entry                 = BasicBlock::Create(Ctx, "mysethjmp.entry", Fn);
-    BasicBlock* NormalExit            = BasicBlock::Create(Ctx, "normal.exit", Fn);
-    BasicBlock* ThiefExit             = BasicBlock::Create(Ctx, "thief.exit", Fn);
-
-    Type* Int32Ty = TypeBuilder<int32_t, false>::get(Ctx);
-    Value* ZERO = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);  
-    Value* ONE = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);  
-    
-    Function::arg_iterator args = Fn->arg_begin();
-    Value* argsCtx = &*args;
-
-    using AsmTypeCallee = void (void**);
-    FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(Ctx);
-
-    Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rdi\nmovq %rbp, 0(%rdi)\nmovq %rsp, 16(%rdi)\nmovq %rbx, 24(%rdi)\nmovq %r12, 32(%rdi)\nmovq %r13, 40(%rdi)\nmovq %r14, 48(%rdi)\nmovq %r15, 56(%rdi)\n", "r,~{rdi},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
-    IRBuilder<> B(Entry);
-    
-    B.CreateCall(Asm, {argsCtx});
-    //Value * loadIdx =  B.CreateConstGEP1_32(argsCtx, 1);   
-    //B.CreateStore( BlockAddress::get(ThiefExit), loadIdx);
-    
-    auto OpaqueTrueTy = FunctionType::get(Type::getInt1Ty(Ctx), false);
-    auto OpaqueTrue = InlineAsm::get(OpaqueTrueTy, "xor $0, $0",  "=r,~{dirflag},~{fpsr},~{flags}", false);
-    Value* res = B.CreateCall(OpaqueTrue);
-       
-    B.CreateCondBr(res, ThiefExit, NormalExit);
-    {
-        B.SetInsertPoint(NormalExit);
-        B.CreateRet(ZERO);
-    }
-    {        
-        B.SetInsertPoint(ThiefExit);
-        B.CreateRet(ONE);
-    }
-
+  // Inline assembly to move the callee saved regist to rdi
+  Function* Fn = nullptr;
+  if (GetOrCreateFunction<mysetjmp_callee_ty>("mysetjmp_callee_llvm", M, Fn))
     return Fn;
+
+  LLVMContext& Ctx = M.getContext();
+
+  BasicBlock* Entry                 = BasicBlock::Create(Ctx, "mysethjmp.entry", Fn);
+  BasicBlock* NormalExit            = BasicBlock::Create(Ctx, "normal.exit", Fn);
+  BasicBlock* ThiefExit             = BasicBlock::Create(Ctx, "thief.exit", Fn);
+
+  Type* Int32Ty = TypeBuilder<int32_t, false>::get(Ctx);
+  Value* ZERO = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);  
+  Value* ONE = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);  
+    
+  Function::arg_iterator args = Fn->arg_begin();
+  Value* argsCtx = &*args;
+
+  using AsmTypeCallee = void (void**);
+  FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(Ctx);
+
+  Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rdi\nmovq %rbp, 0(%rdi)\nmovq %rsp, 16(%rdi)\nmovq %rbx, 24(%rdi)\nmovq %r12, 32(%rdi)\nmovq %r13, 40(%rdi)\nmovq %r14, 48(%rdi)\nmovq %r15, 56(%rdi)\n", "r,~{rdi},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+  IRBuilder<> B(Entry);
+    
+  B.CreateCall(Asm, {argsCtx});
+  //Value * loadIdx =  B.CreateConstGEP1_32(argsCtx, 1);   
+  //B.CreateStore( BlockAddress::get(ThiefExit), loadIdx);
+    
+  auto OpaqueTrueTy = FunctionType::get(Type::getInt1Ty(Ctx), false);
+  auto OpaqueTrue = InlineAsm::get(OpaqueTrueTy, "xor $0, $0",  "=r,~{dirflag},~{fpsr},~{flags}", false);
+  Value* res = B.CreateCall(OpaqueTrue);
+       
+  B.CreateCondBr(res, ThiefExit, NormalExit);
+  {
+    B.SetInsertPoint(NormalExit);
+    B.CreateRet(ZERO);
+  }
+  {        
+    B.SetInsertPoint(ThiefExit);
+    B.CreateRet(ONE);
+  }
+
+  return Fn;
 }
 
 
 /*
   Refer to uli/cas_ws/lib/unwind_scheduler.h unwind_poll
- */
+*/
 static Function* Get__unwindrts_unwind_poll(Module& M) {
   Function* Fn = nullptr;
   if (GetOrCreateFunction<unwind_poll_ty>("unwind_poll_llvm", M, Fn))
@@ -268,24 +277,24 @@ static Function* Get__unwindrts_unwind_poll(Module& M) {
   Refer to uli/cas_ws/lib/unwind_scheduler.h mylongjmp_callee
 */
 static Function *Get__unwindrts_mylongjmp_callee(Module& M) {
-    Function* Fn = nullptr;
-    if (GetOrCreateFunction<mylongjmp_callee_ty>("mylongjmp_callee_llvm", M, Fn))
-        return Fn;
-
-    LLVMContext& Ctx = M.getContext();
-
-    BasicBlock* Entry           = BasicBlock::Create(Ctx, "mylongjmp.entry", Fn);    
-    Function::arg_iterator args = Fn->arg_begin();
-    Value* argsCtx = &*args;
-
-    using AsmTypCallee = void ( void** );
-    FunctionType *FAsmTypCallee = TypeBuilder<AsmTypCallee, false>::get(Ctx);
-
-    Value *Asm = InlineAsm::get(FAsmTypCallee, "movq $0, %rdi\nmovq 0(%rdi), %rbp\nmovq 16(%rdi), %rsp\nmovq 24(%rdi), %rbx\nmovq 32(%rdi), %r12\nmovq 40(%rdi), %r13\nmovq 48(%rdi), %r14\nmovq 56(%rdi), %r15\njmpq *8(%rdi)", "r,~{rdi},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
-    IRBuilder<> B(Entry);    
-    B.CreateCall(Asm, argsCtx);
-    B.CreateRetVoid();
+  Function* Fn = nullptr;
+  if (GetOrCreateFunction<mylongjmp_callee_ty>("mylongjmp_callee_llvm", M, Fn))
     return Fn;
+
+  LLVMContext& Ctx = M.getContext();
+
+  BasicBlock* Entry           = BasicBlock::Create(Ctx, "mylongjmp.entry", Fn);    
+  Function::arg_iterator args = Fn->arg_begin();
+  Value* argsCtx = &*args;
+
+  using AsmTypCallee = void ( void** );
+  FunctionType *FAsmTypCallee = TypeBuilder<AsmTypCallee, false>::get(Ctx);
+
+  Value *Asm = InlineAsm::get(FAsmTypCallee, "movq $0, %rdi\nmovq 0(%rdi), %rbp\nmovq 16(%rdi), %rsp\nmovq 24(%rdi), %rbx\nmovq 32(%rdi), %r12\nmovq 40(%rdi), %r13\nmovq 48(%rdi), %r14\nmovq 56(%rdi), %r15\njmpq *8(%rdi)", "r,~{rdi},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+  IRBuilder<> B(Entry);    
+  B.CreateCall(Asm, argsCtx);
+  B.CreateRetVoid();
+  return Fn;
 }
 
 /// \brief Get or create a LLVM function for savecontext.
@@ -326,110 +335,110 @@ static Function *Get__unwindrts_savecontext(Module& M) {
   IRBuilder<> B(Entry);
   {
       
-      ///    unsigned ptr = (seed_ptr - seed_bp[threadId]);      
-      Value * gSeed_bpVal = B.CreateLoad(gSeed_bp);    
-      Value * gThreadIdVal = B.CreateLoad(gThreadId);
-      Value * gSeed_ptrVal = B.CreateLoad(gSeed_ptr);      
+    ///    unsigned ptr = (seed_ptr - seed_bp[threadId]);      
+    Value * gSeed_bpVal = B.CreateLoad(gSeed_bp);    
+    Value * gThreadIdVal = B.CreateLoad(gThreadId);
+    Value * gSeed_ptrVal = B.CreateLoad(gSeed_ptr);      
 
-      Value * bp_location = B.CreateInBoundsGEP(gSeed_bpVal, gThreadIdVal); 
-      Value * gSeed_bpEntry = B.CreateLoad(bp_location);    
-      Value* seedOffset = B.CreatePtrDiff(gSeed_ptrVal, gSeed_bpEntry);
+    Value * bp_location = B.CreateInBoundsGEP(gSeed_bpVal, gThreadIdVal); 
+    Value * gSeed_bpEntry = B.CreateLoad(bp_location);    
+    Value* seedOffset = B.CreatePtrDiff(gSeed_ptrVal, gSeed_bpEntry);
 
-      ///    void ** ctx  = (void**) workctx_arr[threadId][ptr]; 
-      Function::arg_iterator args = Fn->arg_begin();
-      Value* loadIdx1bitcast = &*args;
+    ///    void ** ctx  = (void**) workctx_arr[threadId][ptr]; 
+    Function::arg_iterator args = Fn->arg_begin();
+    Value* loadIdx1bitcast = &*args;
       
-      Constant* MYSETJMP_CALLEE = UNWINDRTS_FUNC(mysetjmp_callee, M);
-      Constant* MYLONGJMP_CALLEE = UNWINDRTS_FUNC(mylongjmp_callee, M);
-      Value * unwindCtxLoad = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
+    Constant* MYSETJMP_CALLEE = UNWINDRTS_FUNC(mysetjmp_callee, M);
+    Constant* MYLONGJMP_CALLEE = UNWINDRTS_FUNC(mylongjmp_callee, M);
+    Value * unwindCtxLoad = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
 
-      // seed_ptr = 0;
-      Value * addPtr = B. CreateConstGEP1_32(gSeed_ptrVal,  0);
-      B.CreateStore(addPtr, gSeed_ptr);              
+    // seed_ptr = 0;
+    Value * addPtr = B. CreateConstGEP1_32(gSeed_ptrVal,  0);
+    B.CreateStore(addPtr, gSeed_ptr);              
       
-      Value* result = B.CreateCall(MYSETJMP_CALLEE, {loadIdx1bitcast});  
-      dyn_cast<CallInst>(result)->setCallingConv(CallingConv::Fast);      
+    Value* result = B.CreateCall(MYSETJMP_CALLEE, {loadIdx1bitcast});  
+    dyn_cast<CallInst>(result)->setCallingConv(CallingConv::Fast);      
       
-      Value * isEqOne = B.CreateICmpEQ(result, ONE);        
-      B.CreateCondBr(isEqOne, ThiefEntry, AttemptUnwinding);
+    Value * isEqOne = B.CreateICmpEQ(result, ONE);        
+    B.CreateCondBr(isEqOne, ThiefEntry, AttemptUnwinding);
       
-      //Thief entry
+    //Thief entry
+    {
+      B.SetInsertPoint(ThiefEntry);
+      B.CreateRet(ONE);
+    }
+
+    // Keep unwinding
+    {
+      B.SetInsertPoint(AttemptUnwinding);
+      // Create another basic block that exits
+      
+      // void** addrRA = ((void**)*(seed_ptr)); 
+      // *addrRa = gotStolenRetAddr;
+      Value* pSeedLoad = B.CreateLoad(gSeed_ptr);
+      Value* pSeedLoadAdd = B. CreateConstGEP1_32(pSeedLoad,  0);
+      Value* seedLoad = B.CreateLoad(pSeedLoadAdd);
+      Value* pPseedLoad = B.CreateBitCast(seedLoad, TypeBuilder<addr_ty*, false>::get(Ctx));
+      //Value* addrRa = B.CreateLoad(pPseedLoad);
+      Value* loadGotStolenAddr = B.CreateLoad(gGotstolenRetAddr);                            
+      B.CreateStore(loadGotStolenAddr, pPseedLoad);
+
+      Value* isEqOne = B.CreateICmpEQ(seedOffset, ONE_64T);
+      B.CreateCondBr(isEqOne, ReachTopStack, AttemptUnwindCont);
+          
+      // Reach top of stack
       {
-          B.SetInsertPoint(ThiefEntry);
-          B.CreateRet(ONE);
+	B.SetInsertPoint(ReachTopStack);
+	B.CreateBr(FinishUnwinding);
       }
-
-      // Keep unwinding
+          
+      // Attempt Keep unwinding
       {
-          B.SetInsertPoint(AttemptUnwinding);
-          // Create another basic block that exits
+	B.SetInsertPoint( AttemptUnwindCont);            
+
+	Value * addPtr = B. CreateConstGEP1_32(gSeed_ptrVal,  -1);
+	B.CreateStore(addPtr, gSeed_ptr);        
       
-          // void** addrRA = ((void**)*(seed_ptr)); 
-          // *addrRa = gotStolenRetAddr;
-          Value* pSeedLoad = B.CreateLoad(gSeed_ptr);
-          Value* pSeedLoadAdd = B. CreateConstGEP1_32(pSeedLoad,  0);
-          Value* seedLoad = B.CreateLoad(pSeedLoadAdd);
-          Value* pPseedLoad = B.CreateBitCast(seedLoad, TypeBuilder<addr_ty*, false>::get(Ctx));
-          //Value* addrRa = B.CreateLoad(pPseedLoad);
-          Value* loadGotStolenAddr = B.CreateLoad(gGotstolenRetAddr);                            
-          B.CreateStore(loadGotStolenAddr, pPseedLoad);
+	Value * addPtrVal = B.CreateLoad(addPtr);
+	Value * addBitCastVal = B.CreateBitCast(addPtrVal, addPtrVal->getType()->getPointerTo());
 
-          Value* isEqOne = B.CreateICmpEQ(seedOffset, ONE_64T);
-          B.CreateCondBr(isEqOne, ReachTopStack, AttemptUnwindCont);
-          
-          // Reach top of stack
-          {
-              B.SetInsertPoint(ReachTopStack);
-              B.CreateBr(FinishUnwinding);
-          }
-          
-          // Attempt Keep unwinding
-          {
-              B.SetInsertPoint( AttemptUnwindCont);            
+	Value * pred1 = B.CreateICmpEQ( addBitCastVal, 
+					ConstantPointerNull::get(dyn_cast<PointerType>(addBitCastVal->getType())));              
+	B.CreateCondBr(pred1, AddrNull, CheckRA);
 
-              Value * addPtr = B. CreateConstGEP1_32(gSeed_ptrVal,  -1);
-              B.CreateStore(addPtr, gSeed_ptr);        
-      
-              Value * addPtrVal = B.CreateLoad(addPtr);
-              Value * addBitCastVal = B.CreateBitCast(addPtrVal, addPtrVal->getType()->getPointerTo());
-
-              Value * pred1 = B.CreateICmpEQ( addBitCastVal, 
-                                              ConstantPointerNull::get(dyn_cast<PointerType>(addBitCastVal->getType())));              
-              B.CreateCondBr(pred1, AddrNull, CheckRA);
-
-              B.SetInsertPoint(AddrNull);
-              B.CreateBr(FinishUnwinding);
+	B.SetInsertPoint(AddrNull);
+	B.CreateBr(FinishUnwinding);
               
-              B.SetInsertPoint(CheckRA);
-              Value * loadAddr1  = B.CreateLoad(addBitCastVal);
-              Value * loadUnwindAddr1 = B.CreateLoad(gUnwindRetAddr);              
-              Value * pred2 = B.CreateICmpEQ(loadAddr1, loadUnwindAddr1);                           
+	B.SetInsertPoint(CheckRA);
+	Value * loadAddr1  = B.CreateLoad(addBitCastVal);
+	Value * loadUnwindAddr1 = B.CreateLoad(gUnwindRetAddr);              
+	Value * pred2 = B.CreateICmpEQ(loadAddr1, loadUnwindAddr1);                           
 
-              B.CreateCondBr(pred2, KeepUnwinding, ReachAlreadyConverted);
-              {
-                  B.SetInsertPoint( ReachAlreadyConverted );
-                  B.CreateBr(FinishUnwinding);
-              }
+	B.CreateCondBr(pred2, KeepUnwinding, ReachAlreadyConverted);
+	{
+	  B.SetInsertPoint( ReachAlreadyConverted );
+	  B.CreateBr(FinishUnwinding);
+	}
 
-              {
-                  B.SetInsertPoint( KeepUnwinding );           
-                  B.CreateRet(ZERO);
-              }
-          }
-          
-          // Finish Unwinding
-          {
-              B.SetInsertPoint(FinishUnwinding);
-              Value * result = B.CreateCall(MYLONGJMP_CALLEE, {unwindCtxLoad});
-              dyn_cast<CallInst>(result)->setCallingConv(CallingConv::Fast);
-              llvm::InlineFunctionInfo ifi;
-              llvm::InlineFunction(dyn_cast<CallInst>(result), ifi, nullptr, true);
-              B.CreateBr(ThiefEntry);
-          }
+	{
+	  B.SetInsertPoint( KeepUnwinding );           
+	  B.CreateRet(ZERO);
+	}
       }
+          
+      // Finish Unwinding
+      {
+	B.SetInsertPoint(FinishUnwinding);
+	Value * result = B.CreateCall(MYLONGJMP_CALLEE, {unwindCtxLoad});
+	dyn_cast<CallInst>(result)->setCallingConv(CallingConv::Fast);
+	llvm::InlineFunctionInfo ifi;
+	llvm::InlineFunction(dyn_cast<CallInst>(result), ifi, nullptr, true);
+	B.CreateBr(ThiefEntry);
+      }
+    }
 
-      llvm::InlineFunctionInfo ifi;
-      llvm::InlineFunction(dyn_cast<CallInst>(result), ifi, nullptr, true);
+    llvm::InlineFunctionInfo ifi;
+    llvm::InlineFunction(dyn_cast<CallInst>(result), ifi, nullptr, true);
 
   }  
   Fn->addFnAttr(Attribute::InlineHint);
@@ -438,6 +447,8 @@ static Function *Get__unwindrts_savecontext(Module& M) {
 
 void UNWINDABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) {         
   
+  outs() << "I am in create Sync\n";
+
   BasicBlock * succ = SI.getSuccessor(0);        
   // Fast Path
   // ----------------------------------------------
@@ -503,519 +514,841 @@ void UNWINDABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFram
   }
     
     
-  // Replace the sycn with a branch to its successor.
-  BranchInst *SyncBr = BranchInst::Create(succ);
-  ReplaceInstWithInst(&SI, SyncBr);
-
-
+  // Replace the slow path sync isnt with a branch to fast sync's successor.
+  // TODO: Create the slow path
+  BasicBlock* BB = SI.getParent();
+  Function* F = BB->getParent();
+  LLVMContext& C = F->getContext();
+  Instruction* slowSI = dyn_cast<Instruction>(VMapSlowPath[&SI]);   
+  
+  createSlowPathEpilogue(*(slowSI->getParent()->getParent()), slowSI, gworkCtx, restorePath);
+  IRBuilder<> B(restorePath); 
+  B.CreateBr(succ);
+  //ReplaceInstWithInst(&slowSI, SyncBr);
+  
+  restorePath = BasicBlock::Create(C, "restore.path", F);
   return;
 }
 
-void UNWINDABI::createGotStolenHandler(DetachInst& Detach) {
-    BasicBlock* curBB = Detach.getParent();
-    Function* F = curBB->getParent();
-    Module* M = F->getParent();
+BasicBlock * UNWINDABI::createGotStolenHandler(DetachInst& Detach) {
+  BasicBlock* curBB = Detach.getParent();
+  Function* F = curBB->getParent();
+  Module* M = F->getParent();
     
-    Constant* suspend2scheduler = Get_suspend2scheduler(*M);
-    Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
+  Constant* suspend2scheduler = Get_suspend2scheduler(*M);
+  Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
 
-    // Clone detach Block 
-    // Create label after the call inst. This will be the got stolen handler
-    // -------------------------------------------------------------------------
-    DebugInfoFinder DIFinder;      
-    DISubprogram *SP = F->getSubprogram();
-    if (SP) {
-        //assert(!MustCloneSP || ModuleLevelChanges);
-        // Add mappings for some DebugInfo nodes that we don't want duplicated
-        // even if they're distinct.
-        auto &MD = VMapUNWINDGH.MD();
-        MD[SP->getUnit()].reset(SP->getUnit());
-        MD[SP->getType()].reset(SP->getType());
-        MD[SP->getFile()].reset(SP->getFile());  
-        MD[SP].reset(SP); 
-    }        
+  // Clone detach Block 
+  // Create label after the call inst. This will be the got stolen handler
+  // -------------------------------------------------------------------------
+  DebugInfoFinder DIFinder;      
+  DISubprogram *SP = F->getSubprogram();
+  if (SP) {
+    //assert(!MustCloneSP || ModuleLevelChanges);
+    // Add mappings for some DebugInfo nodes that we don't want duplicated
+    // even if they're distinct.
+    auto &MD = VMapUNWINDGH.MD();
+    MD[SP->getUnit()].reset(SP->getUnit());
+    MD[SP->getType()].reset(SP->getType());
+    MD[SP->getFile()].reset(SP->getFile());  
+    MD[SP].reset(SP); 
+  }        
     
-    // Perform the actual cloning
-    BasicBlock * detachBB = Detach.getDetached(); 
-    stolenHandlerPathEntry = CloneBasicBlock(detachBB, VMapUNWINDGH, ".gotstolen", F, nullptr, &DIFinder);
-    VMapUNWINDGH[detachBB] = stolenHandlerPathEntry;        
+  // Perform the actual cloning
+  BasicBlock * detachBB = Detach.getDetached(); 
+  BasicBlock * stolenHandlerPathEntry = CloneBasicBlock(detachBB, VMapUNWINDGH, ".gotstolen", F, nullptr, &DIFinder);
+  VMapUNWINDGH[detachBB] = stolenHandlerPathEntry;        
      
-    // --------------------------------------------------------------
-    // Remap the cloned instruction
-    for (Instruction &II : *stolenHandlerPathEntry) {
-        RemapInstruction(&II, VMapUNWINDGH, RF_IgnoreMissingLocals, nullptr, nullptr);
-    }
+  // --------------------------------------------------------------
+  // Remap the cloned instruction
+  for (Instruction &II : *stolenHandlerPathEntry) {
+    RemapInstruction(&II, VMapUNWINDGH, RF_IgnoreMissingLocals, nullptr, nullptr);
+  }
 
-    // Add potential jump from detachBB to got stolen handler
-    // Add potential jump after "spawn to fib" to avoid merging the gotstolen handler and the detachBlock
-    IRBuilder<> builder(detachBB->getTerminator()); 
-    builder.CreateCall(potentialJump, {BlockAddress::get( stolenHandlerPathEntry )});        
-    builder.SetInsertPoint(stolenHandlerPathEntry->getTerminator());
+  // Add potential jump from detachBB to got stolen handler
+  // Add potential jump after "spawn to fib" to avoid merging the gotstolen handler and the detachBlock
+  IRBuilder<> builder(detachBB->getTerminator()); 
+  builder.CreateCall(potentialJump, {BlockAddress::get( stolenHandlerPathEntry )});        
+  builder.SetInsertPoint(stolenHandlerPathEntry->getTerminator());
         
-    // Perform synchronizatoin here        
-    builder.CreateCall(suspend2scheduler, {ConstantPointerNull::get(builder.getInt32Ty()->getPointerTo())});        
+  // Perform synchronizatoin here        
+  builder.CreateCall(suspend2scheduler, {ConstantPointerNull::get(builder.getInt32Ty()->getPointerTo())});        
 
-    Instruction* iterm = stolenHandlerPathEntry->getTerminator();                
-    //BranchInst* resumeBr = BranchInst::Create(unwindPathEntry);
-    BranchInst* resumeBr = BranchInst::Create(slowPathPrologue);
-    ReplaceInstWithInst(iterm, resumeBr);
+  Instruction* iterm = stolenHandlerPathEntry->getTerminator();                
+  //BranchInst* resumeBr = BranchInst::Create(unwindPathEntry);
+  BranchInst* resumeBr = BranchInst::Create(slowPathPrologue);
+  ReplaceInstWithInst(iterm, resumeBr);
  
-    //Split basic block here. Used as hack to reload join counter in -0O
-    //stolenHandlerPathEntry->splitBasicBlock(stolenHandlerPathEntry->getTerminator()->getPrevNode());
+  //Split basic block here. Used as hack to reload join counter in -0O
+  //stolenHandlerPathEntry->splitBasicBlock(stolenHandlerPathEntry->getTerminator()->getPrevNode());
 
-    for( Instruction &II : *detachBB){
-      if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->hasFnAttribute(Attribute::Forkable)){
+  for( Instruction &II : *detachBB){
+    if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->hasFnAttribute(Attribute::Forkable)){
 	
-	callInstV2.push_back(&II);
-	// Associate callsite instruction with got-stolen handler
-	M->CallStealMap[&II].stolenHandler = stolenHandlerPathEntry;          
-	break;        
-      }
-    } 
-    M->StolenHandlerExists[stolenHandlerPathEntry] = true;
-    
-    SmallVector<Instruction *, 4> inst2delete;
-    // Look for the store instruction
-    for (Instruction &II : *detachBB) {
-      if(isa<StoreInst>(&II)){
-	inst2delete.push_back(&II);      
-      }
+      callInstV2.push_back(&II);
+      // Associate callsite instruction with got-stolen handler
+      M->CallStealMap[&II].stolenHandler = stolenHandlerPathEntry;          
+      break;        
     }
-    for(Instruction *II: inst2delete){
-      II->eraseFromParent();
-    }
+  } 
+  M->StolenHandlerExists[stolenHandlerPathEntry] = true;
     
-    for (Instruction &II : *stolenHandlerPathEntry) {
-      if(isa<StoreInst>(&II)){
-	StoreInst* storeAfterFork = dyn_cast<StoreInst>(&II);
-	//builder.SetInsertPoint(&II);
-	storeAfterFork->setVolatile(true);
-	//builder.CreateCall(STORE2MEM, {storeAfterFork->getValueOperand(), storeAfterFork->getPointerOperand()});
+
+  SmallVector<Instruction *, 4> inst2delete;
+  
+  // Look for the store instruction
+  for (Instruction &II : *detachBB) {
+    if(isa<StoreInst>(&II)){
+      inst2delete.push_back(&II);      
+    }
+  }
+  for(Instruction *II: inst2delete){
+    II->eraseFromParent();
+  }
+    
+  for (Instruction &II : *stolenHandlerPathEntry) {
+    if(isa<StoreInst>(&II)){
+      StoreInst* storeAfterFork = dyn_cast<StoreInst>(&II);
+      //builder.SetInsertPoint(&II);
+      storeAfterFork->setVolatile(true);
+      //builder.CreateCall(STORE2MEM, {storeAfterFork->getValueOperand(), storeAfterFork->getPointerOperand()});
      
-	// Create a load instruction
+      // Create a load instruction
+      if(restorePath->getTerminator()){
 	builder.SetInsertPoint(restorePath->getTerminator());
-	LoadInst* LI = builder.CreateLoad(storeAfterFork->getValueOperand()->getType(), storeAfterFork->getPointerOperand());
-	LI->setVolatile(true);
-	callInstV2.push_back(LI);
+      } else {
+	builder.SetInsertPoint(restorePath);
       }
+      LoadInst* LI = builder.CreateLoad(storeAfterFork->getValueOperand()->getType(), storeAfterFork->getPointerOperand());
+      LI->setVolatile(true);
+      callInstV2.push_back(LI);
     }
+  }
+
+
+  return stolenHandlerPathEntry;
 }
 
-void UNWINDABI::createSlowPathFcn(DetachInst& Detach) {
-    BasicBlock* curBB = Detach.getParent();
-    Function* F = curBB->getParent();    
+BasicBlock * UNWINDABI::createSlowPathFcn(DetachInst& Detach) {
+  BasicBlock* curBB = Detach.getParent();
+  Function* F = curBB->getParent();    
     
-    if(!isTre) {
-        static ValueToValueMapTy VMapSlowPath; 
-        DebugInfoFinder DIFinder;      
-        DISubprogram *SP = F->getSubprogram();
-        if (SP) {
-            //assert(!MustCloneSP || ModuleLevelChanges);
-            // Add mappings for some DebugInfo nodes that we don't want duplicated
-            // even if they're distinct.
-            auto &MD = VMapSlowPath.MD();
-            MD[SP->getUnit()].reset(SP->getUnit());
-            MD[SP->getType()].reset(SP->getType());
-            MD[SP->getFile()].reset(SP->getFile());  
-            MD[SP].reset(SP); 
-        }        
-    
-        // Perform the actual cloning
-        BasicBlock * contBB = Detach.getContinue(); 
-        slowPathFcn = CloneBasicBlock(contBB, VMapSlowPath, ".slowPath", F, nullptr, &DIFinder);
-        VMapSlowPath[contBB] = slowPathFcn;        
+  BasicBlock* slowPathFcn = nullptr;
+  if(!isTre) {
+    BasicBlock * contBB = Detach.getContinue(); 
+    slowPathFcn = dyn_cast<BasicBlock>(VMapSlowPath[contBB]);
      
-        // --------------------------------------------------------------
-        // Remap the cloned instruction
-        for (Instruction &II : *slowPathFcn) {
-            RemapInstruction(&II, VMapSlowPath, RF_IgnoreMissingLocals, nullptr, nullptr);        
-        }
-
-        for(Instruction &II : *contBB) {
-            // Look for potential call used to construct the phi node in the resume instruction
-            // Has to be a forkable function
-            if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->hasFnAttribute(Attribute::Forkable) 
-               && !dyn_cast<CallInst>(&II)->getCalledFunction()->getReturnType()->isVoidTy()) {
-                callInstV.push_back(dyn_cast<CallInst>(&II));
-                callInstV.push_back(dyn_cast<CallInst>(VMapSlowPath[&II]));
-            } 
-        }
-
-        Instruction* itermSlowPathPrologue = slowPathPrologue->getTerminator();      
-        BranchInst* resume2SlowPathFcn = BranchInst::Create(slowPathFcn);
-        ReplaceInstWithInst(itermSlowPathPrologue, resume2SlowPathFcn);
-
-        Instruction* itermSlowPathFcn = slowPathFcn->getTerminator();
-        BranchInst* resume2slowPathEpilogue = BranchInst::Create(slowPathEpilogue);        
-        ReplaceInstWithInst(itermSlowPathFcn, resume2slowPathEpilogue);
-
-    } else {
-        LLVMContext& C = F->getContext();
-
-        slowPathFcn = BasicBlock::Create(C, "before.tre.slowpath", F);      
-        
-        BranchInst* resume2SlowPathFcn = BranchInst::Create(slowPathFcn);
-        Instruction* itermSlowPathPrologue = slowPathPrologue->getTerminator();  
-        ReplaceInstWithInst(itermSlowPathPrologue, resume2SlowPathFcn);
-
-        IRBuilder<> B(slowPathFcn);
-        B.SetCurrentDebugLocation(Detach.getDebugLoc());
-        
-        SmallVector<Value *, 4> argV;        
-        for (Function::arg_iterator I = F->arg_begin(), E = F->arg_end(); I != E; ++I) {
-            // Get the use of the argument, if it is used in a phi node, get the other value
-            bool useOtherVal = false;
-            Value *otherVal = nullptr;
-            for (User *U : I->users()) {
-                if (U && isa<PHINode>(U)) {            
-                    PHINode* phiNode = dyn_cast<PHINode>(U);
-                    unsigned incomingEdge = phiNode->getNumIncomingValues();
-                    for(int i=0; i<incomingEdge; i++) {
-                        BasicBlock * blockIn = phiNode->getIncomingBlock(i);
-                        if(blockIn == Detach.getContinue()){
-                            otherVal = phiNode->getIncomingValue(i);
-                            useOtherVal = true;
-                            break;
-                        }
-                    }
-                }                    
-            } 
-            if(useOtherVal) {
-                argV.push_back(otherVal);
-            } else {
-                argV.push_back(I);
-            }
-        }
-        B.CreateCall(F, argV);
-        B.CreateBr(slowPathEpilogue);        
+    for(Instruction &II : *contBB) {
+      // Look for potential call used to construct the phi node in the resume instruction
+      // Has to be a forkable function
+      if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->hasFnAttribute(Attribute::Forkable) 
+	 && !dyn_cast<CallInst>(&II)->getCalledFunction()->getReturnType()->isVoidTy()) {
+	callInstV.push_back(dyn_cast<CallInst>(&II));
+	callInstV.push_back(dyn_cast<CallInst>(VMapSlowPath[&II]));
+      } 
     }
+        
+    //Instruction* itermSlowPathPrologue = slowPathPrologue->getTerminator();      
+    //BranchInst* resume2SlowPathFcn = BranchInst::Create(slowPathFcn);
+    //ReplaceInstWithInst(itermSlowPathPrologue, resume2SlowPathFcn);
+    
+    //Instruction* itermSlowPathFcn = slowPathFcn->getTerminator();
+    //BranchInst* resume2slowPathEpilogue = BranchInst::Create(slowPathEpilogue);        
+    //ReplaceInstWithInst(itermSlowPathFcn, resume2slowPathEpilogue);
+    
+  } else {
+    LLVMContext& C = F->getContext();
+    
+    slowPathFcn = BasicBlock::Create(C, "before.tre.slowpath", F);      
+    
+    BranchInst* resume2SlowPathFcn = BranchInst::Create(slowPathFcn);
+    Instruction* itermSlowPathPrologue = slowPathPrologue->getTerminator();  
+    ReplaceInstWithInst(itermSlowPathPrologue, resume2SlowPathFcn);
 
+    IRBuilder<> B(slowPathFcn);
+    B.SetCurrentDebugLocation(Detach.getDebugLoc());
+    
+    SmallVector<Value *, 4> argV;        
+    for (Function::arg_iterator I = F->arg_begin(), E = F->arg_end(); I != E; ++I) {
+      // Get the use of the argument, if it is used in a phi node, get the other value
+      bool useOtherVal = false;
+      Value *otherVal = nullptr;
+      for (User *U : I->users()) {
+	if (U && isa<PHINode>(U)) {            
+	  PHINode* phiNode = dyn_cast<PHINode>(U);
+	  unsigned incomingEdge = phiNode->getNumIncomingValues();
+	  for(int i=0; i<incomingEdge; i++) {
+	    BasicBlock * blockIn = phiNode->getIncomingBlock(i);
+	    if(blockIn == Detach.getContinue()){
+	      otherVal = phiNode->getIncomingValue(i);
+	      useOtherVal = true;
+	      break;
+	    }
+	  }
+	}                    
+      } 
+      if(useOtherVal) {
+	argV.push_back(otherVal);
+      } else {
+	argV.push_back(I);
+      }
+    }
+    B.CreateCall(F, argV);
+    B.CreateBr(slowPathEpilogue);        
+  }  
+
+  return slowPathFcn;
 }
 
 void UNWINDABI::createFastPath(DetachInst& Detach) {
-    // Add the prologue at beginning of the deattach block
-    BasicBlock* curBB = Detach.getParent();
-    Function* F = curBB->getParent();
-    Module* M = F->getParent();
-    LLVMContext& C = M->getContext();
+  // Add the prologue at beginning of the deattach block
+  BasicBlock* curBB = Detach.getParent();
+  Function* F = curBB->getParent();
+  Module* M = F->getParent();
+  LLVMContext& C = M->getContext();
 
-    BasicBlock* bb = nullptr;
-    Instruction* term = nullptr;
-    SmallVector<BasicBlock*, 8> bbList;
-    DenseMap<BasicBlock *, bool> haveVisited;
+  BasicBlock* bb = nullptr;
+  Instruction* term = nullptr;
+  SmallVector<BasicBlock*, 8> bbList;
+  DenseMap<BasicBlock *, bool> haveVisited;
 
-    BasicBlock* detachBB = Detach.getDetached();        
-    Value* OneByte = ConstantInt::get(IntegerType::getInt64Ty(C), 8, false);
+  BasicBlock* detachBB = Detach.getDetached();        
+  Value* OneByte = ConstantInt::get(IntegerType::getInt64Ty(C), 8, false);
 
-    // Common Used Function
-    Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
-    Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
+  // Common Used Function
+  Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
+  Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
 
-    Constant* PUSH_SS = Get_push_ss(*M);
-    Constant* POP_SS = Get_pop_ss(*M);
+  Constant* PUSH_SS = Get_push_ss(*M);
+  Constant* POP_SS = Get_pop_ss(*M);
 
-    IRBuilder<> fastBuilder(detachBB->getFirstNonPHIOrDbgOrLifetime()); 
+  IRBuilder<> fastBuilder(detachBB->getFirstNonPHIOrDbgOrLifetime()); 
         
-    // Build the Fast Path Prologue
-    // push_ss((void*) (builtin_sp() - 8) );
-    Value * SPVal = fastBuilder.CreateCall(getSP);
-    Value * SPValInt = fastBuilder.CreateCast(Instruction::PtrToInt, SPVal, IntegerType::getInt64Ty(C));
-    Value * ppRA  = fastBuilder.CreateSub(SPValInt, OneByte);
-    ppRA = fastBuilder.CreateCast(Instruction::IntToPtr, ppRA, IntegerType::getInt8Ty(C)->getPointerTo());
-    fastBuilder.CreateCall(PUSH_SS, {ppRA});
+  // Build the Fast Path Prologue
+  // push_ss((void*) (builtin_sp() - 8) );
+  Value * SPVal = fastBuilder.CreateCall(getSP);
+  Value * SPValInt = fastBuilder.CreateCast(Instruction::PtrToInt, SPVal, IntegerType::getInt64Ty(C));
+  Value * ppRA  = fastBuilder.CreateSub(SPValInt, OneByte);
+  ppRA = fastBuilder.CreateCast(Instruction::IntToPtr, ppRA, IntegerType::getInt8Ty(C)->getPointerTo());
+  fastBuilder.CreateCall(PUSH_SS, {ppRA});
 
-    fastBuilder.CreateCall(potentialJump, {BlockAddress::get( unwindPathEntry )});
+  fastBuilder.CreateCall(potentialJump, {BlockAddress::get( unwindPathEntry )});
         
-    for( Instruction &II : *detachBB){
-        if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->hasFnAttribute(Attribute::Forkable) ){
-            // Associate callsite instruction with steal handler
-            M->CallStealMap[&II].stealHandler = slowPathPrologue;
-            // Associate callsite instruction with unwind handler
-            M->CallStealMap[&II].unwindHandler = unwindPathEntry;
-            // Indicate the steal hander basic block needs a label
-            M->StealHandlerExists[M->CallStealMap[&II].stealHandler] = true;                    
-            break;
-        }
+  for( Instruction &II : *detachBB){
+    if(isa<CallInst>(&II) && dyn_cast<CallInst>(&II)->getCalledFunction()->hasFnAttribute(Attribute::Forkable) ){
+      // Associate callsite instruction with steal handler
+      M->CallStealMap[&II].stealHandler = slowPathPrologue;
+      // Associate callsite instruction with unwind handler
+      M->CallStealMap[&II].unwindHandler = unwindPathEntry;
+      // Indicate the steal hander basic block needs a label
+      M->StealHandlerExists[M->CallStealMap[&II].stealHandler] = true;                    
+      break;
     }
+  }
 
-    bbList.clear();
-    haveVisited.clear();
-    // Look for the reattach inst
-    // Add an epilogue just before it (POP_SS)
-    bbList.push_back(detachBB);
-    while(!bbList.empty()){
-        bb = bbList.back();
-        bbList.pop_back();
-        if ( (haveVisited.lookup(bb)) ){
-            continue;
-        }
-        haveVisited[bb] = true;
+  bbList.clear();
+  haveVisited.clear();
+  // Look for the reattach inst
+  // Add an epilogue just before it (POP_SS)
+  bbList.push_back(detachBB);
+  while(!bbList.empty()){
+    bb = bbList.back();
+    bbList.pop_back();
+    if ( (haveVisited.lookup(bb)) ){
+      continue;
+    }
+    haveVisited[bb] = true;
             
-        if ( (term = dyn_cast<ReattachInst>( bb->getTerminator() ))  ){
-            // Don't push anynore if we encountered reattach instruction
-            fastBuilder.SetInsertPoint(bb->getTerminator());
-            fastBuilder.CreateCall(POP_SS);
-        } else {
-            for( succ_iterator SI = succ_begin(bb); SI!=succ_end(bb); SI++ ){                
-                bbList.push_back(*SI);
-            }
-        }
+    if ( (term = dyn_cast<ReattachInst>( bb->getTerminator() ))  ){
+      // Don't push anynore if we encountered reattach instruction
+      fastBuilder.SetInsertPoint(bb->getTerminator());
+      fastBuilder.CreateCall(POP_SS);
+    } else {
+      for( succ_iterator SI = succ_begin(bb); SI!=succ_end(bb); SI++ ){                
+	bbList.push_back(*SI);
+      }
     }
+  }
+
 }
 
 Function* UNWINDABI::createDetach(DetachInst &Detach,
-                        ValueToValueMapTy &DetachCtxToStackFrame,
-                        DominatorTree &DT, AssumptionCache &AC) {
-    // GotStolen Handler
-    createGotStolenHandler(Detach);
+				  ValueToValueMapTy &DetachCtxToStackFrame,
+				  DominatorTree &DT, AssumptionCache &AC) {
 
-    // Temporary solution
-    createSlowPathFcn(Detach);
+  outs() << "I am in create Detach\n";
 
-    // Create the Fast Path
-    createFastPath(Detach);
+  // GotStolen Handler
+  BasicBlock * gotstolenHandler = createGotStolenHandler(Detach);
 
-    // Replace the detach with a branch to the detached block.
-    BranchInst *DetachBr = BranchInst::Create(Detach.getDetached());
-    ReplaceInstWithInst(&Detach, DetachBr);
+  // Temporary solution
+  BasicBlock * continuation = createSlowPathFcn(Detach);
 
-    return NULL;
+  // Create the Fast Path
+  createFastPath(Detach);
+  
+  // Create initialization for jump table
+  createJumpTableInit(Detach, gotstolenHandler);  
+  // Create sort of a jump table
+  createJumpTable(Detach, continuation);  
+  
+  encodedPcCntr++;
+
+  // Replace the detach with a branch to the detached block.
+  BranchInst *DetachBr = BranchInst::Create(Detach.getDetached());
+  ReplaceInstWithInst(&Detach, DetachBr);
+
+  return NULL;
+}
+
+void UNWINDABI::createJumpTableInit(DetachInst &Detach, BasicBlock * GotStolenHandler) {  
+  IRBuilder<> B(unwindJumpTableInit);
+  
+  BasicBlock* BB = Detach.getParent();
+  Function * F = BB->getParent();
+  Module* M = F->getParent();
+  LLVMContext& C = M->getContext();
+
+  Type* Int32Ty = TypeBuilder<int32_t, false>::get(C);
+  Value *ONE = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);  
+  
+
+  GlobalVariable* gUnwindStackCnt = GetGlobalVariable("unwindStackCnt", TypeBuilder<int, false>::get(C), *M, true);
+  GlobalVariable* gThreadId = GetGlobalVariable("threadId", TypeBuilder<int, false>::get(C), *M, true); 
+  GlobalVariable* gPrevRa = GetGlobalVariable("prevRa", TypeBuilder<addr_ty*, false>::get(C), *M, true);
+
+  Value * ra = B.CreateLoad(gPrevRa);
+  Value * detachBB = BlockAddress::get(Detach.getDetached());
+  Value * contBB = BlockAddress::get(Detach.getContinue());
+  
+  Value * rai = B.CreateCast(Instruction::PtrToInt, ra, IntegerType::getInt64Ty(C));
+  Value * detachBBi = B.CreateCast(Instruction::PtrToInt, detachBB, IntegerType::getInt64Ty(C));
+  Value * contBBi = B.CreateCast(Instruction::PtrToInt, contBB, IntegerType::getInt64Ty(C));
+  
+  BasicBlock* workExistsBB = BasicBlock::Create(C, "work.exists", F);   
+  BasicBlock* workExistsBB2 = BasicBlock::Create(C, "work.exists.two", F);   
+
+  /*
+    if (return_address >= Detach.getDetached() && return_address <= Detach.getContinue() ) {
+      encoded_pc = workCtr;
+      gotstolen_ra = GotStolenHandler;           
+    }
+  */
+
+
+  Instruction* isEqOne1 = dyn_cast<Instruction>(B.CreateICmpULE(rai, contBBi));
+  BasicBlock* afterBB = unwindJumpTableInit->splitBasicBlock(isEqOne1->getNextNode());
+  auto branch = BranchInst::Create(workExistsBB, afterBB, isEqOne1);
+  auto terminator = unwindJumpTableInit->getTerminator();    
+  ReplaceInstWithInst(terminator, branch);
+
+  Instruction* isEqOne2 = dyn_cast<Instruction>(B.CreateICmpUGE(rai, detachBBi));
+  afterBB = unwindJumpTableInit->splitBasicBlock(isEqOne2->getNextNode());
+  branch = BranchInst::Create(workExistsBB2, afterBB, isEqOne2);
+  terminator = workExistsBB->getTerminator();    
+  ReplaceInstWithInst(terminator, branch);
+
+  B.SetInsertPoint(workExistsBB2);
+  
+  Value * gThreadIdVal = B.CreateLoad(gThreadId);
+  Value * gUnwindStackCntVal = B.CreateLoad(gUnwindStackCnt);           
+  
+  // TODO This
+  /*
+      ctx = work_deque[threadId][unwindcntr];
+      unwindcntr++;          
+
+      // Save the context similar to setjmp/longjmp
+      if(mysetjmp_callee(ctx)) {
+        // Push to work queue
+        //enque_savecontext(ctx, threadId, joincntr);
+        work_cntr[threadId][unwindcntr].joincntr = 2;
+	work_owner[threadId][unwindcntr].owner = threadId;
+	//work_deque[threadId][unwindcntr].loc = unwindcntr - 1;
+
+	goto return_here;
+
+      } else {
+        work_stolen = %rdi or from the stack;
+        goto slow_path_prologue;
+      }
+   */
+
+  Value * pccntr = ConstantInt::get(Int32Ty, encodedPcCntr, /*isSigned=*/false);
+  B.CreateStore( pccntr, encodedPc);
+
+  //TODO : store gotstolen handler
+
+  GlobalVariable* gWorkContext = GetGlobalVariable("workctx_arr", 
+						   TypeBuilder<workcontext_ty,false>::get(C)->getPointerTo()->getPointerTo(), *M);
+   
+  Value* workCtxLoad = B.CreateLoad(gWorkContext);
+  Value* idx2 = B.CreateInBoundsGEP(workCtxLoad, gThreadIdVal);
+  Value* loadIdx2 = B.CreateLoad(idx2 );
+  Value* idx1 = B.CreateInBoundsGEP(loadIdx2, gUnwindStackCntVal);
+  Value* loadIdx1bitcast = B.CreateConstInBoundsGEP2_64(idx1, 0, 0);
+  
+  Constant* MYSETJMP_CALLEE = UNWINDRTS_FUNC(mysetjmp_callee, *M);
+  
+  B.CreateStore(B.CreateAdd(gUnwindStackCntVal, ONE), gUnwindStackCnt);
+
+  Value* result = B.CreateCall(MYSETJMP_CALLEE, {loadIdx1bitcast});    
+  dyn_cast<CallInst>(result)->setCallingConv(CallingConv::Fast);      
+  
+  BasicBlock *ThiefEntry            = BasicBlock::Create(C, "unwind.thief.entry", F);
+  BasicBlock *AttemptUnwinding      = BasicBlock::Create(C, "unwind.attempt.unwinding", F);
+  
+  Value* isEqOne = B.CreateICmpEQ(result, ONE);        
+  B.CreateCondBr(isEqOne, ThiefEntry, AttemptUnwinding);
+
+  B.SetInsertPoint(ThiefEntry);
+  B.CreateBr(slowPathPrologue);
+
+  B.SetInsertPoint(AttemptUnwinding);
+  B.CreateBr(returnInUnwind);
+
+  llvm::InlineFunctionInfo ifi;
+  llvm::InlineFunction(dyn_cast<CallInst>(result), ifi, nullptr, true);
+}
+
+void UNWINDABI::createJumpTable(DetachInst &Detach, BasicBlock * Continuation) {
+  Module* M = Continuation->getModule();
+  LLVMContext& Ctx = M->getContext();
+  Type* Int32Ty = TypeBuilder<int32_t, false>::get(Ctx);  
+
+  IRBuilder<> B(unwindJumpTable->getTerminator());
+  
+  Value * pccntr = ConstantInt::get(Int32Ty, encodedPcCntr, /*isSigned=*/false);
+  Value * pc = B.CreateLoad(encodedPc);
+
+  /*
+    if(encoded_pc == workCtr) {
+    goto Continuation;
+    }
+  */
+
+  Instruction* isEqOne = dyn_cast<Instruction>(B.CreateICmpEQ(pc, pccntr));
+  BasicBlock* afterBB = unwindJumpTable->splitBasicBlock(isEqOne->getNextNode()); 
+
+  auto branch = BranchInst::Create(Continuation, afterBB, isEqOne);
+  auto terminator = unwindJumpTable->getTerminator();    
+  ReplaceInstWithInst(terminator, branch);
 }
 
 void UNWINDABI::createRestorePath(Function& F, SyncInst * SI) {
-    IRBuilder <> B(restorePath);    
+  //IRBuilder <> B(restorePath);    
 
-    // Restore path
-    B.CreateBr(SI->getSuccessor(0));
+  // Restore path
+  //B.CreateBr(SI->getSuccessor(0));
 
 }
+
+#if 0
+void UNWINDABI::createUnwindHandler(Function& F) {
+  Module* M = F.getParent();
+  LLVMContext& C = M->getContext();
+    
+  BasicBlock* unwindSaveCtx = BasicBlock::Create(C, "unwind.save.ctx", &F);      
+  IRBuilder<> B(unwindPathEntry);
+      
+  Value* ONE = B.getInt32(1);
+  Value* ZERO = B.getInt32(0);
+
+  GlobalVariable* gSeed_ptr = GetGlobalVariable("seed_ptr", TypeBuilder<addr_ty*, false>::get(C), *M, true); 
+  GlobalVariable* gThreadId = GetGlobalVariable("threadId", TypeBuilder<int, false>::get(C), *M, true); 
+  GlobalVariable* gSeed_bp = GetGlobalVariable("seed_bp", TypeBuilder<addr_ty**, false>::get(C), *M);       
+  GlobalVariable* gWorkContext = GetGlobalVariable("workctx_arr", 
+						   TypeBuilder<workcontext_ty,false>::get(C)->getPointerTo()->getPointerTo(), *M);
+   
+  ///    unsigned ptr = (seed_ptr - seed_bp[threadId]);      
+  Value* gThreadIdVal = B.CreateLoad(gThreadId);
+  Value* gSeed_bpVal = B.CreateLoad(gSeed_bp);        
+  Value* bp_location = B.CreateInBoundsGEP(gSeed_bpVal, gThreadIdVal); 
+  Value* gSeed_bpEntry = B.CreateLoad(bp_location);    
+  
+  Value* gSeed_ptrVal = B.CreateLoad(gSeed_ptr);      
+  Value* seedOffset = B.CreatePtrDiff(gSeed_ptrVal, gSeed_bpEntry);
+
+  Value* workCtxLoad = B.CreateLoad(gWorkContext);
+  Value* idx2 = B.CreateInBoundsGEP(workCtxLoad, gThreadIdVal);
+  Value* loadIdx2 = B.CreateLoad(idx2 );
+  Value* idx1 = B.CreateInBoundsGEP(loadIdx2, seedOffset);
+  Value* loadIdx1bitcast = B.CreateConstInBoundsGEP2_64(idx1, 0, 0);
+    
+  Value* savedPc = B.CreateConstGEP1_32(loadIdx1bitcast, 1);   
+  B.CreateStore(BlockAddress::get(slowPathPrologue), savedPc);    
+  
+  Constant* SAVECONTEXT = UNWINDRTS_FUNC(savecontext, *M);
+  Value* result = B.CreateCall(SAVECONTEXT, {loadIdx1bitcast});        
+    
+  Value* isEqOne = B.CreateICmpEQ(result, ONE);
+  B.CreateCondBr(isEqOne, slowPathPrologue, unwindSaveCtx);
+
+  B.SetInsertPoint(unwindSaveCtx);
+
+  if(F.getReturnType()->isVoidTy())
+    B.CreateRetVoid();
+  else if (F.getReturnType()->isIntegerTy())
+    B.CreateRet(ZERO);
+  else
+    assert(0 && "Return type not supported yet");
+
+  M->StealHandlerExists[unwindPathEntry] = true;
+
+  // TODO : Inline be move to the Post Processing, when everything is complete 
+  llvm::InlineFunctionInfo ifi;
+  llvm::InlineFunction(dyn_cast<CallInst>(result), ifi, nullptr, true);
+}
+#else
 
 void UNWINDABI::createUnwindHandler(Function& F) {
-    Module* M = F.getParent();
-    LLVMContext& C = M->getContext();
+  Module* M = F.getParent();
+  const DataLayout &DL = M->getDataLayout();
+  LLVMContext& C = M->getContext();
     
-    BasicBlock* unwindSaveCtx = BasicBlock::Create(C, "unwind.save.ctx", &F);      
-    IRBuilder<> B(unwindPathEntry);
+  BasicBlock* unwindSaveCtx = BasicBlock::Create(C, "unwind.save.ctx", &F);      
+  IRBuilder<> B(unwindPathEntry);
       
-    Value* ONE = B.getInt32(1);
-    Value* ZERO = B.getInt32(0);
+  Value* ONE = B.getInt32(1);
+  Value* ZERO = B.getInt32(0);
+  Value* ZERO64 = B.getInt64(0);
+  Value* OneByte = ConstantInt::get(IntegerType::getInt64Ty(C), 8, false);
 
-    GlobalVariable* gSeed_ptr = GetGlobalVariable("seed_ptr", TypeBuilder<addr_ty*, false>::get(C), *M, true); 
-    GlobalVariable* gThreadId = GetGlobalVariable("threadId", TypeBuilder<int, false>::get(C), *M, true); 
-    GlobalVariable* gSeed_bp = GetGlobalVariable("seed_bp", TypeBuilder<addr_ty**, false>::get(C), *M);       
-    GlobalVariable* gWorkContext = GetGlobalVariable("workctx_arr", 
-                                                       TypeBuilder<workcontext_ty,false>::get(C)->getPointerTo()->getPointerTo(), *M);
+  Type* Int32Ty = TypeBuilder<int32_t, false>::get(C);
+
+  // May need to optimize it later
+  GlobalVariable* gUnwindStackCnt = GetGlobalVariable("unwindStackCnt", TypeBuilder<int, false>::get(C), *M, true);
+  GlobalVariable* gThreadId = GetGlobalVariable("threadId", TypeBuilder<int, false>::get(C), *M, true); 
+  GlobalVariable* gPrevRa = GetGlobalVariable("prevRa", TypeBuilder<int64_t, false>::get(C), *M, true);
     
-    ///    unsigned ptr = (seed_ptr - seed_bp[threadId]);      
-    Value* gThreadIdVal = B.CreateLoad(gThreadId);
-    Value* gSeed_bpVal = B.CreateLoad(gSeed_bp);        
-    Value* bp_location = B.CreateInBoundsGEP(gSeed_bpVal, gThreadIdVal); 
-    Value* gSeed_bpEntry = B.CreateLoad(bp_location);    
+  Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
+  Function* getFrameSize = Intrinsic::getDeclaration(M, Intrinsic::x86_get_frame_size);
   
-    Value* gSeed_ptrVal = B.CreateLoad(gSeed_ptr);      
-    Value* seedOffset = B.CreatePtrDiff(gSeed_ptrVal, gSeed_bpEntry);
+  Value * gThreadIdVal = B.CreateLoad(gThreadId);
+  Value * gUnwindStackCntVal = B.CreateLoad(gUnwindStackCnt);        
+  Value * childRa = B.CreateLoad(gPrevRa);
 
-    Value* workCtxLoad = B.CreateLoad(gWorkContext);
-    Value* idx2 = B.CreateInBoundsGEP(workCtxLoad, gThreadIdVal);
-    Value* loadIdx2 = B.CreateLoad(idx2 );
-    Value* idx1 = B.CreateInBoundsGEP(loadIdx2, seedOffset);
-    Value* loadIdx1bitcast = B.CreateConstInBoundsGEP2_64(idx1, 0, 0);
-    
-    Value* savedPc = B.CreateConstGEP1_32(loadIdx1bitcast, 1);   
-    B.CreateStore(BlockAddress::get(slowPathPrologue), savedPc);    
+  // TODO: Fix this, return address of child is modified, need to get it form heap instead of builtin_sp - 8
+  // ra = *( ((void*) (builtin_sp() - 8)) );
+  Value * SPVal = B.CreateCall(getSP);
+  Value * SPValInt = B.CreateCast(Instruction::PtrToInt, SPVal, IntegerType::getInt64Ty(C));
+  Value * ppChildRA  = B.CreateSub(SPValInt, OneByte);
+  ppChildRA = B.CreateCast(Instruction::IntToPtr, ppChildRA, IntegerType::getInt64Ty(C)->getPointerTo());
+  //Value * childRa = B.CreateLoad(ppChildRA);  
   
-    Constant* SAVECONTEXT = UNWINDRTS_FUNC(savecontext, *M);
-    Value* result = B.CreateCall(SAVECONTEXT, {loadIdx1bitcast});        
-    
-    Value* isEqOne = B.CreateICmpEQ(result, ONE);
-    B.CreateCondBr(isEqOne, slowPathPrologue, unwindSaveCtx);
+  // bp = sp + frame_size
+  // parent_bp = *bp;  
+  Value * FrameSizeVal = B.CreateCall(getFrameSize);
+  Value * BPValInt = B.CreateAdd(SPVal, FrameSizeVal);
+  BPValInt = B.CreateSub(BPValInt, OneByte);
+  Value * BPVal = B.CreateCast(Instruction::IntToPtr, BPValInt, IntegerType::getInt64Ty(C)->getPointerTo());
+  Value * parentBPVal = B.CreateLoad(BPVal);
+  
+  //parentBPVal->getType()->dump();
+  Value * parentBPValInt = B.CreateCast(Instruction::PtrToInt, parentBPVal, IntegerType::getInt64Ty(C));
+  // p_parent_unwind = (void*) (parent_bp-8);  
+  Value * ppParentUnwind  = B.CreateSub(parentBPValInt, OneByte);
+  ppParentUnwind = B.CreateCast(Instruction::IntToPtr, ppParentUnwind, IntegerType::getInt64Ty(C)->getPointerTo());
+  //Value * parentUnwind = B.CreateLoad(ppParentUnwind);  
+  // p_myreturnaddr = (void*) (bp+8);
+  Value * ppMyRA  = B.CreateAdd(BPValInt, OneByte);
+  ppMyRA = B.CreateCast(Instruction::IntToPtr, ppMyRA, IntegerType::getInt64Ty(C)->getPointerTo());
+ 
+  
+  BasicBlock* firstTimeUnwind = BasicBlock::Create(C, "first.time.unwind", &F);      
+  BasicBlock* unwindBody = BasicBlock::Create(C, "unwind.body", &F);      
+  // if (unwindStackCnt == 0)
+  Value* isEqZero = B.CreateICmpEQ(gUnwindStackCntVal, ZERO);
+  B.CreateCondBr(isEqZero, firstTimeUnwind, unwindBody);
+  
+  B.SetInsertPoint(firstTimeUnwind);  
+  
+  // if (parent_bp == 0) 
+  BasicBlock* resumeInterruptedBB_1 = BasicBlock::Create(C, "resume.interrupted.one", &F);     
+  BasicBlock* checkIfParentHaveBeenUnwind = BasicBlock::Create(C, "check.if.parent.unwind", &F);      
+  BasicBlock* returnToUnwind_1 = BasicBlock::Create(C, "return.to.unwind.one", &F);      
+  Value* isEqZero64 = B.CreateICmpEQ(parentBPValInt, ZERO64);
+  B.CreateCondBr(isEqZero64, resumeInterruptedBB_1, checkIfParentHaveBeenUnwind);
+  
+  // if (*p_parent_unwind == 0) 
+  B.SetInsertPoint(checkIfParentHaveBeenUnwind);
+  Value * parentUnwindVal = B.CreateLoad(ppParentUnwind);  
+  Value * parentUnwindValInt = B.CreateCast(Instruction::PtrToInt, parentUnwindVal, IntegerType::getInt64Ty(C));
+  isEqZero64 = B.CreateICmpEQ(parentUnwindValInt, ZERO64);
+  B.CreateCondBr(isEqZero64, resumeInterruptedBB_1, returnToUnwind_1);
 
-    B.SetInsertPoint(unwindSaveCtx);
+  // mylongjmp_callee(resumectx);
+  B.SetInsertPoint(resumeInterruptedBB_1);
+  GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", TypeBuilder<workcontext_ty,false>::get(C), *M, true);
+  Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
+  
+  Constant* MYLONGJMP_CALLEE = UNWINDRTS_FUNC(mylongjmp_callee, *M);
+  Value * result = B.CreateCall(MYLONGJMP_CALLEE, {gunwind_ctx});
+  dyn_cast<CallInst>(result)->setCallingConv(CallingConv::Fast);
+  llvm::InlineFunctionInfo ifi;
+  llvm::InlineFunction(dyn_cast<CallInst>(result), ifi, nullptr, true);
+  B.CreateBr(returnToUnwind_1);
+  
+  // *p_myreturnaddr = *p_parent_unwind;
+  // unwindcntr++;  
+  B.SetInsertPoint(returnToUnwind_1);
 
-    if(F.getReturnType()->isVoidTy())
-        B.CreateRetVoid();
-    else if (F.getReturnType()->isIntegerTy())
-        B.CreateRet(ZERO);
-    else
-        assert(0 && "Return type not supported yet");
+  B.CreateStore(B.CreateLoad(ppMyRA), gPrevRa);
 
-    M->StealHandlerExists[unwindPathEntry] = true;
+  B.CreateStore(B.CreateLoad(ppParentUnwind), ppMyRA);  
+  B.CreateStore(B.CreateAdd(gUnwindStackCntVal, ONE), gUnwindStackCnt);
 
-    // TODO : Inline be move to the Post Processing, when everything is complete 
-    llvm::InlineFunctionInfo ifi;
-    llvm::InlineFunction(dyn_cast<CallInst>(result), ifi, nullptr, true);
+  // return 0;
+  if(F.getReturnType()->isVoidTy())
+    B.CreateRetVoid();
+  else if (F.getReturnType()->isIntegerTy())
+    B.CreateRet(ZERO);
+  else
+    assert(0 && "Return type not supported yet");
+
+  B.SetInsertPoint(unwindBody);
+  // Change the child return address to default
+
+  B.CreateStore(childRa, ppChildRA);  
+
+  // int joincntr = 2;
+  joinCntr = B.CreateAlloca(Int32Ty, DL.getAllocaAddrSpace(), nullptr, "joincntr");
+  Value * nChildIR = ConstantInt::get(Int32Ty, 2, /*isSigned=*/false);
+  B.CreateStore(nChildIR,  joinCntr);
+  
+  // int encodedPc = 0;
+  encodedPc = B.CreateAlloca(Int32Ty, DL.getAllocaAddrSpace(), nullptr, "encodedPc");   
+  B.CreateStore(ZERO,  encodedPc);
+  B.CreateBr(unwindJumpTableInit);
+
+  B.SetInsertPoint(unwindJumpTableInit);  
+
+  returnInUnwind = BasicBlock::Create(C, "return.in.unwind", &F);
+  B.CreateBr(returnInUnwind);
+
+  B.SetInsertPoint(returnInUnwind);  
+  BasicBlock* resumeInterruptedBB_2 = BasicBlock::Create(C, "resume.interrupted.two", &F);       
+  BasicBlock* returnToUnwind_2 = BasicBlock::Create(C, "return.to.unwind.two", &F);      
+
+  // if (*p_parent_unwind == 0)
+  parentUnwindVal = B.CreateLoad(ppParentUnwind);  
+  parentUnwindValInt = B.CreateCast(Instruction::PtrToInt, parentUnwindVal, IntegerType::getInt64Ty(C));
+  isEqZero64 = B.CreateICmpEQ(parentUnwindValInt, ZERO64);
+  B.CreateCondBr(isEqZero64, resumeInterruptedBB_2, returnToUnwind_2);
+  
+  B.SetInsertPoint(resumeInterruptedBB_2);
+  // TODO:
+  // if(unwindcntr>1) {
+  //    // There is work 
+  //    wordeque_ptr.tail = 1;
+  //    wordeque_ptr.head = unwindcntr;
+  // } else {
+  //    wordeque_ptr.tail = 0;
+  //    wordeque_ptr.head = 0;
+  // }
+
+
+  B.CreateStore(ZERO, gUnwindStackCnt);
+
+  gUnwindContext = GetGlobalVariable("unwindCtx", TypeBuilder<workcontext_ty,false>::get(C), *M, true);
+  gunwind_ctx = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
+  result = B.CreateCall(MYLONGJMP_CALLEE, {gunwind_ctx});
+  dyn_cast<CallInst>(result)->setCallingConv(CallingConv::Fast);
+  //llvm::InlineFunctionInfo ifi;
+  llvm::InlineFunction(dyn_cast<CallInst>(result), ifi, nullptr, true);
+  B.CreateBr(returnToUnwind_2);
+  
+  B.SetInsertPoint(returnToUnwind_2);
+  // *p_myreturnaddr = *p_parent_unwind;  
+  B.CreateStore(B.CreateLoad(ppMyRA), gPrevRa);
+  B.CreateStore(B.CreateLoad(ppParentUnwind), ppMyRA);  
+  
+  // return 0;
+  if(F.getReturnType()->isVoidTy())
+    B.CreateRetVoid();
+  else if (F.getReturnType()->isIntegerTy())
+    B.CreateRet(ZERO);
+  else
+    assert(0 && "Return type not supported yet");
 }
+#endif
 
 void UNWINDABI::instrumentMainFcn(Function& F) {
-    // Initialize the PRSC at the beginning of main
-    Module* M = F.getParent();
-    IRBuilder<> B(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+  // Initialize the PRSC at the beginning of main
+  Module* M = F.getParent();
+  IRBuilder<> B(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
 
-    Constant* INITWORKERS_ENV = Get_initworkers_env(*M);
-    Constant* DEINITWORKERS_ENV = Get_deinitworkers_env(*M);
-    Constant* INITPERWORKERS_SYNC = Get_initperworkers_sync(*M);
-    Constant* DEINITPERWORKERS_SYNC = Get_deinitperworkers_sync(*M);
+  Constant* INITWORKERS_ENV = Get_initworkers_env(*M);
+  Constant* DEINITWORKERS_ENV = Get_deinitworkers_env(*M);
+  Constant* INITPERWORKERS_SYNC = Get_initperworkers_sync(*M);
+  Constant* DEINITPERWORKERS_SYNC = Get_deinitperworkers_sync(*M);
 
-    Value* ONE = B.getInt32(1);
-    Value* ZERO = B.getInt32(0);
+  Value* ONE = B.getInt32(1);
+  Value* ZERO = B.getInt32(0);
 
-    // Get debug info
-    //B.SetCurrentDebugLocation(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime()->getDebugLoc());
+  // Get debug info
+  //B.SetCurrentDebugLocation(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime()->getDebugLoc());
 
-    B.CreateCall(INITWORKERS_ENV);
-    B.CreateCall(INITPERWORKERS_SYNC,  {ZERO, ONE});   
+  B.CreateCall(INITWORKERS_ENV);
+  B.CreateCall(INITPERWORKERS_SYNC,  {ZERO, ONE});   
 
-    for (auto &BB : F){
-        Instruction * termInst = BB.getTerminator();
-        if(isa<ReturnInst>(termInst)){
-            B.SetInsertPoint(termInst);
-            B.CreateCall(DEINITPERWORKERS_SYNC, {ZERO, ONE});
-            B.CreateCall(DEINITWORKERS_ENV);
-        }
-    }   
+  for (auto &BB : F){
+    Instruction * termInst = BB.getTerminator();
+    if(isa<ReturnInst>(termInst)){
+      B.SetInsertPoint(termInst);
+      B.CreateCall(DEINITPERWORKERS_SYNC, {ZERO, ONE});
+      B.CreateCall(DEINITWORKERS_ENV);
+    }
+  }   
 }
 
 void UNWINDABI::instrumentSpawningFcn(Function& F) {
-    Module* M = F.getParent();
-    LLVMContext &Ctx = M->getContext();
-    IRBuilder<> B(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+  Module* M = F.getParent();
+  LLVMContext &Ctx = M->getContext();
+  IRBuilder<> B(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
 
-    Value *ONE = B.getInt32(1);
-    Value *ZERO = B.getInt32(0);
+  Value *ONE = B.getInt32(1);
+  Value *ZERO = B.getInt32(0);
 
-    Constant* UNWIND_POLL = UNWINDRTS_FUNC(unwind_poll, *M);    
+  Constant* UNWIND_POLL = UNWINDRTS_FUNC(unwind_poll, *M);    
 
-    // Get debug info
-    //B.SetCurrentDebugLocation(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime()->getDebugLoc());
+  // Get debug info
+  //B.SetCurrentDebugLocation(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime()->getDebugLoc());
 
-    Value* res = B.CreateCall(UNWIND_POLL);    
-    Instruction* isEqOne = dyn_cast<Instruction>(B.CreateICmpEQ(res, ONE));
-    BasicBlock *returnToUnwindBB = BasicBlock::Create(Ctx, "returnto.unwind", &F);
-
-    BasicBlock* afterBB = F.getEntryBlock().splitBasicBlock(isEqOne->getNextNode());
-    auto branch = BranchInst::Create(returnToUnwindBB, afterBB, isEqOne);
+  Value* res = B.CreateCall(UNWIND_POLL);    
+  Instruction* isEqOne = dyn_cast<Instruction>(B.CreateICmpEQ(res, ONE));
+  BasicBlock *returnToUnwindBB = BasicBlock::Create(Ctx, "returnto.unwind", &F);
+  
+  // Insert basic block in middle of a basic block
+  BasicBlock* afterBB = F.getEntryBlock().splitBasicBlock(isEqOne->getNextNode());
+  auto branch = BranchInst::Create(returnToUnwindBB, afterBB, isEqOne);
     
-    auto terminator = F.getEntryBlock().getTerminator();    
-    ReplaceInstWithInst(terminator, branch);
+  auto terminator = F.getEntryBlock().getTerminator();    
+  ReplaceInstWithInst(terminator, branch);
 
-    llvm::InlineFunctionInfo ifi;
-    llvm::InlineFunction(dyn_cast<CallInst>(res), ifi, nullptr, true);
+  llvm::InlineFunctionInfo ifi;
+  llvm::InlineFunction(dyn_cast<CallInst>(res), ifi, nullptr, true);
     
-    B.SetInsertPoint(returnToUnwindBB);
-    GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", TypeBuilder<workcontext_ty,false>::get(Ctx), *M, true);
-    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
-    Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, 1);   
-    B.CreateStore(BlockAddress::get(afterBB), savedPc);     
-    if(F.getReturnType()->isVoidTy())
-        B.CreateRetVoid();
-    else if (F.getReturnType()->isIntegerTy())
-        B.CreateRet(ZERO);
-    else
-        assert(0 && "Return type not supported yet");
+  B.SetInsertPoint(returnToUnwindBB);
+  GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", TypeBuilder<workcontext_ty,false>::get(Ctx), *M, true);
+  Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
+  Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, 1);   
+  B.CreateStore(BlockAddress::get(afterBB), savedPc);     
+  if(F.getReturnType()->isVoidTy())
+    B.CreateRetVoid();
+  else if (F.getReturnType()->isIntegerTy())
+    B.CreateRet(ZERO);
+  else
+    assert(0 && "Return type not supported yet");
     
-    for (auto &BB : F){
-        Instruction * termInst = BB.getTerminator();
-        if(isa<ReturnInst>(termInst)){            
-            B.SetInsertPoint(termInst);
-            Value* res = B.CreateCall(UNWIND_POLL);
+  for (auto &BB : F){
+    Instruction * termInst = BB.getTerminator();
+    if(isa<ReturnInst>(termInst)){            
+      B.SetInsertPoint(termInst);
+      Value* res = B.CreateCall(UNWIND_POLL);
 
-            Instruction* isEqOne = dyn_cast<Instruction>(B.CreateICmpEQ(res, ONE));
-            BasicBlock *returnToUnwindBB = BasicBlock::Create(Ctx, "returnto.unwind2", &F);
+      Instruction* isEqOne = dyn_cast<Instruction>(B.CreateICmpEQ(res, ONE));
+      BasicBlock *returnToUnwindBB = BasicBlock::Create(Ctx, "returnto.unwind2", &F);
 
-            BasicBlock* afterBB = BB.splitBasicBlock(isEqOne->getNextNode());
-            auto branch = BranchInst::Create(returnToUnwindBB, afterBB, isEqOne);
+      BasicBlock* afterBB = BB.splitBasicBlock(isEqOne->getNextNode());
+      auto branch = BranchInst::Create(returnToUnwindBB, afterBB, isEqOne);
     
-            auto terminator = BB.getTerminator();    
-            ReplaceInstWithInst(terminator, branch);
+      auto terminator = BB.getTerminator();    
+      ReplaceInstWithInst(terminator, branch);
     
-            llvm::InlineFunctionInfo ifi;
-            llvm::InlineFunction(dyn_cast<CallInst>(res), ifi, nullptr, true);
+      llvm::InlineFunctionInfo ifi;
+      llvm::InlineFunction(dyn_cast<CallInst>(res), ifi, nullptr, true);
     
 
-            B.SetInsertPoint(returnToUnwindBB);
-            Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, 1);   
-            B.CreateStore(BlockAddress::get(afterBB), savedPc);    
+      B.SetInsertPoint(returnToUnwindBB);
+      Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, 1);   
+      B.CreateStore(BlockAddress::get(afterBB), savedPc);    
   
             
-            if(F.getReturnType()->isVoidTy())
-                B.CreateRetVoid();
-            else if (F.getReturnType()->isIntegerTy())
-                B.CreateRet(ZERO);
-            else
-                assert(0 && "Return type not supported yet");
+      if(F.getReturnType()->isVoidTy())
+	B.CreateRetVoid();
+      else if (F.getReturnType()->isIntegerTy())
+	B.CreateRet(ZERO);
+      else
+	assert(0 && "Return type not supported yet");
 
-            break;
-        }
-    }   
-
+      break;
+    }
+  }   
 }
 
 Value* UNWINDABI::createSlowPathPrologue(Function& F) {
-    Module* M = F.getParent();
-    LLVMContext& C = M->getContext();
-    IRBuilder <> B(slowPathPrologue);
+  Module* M = F.getParent();
+  LLVMContext& C = M->getContext();
+  IRBuilder <> B(slowPathPrologue);
 
-    using AsmTypCallee = void** ( void );
-    FunctionType *FAsmTypCallee = TypeBuilder<AsmTypCallee, false>::get(C);
-    Value* Asm = InlineAsm::get(FAsmTypCallee, "movq %rdi, $0\n", "=r,~{rdi},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);    
-    Value* workCtx = B.CreateCall(Asm);
+  using AsmTypCallee = void** ( void );
+  FunctionType *FAsmTypCallee = TypeBuilder<AsmTypCallee, false>::get(C);
+  Value* Asm = InlineAsm::get(FAsmTypCallee, "movq %rdi, $0\n", "=r,~{rdi},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);    
+  Value* workCtx = B.CreateCall(Asm);
 
-    B.CreateBr(slowPathEpilogue);
+  B.CreateBr(unwindJumpTable);
 
-    return workCtx;
+  return workCtx;
 }
 
-void UNWINDABI::createSlowPathEpilogue(Function& F, Value* workCtx) {    
-    Module* M = F.getParent();
-    LLVMContext& C = M->getContext();    
-
-    IRBuilder <> B(slowPathEpilogue);    
+void UNWINDABI::createSlowPathEpilogue(Function& F, Instruction* SI, Value* workCtx, BasicBlock* restorePath) {    
+  Module* M = F.getParent();
+  LLVMContext& C = M->getContext();    
+  IRBuilder <> B(SI);    
         
-    Value* ONE = B.getInt32(1);
+  Value* ONE = B.getInt32(1);
    
-    Constant* MYSETJMP_CALLEE = UNWINDRTS_FUNC(mysetjmp_callee, *M);
-    Value* result = B.CreateCall(MYSETJMP_CALLEE, {workCtx});
-    dyn_cast<CallInst>(result)->setCallingConv(CallingConv::Fast);    
+  Constant* MYSETJMP_CALLEE = UNWINDRTS_FUNC(mysetjmp_callee, *M);
+  Value* result = B.CreateCall(MYSETJMP_CALLEE, {workCtx});
+  dyn_cast<CallInst>(result)->setCallingConv(CallingConv::Fast);    
     
-    Value* savedPc =  B.CreateConstGEP1_32(workCtx, 1);   
-    B.CreateStore( BlockAddress::get(restorePath), savedPc);    
+  Value* savedPc =  B.CreateConstGEP1_32(workCtx, 1);   
+  B.CreateStore( BlockAddress::get(restorePath), savedPc);    
 
-    Value* isEqOne = B.CreateICmpEQ(result, ONE);           
-    BasicBlock* suspendPath = BasicBlock::Create(C, "suspend.path", &F);
-    B.CreateCondBr(isEqOne, restorePath, suspendPath);    
+  Value* isEqOne = B.CreateICmpEQ(result, ONE);           
+  BasicBlock* suspendPath = BasicBlock::Create(C, "suspend.path", &F);
+  B.CreateCondBr(isEqOne, restorePath, suspendPath);    
     
-    llvm::InlineFunctionInfo ifi;
-    llvm::InlineFunction(dyn_cast<CallInst>(result), ifi);
+  llvm::InlineFunctionInfo ifi;
+  llvm::InlineFunction(dyn_cast<CallInst>(result), ifi);
 
-    B.SetInsertPoint(suspendPath);                       
-    Function* resume2scheduler = dyn_cast<Function>(M->getOrInsertFunction( "resume2scheduler", TypeBuilder<void (void**) , false>::get(M->getContext())));
-    B.CreateCall(resume2scheduler, {workCtx});
-    B.CreateBr(restorePath);        
+  B.SetInsertPoint(suspendPath);                       
+  Function* resume2scheduler = dyn_cast<Function>(M->getOrInsertFunction( "resume2scheduler", TypeBuilder<void (void**) , false>::get(M->getContext())));
+  B.CreateCall(resume2scheduler, {workCtx});
+  B.CreateBr(restorePath);        
+
+  BranchInst *restoreBr = BranchInst::Create(restorePath);
+  ReplaceInstWithInst(SI, restoreBr);
 }
 
 void UNWINDABI::preProcessFunction(Function &F) {
   Module* M = F.getParent();
   LLVMContext& C = M->getContext();
-  IRBuilder<> builder(C);
+  IRBuilder<> B(C);
+
+  encodedPcCntr = 0;
 
   // Add Thread initialization and deinitialization on the main function
   // TODO : Make this optional
   if ( F.getName() == "main") {
-      instrumentMainFcn(F); 
-      return;
+    instrumentMainFcn(F); 
+    return;
   }
   
   // -------------------------------------------------
   // Add forkable attribute
+  bool bContainSpawn = false;
   for (auto &BB : F){
-      if (DetachInst * DI = dyn_cast<DetachInst>(BB.getTerminator())){          
-          BasicBlock * detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
-          for( Instruction &II : *detachBlock ) {
-              if( isa<CallInst>(&II)  && !isa<DbgInfoIntrinsic>(&II)) {
-                  dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);               
-              }
-          }
+    if (DetachInst * DI = dyn_cast<DetachInst>(BB.getTerminator())){          
+      BasicBlock * detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
+      for( Instruction &II : *detachBlock ) {
+	if( isa<CallInst>(&II)  && !isa<DbgInfoIntrinsic>(&II)) {
+	  dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);               
+	  bContainSpawn = true;
+	}
       }
+    }
   }
   
   // Determine whether it is TRE or spawn child
@@ -1025,20 +1358,88 @@ void UNWINDABI::preProcessFunction(Function &F) {
   instrumentSpawningFcn(F);
 
   // -------------------------------------------------------------
-  // Create the resume path
-  for (auto &BB : F){
-      if( SyncInst *SI = dyn_cast<SyncInst>(BB.getTerminator()) ){
-          slowPathEpilogue = BasicBlock::Create(C, "slow.path.epilogue", &F);
-          slowPathPrologue = BasicBlock::Create(C, "slow.path.prologue", &F);    
-          unwindPathEntry = BasicBlock::Create(C, "unwind.path.entry", &F);
-          restorePath = BasicBlock::Create(C, "restore.path", &F);
+  // Create the path needed
+  unwindPathEntry = BasicBlock::Create(C, "unwind.path.entry", &F);
+  if(bContainSpawn) {
+    slowPathEpilogue = BasicBlock::Create(C, "slow.path.epilogue", &F);
+    slowPathPrologue = BasicBlock::Create(C, "slow.path.prologue", &F);        
+    restorePath = BasicBlock::Create(C, "restore.path", &F);
+    unwindJumpTableInit = BasicBlock::Create(C, "unwind.jump.table.init", &F);
+    unwindJumpTable = BasicBlock::Create(C, "unwind.jump.table", &F);
 
-          createRestorePath(F, SI);
-          Value* workCtx = createSlowPathPrologue(F);
-          createSlowPathEpilogue(F, workCtx);
-          createUnwindHandler(F);
+    // TODO:
+    // Move to post Processing
+    //createRestorePath(F, SI);
+    createUnwindHandler(F);
+    gworkCtx = createSlowPathPrologue(F);
+    //createSlowPathEpilogue(F, workCtx);
+    
+  }
+  
+  // --------------------------------------------------------------
+  // Clone the code if the code contains spawn
+  SmallVector<BasicBlock*, 8> bb2clones;
+  if(bContainSpawn) {
+    //static ValueToValueMapTy VMapSlowPath; 
+    DebugInfoFinder DIFinder;      
+    DISubprogram *SP = F.getSubprogram();
+    if (SP) {
+      //assert(!MustCloneSP || ModuleLevelChanges);
+      // Add mappings for some DebugInfo nodes that we don't want duplicated
+      // even if they're distinct.
+      auto &MD = VMapSlowPath.MD();
+      MD[SP->getUnit()].reset(SP->getUnit());
+      MD[SP->getType()].reset(SP->getType());
+      MD[SP->getFile()].reset(SP->getFile());  
+      MD[SP].reset(SP); 
+    }        
+     
+    
+    for( auto &BB : F ) {      
+      bb2clones.push_back(&BB);
+    } 
+    // Perform the actual cloning
+    for (auto pBB : bb2clones){
+      VMapSlowPath[pBB] = CloneBasicBlock(pBB, VMapSlowPath, ".slowPath", &F, nullptr, &DIFinder);       
+    }
+    
+    // --------------------------------------------------------------
+    // Remap the cloned instruction
+    for(auto pBB : bb2clones) {
+      BasicBlock * ClonedBB = dyn_cast<BasicBlock>(VMapSlowPath[pBB]);
+      for (Instruction &II : *ClonedBB) {
+	RemapInstruction(&II, VMapSlowPath, RF_IgnoreMissingLocals, nullptr, nullptr);        
       }
-  }  
+    }
+  }
+  
+
+  // -------------------------------------------------------------
+  // Add potential jump to unwind path for every function
+  Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
+  
+  if(bContainSpawn) {
+    for(auto pBB : bb2clones) {
+      for ( auto &II : *pBB ) {
+	if (isa<CallInst>(&II)) {
+	  // Add a potential jump to unwind path
+	  B.SetInsertPoint(&II);
+	  B.CreateCall(potentialJump, {BlockAddress::get( unwindPathEntry )});
+	}
+      }      
+    }    
+  } else {
+    for( auto &BB : F ) {
+      for ( auto &II : BB ) {
+	if (isa<CallInst>(&II)) {
+	  // Add a potential jump to unwind path
+	  B.SetInsertPoint(&II);
+	  B.CreateCall(potentialJump, {BlockAddress::get( unwindPathEntry )});
+	}
+      }
+    }
+  }
+  
   return;
 }
 
@@ -1066,14 +1467,14 @@ bool UNWINDABI::isContinuationTre(Function &F) {
   
   SmallVector< Loop *, 4 >  vectorLoop = LI->getLoopsInPreorder();
   for (auto &BB : F){
-      if (DetachInst * DI = dyn_cast<DetachInst>(BB.getTerminator())){          
-          BasicBlock * detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
-          for(auto elem: vectorLoop) {
-              if(elem->contains(detachBlock)){
-                  tre = true;
-              }
-          }
+    if (DetachInst * DI = dyn_cast<DetachInst>(BB.getTerminator())){          
+      BasicBlock * detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
+      for(auto elem: vectorLoop) {
+	if(elem->contains(detachBlock)){
+	  tre = true;
+	}
       }
+    }
   }
   
   return tre;
