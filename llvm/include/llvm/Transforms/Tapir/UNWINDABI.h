@@ -44,7 +44,7 @@ namespace llvm {
     /// @brief Create the gotstolen path 
     Function *createDetach(DetachInst &Detach,
 			   ValueToValueMapTy &DetachCtxToStackFrame,
-			   DominatorTree &DT, AssumptionCache &AC) override final;
+			   DominatorTree &DT, AssumptionCache &AC,  SyncInst * detachSyncPair = nullptr) override final;
 
     /// @brief Create the unwind block here, the prologue to slow path, the epilogue of slow path
     /// the restore entry
@@ -71,12 +71,13 @@ namespace llvm {
     void instrumentSpawningFcn(Function& F);
     void createUnwindHandler(Function& F);
     void createRestorePath(Function& F, SyncInst * SI);
-    void createFastPath(DetachInst& Detach); 
-    BasicBlock * createGotStolenHandler(DetachInst& Detach);
+    void createFastPath(DetachInst& Detach);     
+    BasicBlock * createGotStolenHandler(DetachInst& Detach, SyncInst * detachSyncPair);
     void createJumpTableInit(DetachInst& Detach, BasicBlock * GotstolenHandler);
     void createJumpTable(DetachInst& Detach, BasicBlock * Continuation);
     BasicBlock * createSlowPathFcn(DetachInst& Detach);   
     bool isContinuationTre(Function &F);
+    void findLiveInstAfterSync(DominatorTree &DT, DetachInst &Detach, SyncInst* Sync);
 
     bool isTre;
   };

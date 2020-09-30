@@ -25,9 +25,13 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/Transforms/Scalar/SimplifyCFG.h"
 #include "llvm/Transforms/Tapir.h"
 #include "llvm/Transforms/Tapir/LoweringUtils.h"
 #include "llvm/Transforms/Utils/TapirUtils.h"
+
 
 #define DEBUG_TYPE "tapir2target"
 
@@ -64,7 +68,7 @@ public:
     AU.addRequired<LoopInfoWrapperPass>();
     AU.addRequired<AssumptionCacheTracker>();
     AU.addRequired<DominatorTreeWrapperPass>();
-
+    AU.addRequired<TargetTransformInfoWrapperPass>();
   }
 
 private:
@@ -136,6 +140,7 @@ bool TapirToTargetImpl::unifyReturns(Function &F) {
   return true;
 }
 
+#if 1
 /// Outline all tasks in this function in post order.
 TFOutlineMapTy
 TapirToTargetImpl::outlineAllTasks(Function &F,
@@ -195,7 +200,6 @@ TapirToTargetImpl::outlineAllTasks(Function &F,
 
     // Outline the task, if necessary, and add the outlined function to the
     // mapping.
-
     ValueToValueMapTy VMap;
     ValueToValueMapTy InputMap;
     TFToOutline[TF] = outlineTask(T, TFInputs[TF], HelperInputs[TF],
@@ -277,6 +281,37 @@ bool TapirToTargetImpl::processSimpleABI(Function &F, BasicBlock *TFEntry) {
     CallInst *GrainsizeCall = GrainsizeCalls.pop_back_val();
     LLVM_DEBUG(dbgs() << "Lowering grainsize call " << *GrainsizeCall << "\n");
     Target->lowerGrainsizeCall(GrainsizeCall);
+#else
+    tapirTarget->lowerGrainsizeCall(GrainsizeCall);
+    Changed = true;
+  }
+
+  SmallVector<Function *, 4> *NewHelpers = new SmallVector<Function *, 4>();
+  // Process the set of detaches backwards, in order to process the innermost
+  // detached tasks first.
+  while (!Detaches.empty()) {
+    DetachInst *DI = Detaches.pop_back_val();
+
+    SyncInst * detachSyncPair  = nullptr;
+    for(auto SI : Syncs) {
+      if(DT.dominates(DI, SI)){
+	detachSyncPair = SI;
+	break;
+      }
+    }
+    
+    outs() << "DI - SI pair\n";
+    DI->dump();
+    detachSyncPair->dump();
+    outs() << "---------\n";
+    
+
+    // Lower a detach instruction, and collect the helper function generated in
+    // this process for executing the detached task.
+    Function *Helper = tapirTarget->createDetach(*DI, DetachCtxToStackFrame,
+                                                 DT, AC, detachSyncPair);
+    NewHelpers->push_back(Helper);
+#endif
     Changed = true;
   }
 
@@ -442,7 +477,6 @@ bool TapirToTargetImpl::processFunction(
 
   // Outline all tasks in a target-oblivious manner.
   TFOutlineMapTy TFToOutline = outlineAllTasks(F, AllTaskFrames, DT, AC, TI);
-
   // Perform target-specific processing of this function and all newly created
   // helpers.
   for (Spindle *TF : AllTaskFrames) {
