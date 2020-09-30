@@ -58,7 +58,7 @@ public:
 
   Function *createDetach(DetachInst &Detach,
                          ValueToValueMapTy &DetachCtxToStackFrame,
-                         DominatorTree &DT, AssumptionCache &AC) override final;
+                         DominatorTree &DT, AssumptionCache &AC, SyncInst * detachSyncPair = nullptr) override final;
   void preProcessFunction(Function &F) override final;
   void postProcessFunction(Function &F) override final;
   void postProcessHelper(Function &F) override final;

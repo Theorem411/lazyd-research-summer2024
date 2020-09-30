@@ -189,7 +189,7 @@ void ULIABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) 
 
 Function *ULIABI::createDetach(DetachInst &Detach,
                         ValueToValueMapTy &DetachCtxToStackFrame,
-                        DominatorTree &DT, AssumptionCache &AC) {
+			       DominatorTree &DT, AssumptionCache &AC, SyncInst * detachSyncPair) {
     
     BasicBlock * curBB = Detach.getParent();
     Function * F = curBB->getParent();
