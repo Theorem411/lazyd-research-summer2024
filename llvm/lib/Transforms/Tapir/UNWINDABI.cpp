@@ -47,11 +47,19 @@ using namespace llvm;
 
 static SmallVector<Instruction*,2> callInstV;
 static SmallVector<Instruction*,2> callInstV2;
-static  SmallVector<BasicBlock*,8> contListV;
+static SmallVector<BasicBlock*,8> contListV;
 static SmallVector<Instruction*,8> liveAfterSyncV;
 static DenseMap<Instruction*, SyncInst*> mapInstToSyncM;
 
+static DenseMap<Instruction*, PHINode*> mapInstToPhiM;
+
 static DenseMap<SyncInst*, BasicBlock*> sync2bb;
+
+static SmallVector<BasicBlock*, 8> bb2clones;
+
+static DenseMap<BasicBlock*, std::vector<Instruction*>> liveInstAfterBB;
+
+static SmallVector<DetachInst*, 8> detachList;
 
 // Map from basic block and instruction in fast path to got stolen handler
 static ValueToValueMapTy VMapUNWINDGH;
@@ -523,11 +531,13 @@ void UNWINDABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFram
   BranchInst* resumeBr = BranchInst::Create(succ);  
   ReplaceInstWithInst(iterm, resumeBr);
 #endif    
-  
+
+#if 0    
+  // Fix phi node in the slow path continuation
+  // --------------------------------------------------------------
   DT->recalculate( *(SI.getParent()->getParent()) );
   // From top sync to bottom sync
-  for(auto II : liveAfterSyncV) {
-    
+  for(auto II : liveAfterSyncV) {    
     Instruction * phiRes = dyn_cast<Instruction>(VMapSlowPath[II]);
     outs() << "Cont list\n";
     auto cr = contListV.rbegin(); 
@@ -585,46 +595,40 @@ void UNWINDABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFram
 	  outs() << "Res:\n";
 	  for(auto pBB : Result) {
 	    pBB->dump();
-	  }
-	  
-	}
-	
-	phiRes = phiNode; 
-	
+	  }	  
+	}	
+	phiRes = phiNode; 	
       }
     }
     outs() << "---------------\n";
 
-
     if(mapInstToSyncM[II] = &SI){
-      outs() << "Create PhiNode: \n";
-      II->dump();
-      II->getType()->dump();
-      (dyn_cast<Instruction>(VMapSlowPath[II]))->dump();
-      outs() << "In sync: \n";
-      SI.dump();
+	outs() << "Create PhiNode: \n";
+	II->dump();
+	II->getType()->dump();
+	(dyn_cast<Instruction>(VMapSlowPath[II]))->dump();
+	outs() << "In sync: \n";
+	SI.dump();
      
-      IRBuilder<> B(succ->getFirstNonPHIOrDbgOrLifetime());        
-      auto phiNode = B.CreatePHI(II->getType(), 2);  
+	IRBuilder<> B(succ->getFirstNonPHIOrDbgOrLifetime());        
+	auto phiNode = B.CreatePHI(II->getType(), 2);  
       
-      for (auto it = pred_begin(succ), et = pred_end(succ); it!=et; ++it){
-	BasicBlock* pred = *it;
-	if (DT->dominates(phiRes, pred)){
-	  outs() << "Basic block : \n";
-	  pred->dump();
-	  outs() << "Instruction in Phi Slow: \n";
-	  (dyn_cast<Instruction>(VMapSlowPath[II]))->dump();
-	  phiNode->addIncoming(phiRes, pred);
-	} else {
-	  outs() << "Basic block : \n";
-	  pred->dump();
-	  outs() << "Instruction in Phi Fast: \n";
-	  II->dump();
-	  phiNode->addIncoming(II, pred);	 
+	for (auto it = pred_begin(succ), et = pred_end(succ); it!=et; ++it){
+	  BasicBlock* pred = *it;
+	  if (DT->dominates(phiRes, pred)){
+	    outs() << "Basic block : \n";
+	    pred->dump();
+	    outs() << "Instruction in Phi Slow: \n";
+	    (dyn_cast<Instruction>(VMapSlowPath[II]))->dump();
+	    phiNode->addIncoming(phiRes, pred);
+	  } else {
+	    outs() << "Basic block : \n";
+	    pred->dump();
+	    outs() << "Instruction in Phi Fast: \n";
+	    II->dump();
+	    phiNode->addIncoming(II, pred);	 
+	  }
 	}
-      }
-
-#if 1        
       Value::use_iterator UI = II->use_begin(), E = II->use_end();
       for (; UI != E;) {
 	Use &U = *UI;
@@ -633,11 +637,135 @@ void UNWINDABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFram
 	if (Usr && !isa<PHINode>(Usr) && 
 	    (DT->dominates(succ->getFirstNonPHIOrDbgOrLifetime(), Usr->getParent()) || succ == Usr->getParent()) )            
 	  U.set(phiNode);
-      }
-#endif
-	                
+      }	
+#else
+    // Fix phi node in the slow path continuation
+    // --------------------------------------------------------------
+    DT->recalculate( *(SI.getParent()->getParent()) );
+    // From top sync to bottom sync
+    auto cr = contListV.rbegin(); 
+    auto ce = contListV.rend();
+
+    static DenseMap<Instruction*, PHINode*> mapInst2PhiInSlowPath;
+    for (; cr != ce; ) {
+      BasicBlock *contBB = *cr;
+      ++cr;
+      BasicBlock *contBBslow = dyn_cast<BasicBlock>(VMapSlowPath[contBB]);
+      auto liveInstList = liveInstAfterBB[contBB];
+      for(auto II : liveInstList) {
+	II->dump();
+	contBB->dump();
+      
+	// Create phi node
+	IRBuilder<> B(contBBslow->getFirstNonPHIOrDbgOrLifetime());        
+	auto phiNode = B.CreatePHI(II->getType(), 2);  
+	
+	Instruction *slowI = dyn_cast<Instruction>(VMapSlowPath[II]); 
+	if(mapInst2PhiInSlowPath.lookup(II)){
+	  slowI = mapInst2PhiInSlowPath[II];
+	}
+	
+	outs () << "Recursive basic block\n";
+	for (auto it = pred_begin(contBBslow), et = pred_end(contBBslow); it!=et; ++it){
+	  BasicBlock* pred = *it;
+	  pred->dump();
+	  slowPathPrologue->dump();
+	  if(isa<DetachInst>(pred->getTerminator()) || isa<ReattachInst>(pred->getTerminator())) {
+	    //if (DT->dominates(phiRes, pred) ){
+	    // Slow
+	    outs() << "Slow Basic block : \n";
+	    phiNode->addIncoming(slowI, pred);
+	
+	    phiNode->dump();
+
+	  } else {
+	    outs() << "Fast Basic block : \n";
+	    phiNode->addIncoming(mapInstToPhiM[II], pred);
+	    //phiNode->addIncoming(UndefValue::get(II->getType()), pred);
+	    phiNode->dump();	    
+	  }
+	}
+	outs() << "------------------------\n";
+	
+
+	Value::use_iterator UI = slowI->use_begin(), E = slowI->use_end();
+	for (; UI != E;) {
+	  Use &U = *UI;
+	  ++UI;
+	  auto *Usr = dyn_cast<Instruction>(U.getUser());
+	  // FIXME: Remove if hack, need to fix DT
+	  if (Usr && !isa<PHINode>(Usr) && !isa<DetachInst>(Usr->getParent()->getTerminator()) )
+	    //( DT->dominates(phiNode, Usr) || contBBslow == Usr->getParent()) )            
+	    U.set(phiNode);	
+	
+	  SmallVector< BasicBlock *, 8 > Result;
+	  DT->getDescendants (II->getParent(), Result);
+	  
+	  outs() << "Node dominated by :\n";
+	  phiNode->getParent()->dump();
+	  outs() << "Res:\n";
+	  for(auto pBB : Result) {
+	    pBB->dump();
+	  }	  
+	}
+	outs() << "Add inst to phi\n";
+	mapInst2PhiInSlowPath[II] = phiNode;
+	II->dump();
+	phiNode->dump();
+	outs() << "===========\n";
+      }      
+      outs() << "After inser phi \n";
+      contBBslow->dump();
+      outs() << "=====================\n";
+      
+      outs() << "---------------\n";
     }
-  }
+    
+    for(auto II : liveAfterSyncV) {    
+      if(mapInstToSyncM[II] = &SI){
+	outs() << "Create PhiNode: \n";
+	II->dump();
+	II->getType()->dump();
+	(dyn_cast<Instruction>(VMapSlowPath[II]))->dump();
+	outs() << "In sync: \n";
+	SI.dump();
+	
+	Instruction *slowI = dyn_cast<Instruction>(VMapSlowPath[II]); 
+	if(mapInst2PhiInSlowPath.lookup(II)){
+	  slowI = mapInst2PhiInSlowPath[II];
+	}
+	  
+	IRBuilder<> B(succ->getFirstNonPHIOrDbgOrLifetime());        
+	auto phiNode = B.CreatePHI(II->getType(), 2);  
+	for (auto it = pred_begin(succ), et = pred_end(succ); it!=et; ++it){
+	  BasicBlock* pred = *it;
+	  if (DT->dominates(slowI, pred)){
+	    outs() << "Basic block : \n";
+	    pred->dump();
+	    outs() << "Instruction in Phi Slow: \n";
+	    (dyn_cast<Instruction>(VMapSlowPath[II]))->dump();
+	    phiNode->addIncoming(slowI, pred);
+	  } else {
+	    outs() << "Basic block : \n";
+	    pred->dump();
+	    outs() << "Instruction in Phi Fast: \n";
+	    II->dump();
+	    phiNode->addIncoming(II, pred);	 
+	  }
+	}
+
+	Value::use_iterator UI = II->use_begin(), E = II->use_end();
+	for (; UI != E;) {
+	  Use &U = *UI;
+	  ++UI;
+	  auto *Usr = dyn_cast<Instruction>(U.getUser());
+	  if (Usr && !isa<PHINode>(Usr) && 
+	      (DT->dominates(succ->getFirstNonPHIOrDbgOrLifetime(), Usr->getParent()) || succ == Usr->getParent()) )            
+	    U.set(phiNode);
+	}	
+      }
+#endif	                
+    }
 
   // Fast Path
   // ----------------------------------------------
@@ -705,6 +833,7 @@ void UNWINDABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFram
     }
   }  
 #endif  
+
   return;
 }
 
@@ -1004,8 +1133,11 @@ Function* UNWINDABI::createDetach(DetachInst &Detach,
   Detach.dump();
   outs() << "---------------------\n";
 
+  detachList.push_back(&Detach);
+
   // Find live Instruction after 
   findLiveInstAfterSync(DT, Detach, detachSyncPair);
+  findLiveInstAfterCont(DT, Detach, detachSyncPair);
 
   // GotStolen Handler
   BasicBlock * gotstolenHandler = createGotStolenHandler(Detach, detachSyncPair);
@@ -1029,6 +1161,47 @@ Function* UNWINDABI::createDetach(DetachInst &Detach,
   //ReplaceInstWithInst(&Detach, DetachBr);
 
   return NULL;
+}
+
+void UNWINDABI::findLiveInstAfterCont(DominatorTree &DT, DetachInst &Detach, SyncInst* Sync) {
+  // Iterate over the original basic block
+  outs() << "Live instruction after : \n";
+  Detach.getContinue()->dump();
+  outs() << ":\n";
+
+  for(auto pBB : bb2clones) {
+    for(auto &II : *pBB) {
+      if(II.getType()->isTokenTy())
+	continue;
+
+      for (User *U : II.users()) {
+	if(DT.dominates(&II, Detach.getContinue()) &&
+	   DT.dominates(Detach.getContinue()->getFirstNonPHIOrDbgOrLifetime(), dyn_cast<Instruction>(U)) ) {
+	  liveInstAfterBB[Detach.getContinue()].push_back(&II);
+	  II.dump();	  
+	  
+	  // Create a phi node in the unwind path entry  
+	  if(mapInstToPhiM.lookup(&II)){
+	    mapInstToPhiM[&II]->addIncoming(&II, Detach.getDetached() );
+        
+	  } else {
+	    IRBuilder <> B(unwindPathEntry->getFirstNonPHIOrDbgOrLifetime());
+	    PHINode* phiNode = B.CreatePHI(II.getType(), 2);
+	    phiNode->addIncoming(&II, Detach.getDetached() );
+	    mapInstToPhiM[&II] = phiNode;
+	  }
+
+
+	  break;
+	}
+      }
+    }
+  }
+
+  unwindPathEntry->dump();
+
+  outs() << "---------------------------\n";
+
 }
 
 void UNWINDABI::findLiveInstAfterSync(DominatorTree &DT, DetachInst &Detach, SyncInst* Sync) {  
@@ -1664,7 +1837,6 @@ void UNWINDABI::preProcessFunction(Function &F) {
   
   // --------------------------------------------------
   // Push the original basic block
-  SmallVector<BasicBlock*, 8> bb2clones;
   for( auto &BB : F ) {      
     bb2clones.push_back(&BB);
   }
@@ -1765,6 +1937,34 @@ void UNWINDABI::preProcessFunction(Function &F) {
 
 
 void UNWINDABI::postProcessFunction(Function &F) {
+  // Fix unwindPathEntry's phi 
+  // --------------------------------------------------------------  
+  outs() << "Look for incoming bb\n";
+  unwindPathEntry->dump();
+  for( auto pair: mapInstToPhiM ) {
+    auto phiNode = pair.second;
+    
+    for (auto it = pred_begin(unwindPathEntry), et = pred_end(unwindPathEntry); it!=et; ++it){
+      outs() << "pred : \n";      
+      BasicBlock* pred = *it;
+      pred->dump();
+      bool findBB = false;
+      unsigned incomingPair = pair.second->getNumIncomingValues();
+      for(unsigned i = 0; i<incomingPair; i++){
+	BasicBlock* incomingBB = pair.second->getIncomingBlock(i);
+	if(incomingBB == pred){
+	  findBB = true;
+	}
+      }
+
+      if(!findBB) {
+	phiNode->addIncoming(UndefValue::get(pair.first->getType()), pred);
+	pred->dump();
+      }
+    }
+  }
+  outs() << "========\n";
+
   return;
 }
 

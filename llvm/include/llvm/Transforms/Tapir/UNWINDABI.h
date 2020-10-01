@@ -78,7 +78,7 @@ namespace llvm {
     BasicBlock * createSlowPathFcn(DetachInst& Detach);   
     bool isContinuationTre(Function &F);
     void findLiveInstAfterSync(DominatorTree &DT, DetachInst &Detach, SyncInst* Sync);
-
+    void findLiveInstAfterCont(DominatorTree &DT, DetachInst &Detach, SyncInst* Sync);
     bool isTre;
   };
 
