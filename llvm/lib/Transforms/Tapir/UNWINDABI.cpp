@@ -60,6 +60,7 @@ static SmallVector<BasicBlock*, 8> bb2clones;
 static DenseMap<BasicBlock*, std::vector<Instruction*>> liveInstAfterBB;
 
 static SmallVector<DetachInst*, 8> detachList;
+static SmallVector<SyncInst*, 8> syncList;
 
 // Map from basic block and instruction in fast path to got stolen handler
 static ValueToValueMapTy VMapUNWINDGH;
@@ -509,6 +510,8 @@ static bool isNonPHIOrDbgOrLifetime(Instruction * I) {
 
 void UNWINDABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFrame) {         
   
+  syncList.push_back(&SI);
+
   outs() << "I am in create Sync\n";
   SI.dump();
   outs() << "-------------------\n";
@@ -531,309 +534,6 @@ void UNWINDABI::createSync(SyncInst &SI, ValueToValueMapTy &DetachCtxToStackFram
   BranchInst* resumeBr = BranchInst::Create(succ);  
   ReplaceInstWithInst(iterm, resumeBr);
 #endif    
-
-#if 0    
-  // Fix phi node in the slow path continuation
-  // --------------------------------------------------------------
-  DT->recalculate( *(SI.getParent()->getParent()) );
-  // From top sync to bottom sync
-  for(auto II : liveAfterSyncV) {    
-    Instruction * phiRes = dyn_cast<Instruction>(VMapSlowPath[II]);
-    outs() << "Cont list\n";
-    auto cr = contListV.rbegin(); 
-    auto ce = contListV.rend();
-    for (; cr != ce; ) {
-      BasicBlock *contBB = *cr;
-      ++cr;
-          
-      if(DT->dominates(II, contBB )){
-	II->dump();
-	contBB->dump();
-      
-	// Create phi node
-	BasicBlock *contBBslow = dyn_cast<BasicBlock>(VMapSlowPath[contBB]);
-	IRBuilder<> B(contBBslow->getFirstNonPHIOrDbgOrLifetime());        
-	auto phiNode = B.CreatePHI(II->getType(), 2);  
-
-	outs () << "Recursive basic block\n";
-	for (auto it = pred_begin(contBBslow), et = pred_end(contBBslow); it!=et; ++it){
-	  BasicBlock* pred = *it;
-	  phiRes->dump();
-	  pred->dump();
-	  slowPathPrologue->dump();
-	  if(isa<DetachInst>(pred->getTerminator()) || isa<ReattachInst>(pred->getTerminator())) {
-	  //if (DT->dominates(phiRes, pred) ){
-	    // Slow
-	    outs() << "Slow Basic block : \n";
-	    phiNode->addIncoming(phiRes, pred);
-	    phiNode->dump();
-
-	  } else {
-	    outs() << "Fast Basic block : \n";
-	    //phiNode->addIncoming(II, pred);
-	    phiNode->addIncoming(UndefValue::get(II->getType()), pred);
-	    phiNode->dump();	    
-	  }
-	}
-	outs() << "------------------------\n";
-	
-	Value::use_iterator UI = phiRes->use_begin(), E = phiRes->use_end();
-	for (; UI != E;) {
-	  Use &U = *UI;
-	  ++UI;
-	  auto *Usr = dyn_cast<Instruction>(U.getUser());
-	  // FIXME: Remove if hack, need to fix DT
-	  if (Usr && !isa<PHINode>(Usr) && !isa<DetachInst>(Usr->getParent()->getTerminator()) )
-	      //( DT->dominates(phiNode, Usr) || contBBslow == Usr->getParent()) )            
-	    U.set(phiNode);	
-	
-	  SmallVector< BasicBlock *, 8 > Result;
-	  DT->getDescendants (II->getParent(), Result);
-	  
-	  outs() << "Node dominated by :\n";
-	  phiNode->getParent()->dump();
-	  outs() << "Res:\n";
-	  for(auto pBB : Result) {
-	    pBB->dump();
-	  }	  
-	}	
-	phiRes = phiNode; 	
-      }
-    }
-    outs() << "---------------\n";
-
-    if(mapInstToSyncM[II] = &SI){
-	outs() << "Create PhiNode: \n";
-	II->dump();
-	II->getType()->dump();
-	(dyn_cast<Instruction>(VMapSlowPath[II]))->dump();
-	outs() << "In sync: \n";
-	SI.dump();
-     
-	IRBuilder<> B(succ->getFirstNonPHIOrDbgOrLifetime());        
-	auto phiNode = B.CreatePHI(II->getType(), 2);  
-      
-	for (auto it = pred_begin(succ), et = pred_end(succ); it!=et; ++it){
-	  BasicBlock* pred = *it;
-	  if (DT->dominates(phiRes, pred)){
-	    outs() << "Basic block : \n";
-	    pred->dump();
-	    outs() << "Instruction in Phi Slow: \n";
-	    (dyn_cast<Instruction>(VMapSlowPath[II]))->dump();
-	    phiNode->addIncoming(phiRes, pred);
-	  } else {
-	    outs() << "Basic block : \n";
-	    pred->dump();
-	    outs() << "Instruction in Phi Fast: \n";
-	    II->dump();
-	    phiNode->addIncoming(II, pred);	 
-	  }
-	}
-      Value::use_iterator UI = II->use_begin(), E = II->use_end();
-      for (; UI != E;) {
-	Use &U = *UI;
-	++UI;
-	auto *Usr = dyn_cast<Instruction>(U.getUser());
-	if (Usr && !isa<PHINode>(Usr) && 
-	    (DT->dominates(succ->getFirstNonPHIOrDbgOrLifetime(), Usr->getParent()) || succ == Usr->getParent()) )            
-	  U.set(phiNode);
-      }	
-#else
-    // Fix phi node in the slow path continuation
-    // --------------------------------------------------------------
-    DT->recalculate( *(SI.getParent()->getParent()) );
-    // From top sync to bottom sync
-    auto cr = contListV.rbegin(); 
-    auto ce = contListV.rend();
-
-    static DenseMap<Instruction*, PHINode*> mapInst2PhiInSlowPath;
-    for (; cr != ce; ) {
-      BasicBlock *contBB = *cr;
-      ++cr;
-      BasicBlock *contBBslow = dyn_cast<BasicBlock>(VMapSlowPath[contBB]);
-      auto liveInstList = liveInstAfterBB[contBB];
-      for(auto II : liveInstList) {
-	II->dump();
-	contBB->dump();
-      
-	// Create phi node
-	IRBuilder<> B(contBBslow->getFirstNonPHIOrDbgOrLifetime());        
-	auto phiNode = B.CreatePHI(II->getType(), 2);  
-	
-	Instruction *slowI = dyn_cast<Instruction>(VMapSlowPath[II]); 
-	if(mapInst2PhiInSlowPath.lookup(II)){
-	  slowI = mapInst2PhiInSlowPath[II];
-	}
-	
-	outs () << "Recursive basic block\n";
-	for (auto it = pred_begin(contBBslow), et = pred_end(contBBslow); it!=et; ++it){
-	  BasicBlock* pred = *it;
-	  pred->dump();
-	  slowPathPrologue->dump();
-	  if(isa<DetachInst>(pred->getTerminator()) || isa<ReattachInst>(pred->getTerminator())) {
-	    //if (DT->dominates(phiRes, pred) ){
-	    // Slow
-	    outs() << "Slow Basic block : \n";
-	    phiNode->addIncoming(slowI, pred);
-	
-	    phiNode->dump();
-
-	  } else {
-	    outs() << "Fast Basic block : \n";
-	    phiNode->addIncoming(mapInstToPhiM[II], pred);
-	    //phiNode->addIncoming(UndefValue::get(II->getType()), pred);
-	    phiNode->dump();	    
-	  }
-	}
-	outs() << "------------------------\n";
-	
-
-	Value::use_iterator UI = slowI->use_begin(), E = slowI->use_end();
-	for (; UI != E;) {
-	  Use &U = *UI;
-	  ++UI;
-	  auto *Usr = dyn_cast<Instruction>(U.getUser());
-	  // FIXME: Remove if hack, need to fix DT
-	  if (Usr && !isa<PHINode>(Usr) && !isa<DetachInst>(Usr->getParent()->getTerminator()) )
-	    //( DT->dominates(phiNode, Usr) || contBBslow == Usr->getParent()) )            
-	    U.set(phiNode);	
-	
-	  SmallVector< BasicBlock *, 8 > Result;
-	  DT->getDescendants (II->getParent(), Result);
-	  
-	  outs() << "Node dominated by :\n";
-	  phiNode->getParent()->dump();
-	  outs() << "Res:\n";
-	  for(auto pBB : Result) {
-	    pBB->dump();
-	  }	  
-	}
-	outs() << "Add inst to phi\n";
-	mapInst2PhiInSlowPath[II] = phiNode;
-	II->dump();
-	phiNode->dump();
-	outs() << "===========\n";
-      }      
-      outs() << "After inser phi \n";
-      contBBslow->dump();
-      outs() << "=====================\n";
-      
-      outs() << "---------------\n";
-    }
-    
-    for(auto II : liveAfterSyncV) {    
-      if(mapInstToSyncM[II] = &SI){
-	outs() << "Create PhiNode: \n";
-	II->dump();
-	II->getType()->dump();
-	(dyn_cast<Instruction>(VMapSlowPath[II]))->dump();
-	outs() << "In sync: \n";
-	SI.dump();
-	
-	Instruction *slowI = dyn_cast<Instruction>(VMapSlowPath[II]); 
-	if(mapInst2PhiInSlowPath.lookup(II)){
-	  slowI = mapInst2PhiInSlowPath[II];
-	}
-	  
-	IRBuilder<> B(succ->getFirstNonPHIOrDbgOrLifetime());        
-	auto phiNode = B.CreatePHI(II->getType(), 2);  
-	for (auto it = pred_begin(succ), et = pred_end(succ); it!=et; ++it){
-	  BasicBlock* pred = *it;
-	  if (DT->dominates(slowI, pred)){
-	    outs() << "Basic block : \n";
-	    pred->dump();
-	    outs() << "Instruction in Phi Slow: \n";
-	    (dyn_cast<Instruction>(VMapSlowPath[II]))->dump();
-	    phiNode->addIncoming(slowI, pred);
-	  } else {
-	    outs() << "Basic block : \n";
-	    pred->dump();
-	    outs() << "Instruction in Phi Fast: \n";
-	    II->dump();
-	    phiNode->addIncoming(II, pred);	 
-	  }
-	}
-
-	Value::use_iterator UI = II->use_begin(), E = II->use_end();
-	for (; UI != E;) {
-	  Use &U = *UI;
-	  ++UI;
-	  auto *Usr = dyn_cast<Instruction>(U.getUser());
-	  if (Usr && !isa<PHINode>(Usr) && 
-	      (DT->dominates(succ->getFirstNonPHIOrDbgOrLifetime(), Usr->getParent()) || succ == Usr->getParent()) )            
-	    U.set(phiNode);
-	}	
-      }
-#endif	                
-    }
-
-  // Fast Path
-  // ----------------------------------------------
-  {
-    // Create a phi node for the return result of the last child
-#if 0
-    if(!callInstV.empty()) {
-      IRBuilder<> B(succ->getFirstNonPHIOrDbgOrLifetime());        
-      CallInst* CI = dyn_cast<CallInst>(callInstV.front());
-      Function * fcn = CI->getCalledFunction();
-        
-      auto phiNode = B.CreatePHI(fcn->getReturnType(), 2);  
-      for (auto it = pred_begin(succ), et = pred_end(succ); it!=et; ++it){
-	BasicBlock* pred = *it;
-          
-	// FIXME: Use analysis from domintor tree instead of assuming a fix relation ship between basic block basic block
-	if(pred == callInstV.front()->getParent()){
-	  phiNode->addIncoming(callInstV.front(), callInstV.front()->getParent());
-	} else {
-	  phiNode->addIncoming(callInstV.back(), pred);
-	}
-	          
-      }
-        
-      Value::use_iterator UI = CI->use_begin(), E = CI->use_end();
-      for (; UI != E;) {
-	Use &U = *UI;
-	++UI;
-	auto *Usr = dyn_cast<Instruction>(U.getUser());
-	if (Usr && !isa<PHINode>(Usr) && Usr->getParent() == succ )            
-	  U.set(phiNode);
-      }
-    }
-#endif
-  }  
-
-#if 0
-  // Create a phi node for a load instruction in the restore path
-  for(auto &II: *succ) {
-    if(isa<LoadInst>(&II)){
-      IRBuilder<> B(succ->getFirstNonPHIOrDbgOrLifetime());
-      auto phiNode = B.CreatePHI(dyn_cast<LoadInst>(&II)->getType(), 2);  
-
-      for (auto it = pred_begin(succ), et = pred_end(succ); it!=et; ++it){
-	BasicBlock* pred = *it;
-	
-	// FIXME: Use analysis from domintor tree instead of assuming a fix relation ship between basic block basic block
-	if(pred == callInstV.front()->getParent()){
-	  phiNode->addIncoming(callInstV2.front(), callInstV.front()->getParent());
-	} else {
-	  phiNode->addIncoming(callInstV2.back(), pred);
-	}
-          
-      }
-        
-      Value::use_iterator UI = II.use_begin(), E = II.use_end();
-      for (; UI != E;) {
-	Use &U = *UI;
-	++UI;
-	auto *Usr = dyn_cast<Instruction>(U.getUser());
-	if (Usr && !isa<PHINode>(Usr) && Usr->getParent() == succ )            
-	  U.set(phiNode);
-      }
-      
-    }
-  }  
-#endif  
-
   return;
 }
 
@@ -979,7 +679,7 @@ BasicBlock * UNWINDABI::createGotStolenHandler(DetachInst& Detach,  SyncInst * d
 BasicBlock * UNWINDABI::createSlowPathFcn(DetachInst& Detach) {
   BasicBlock* curBB = Detach.getParent();
   Function* F = curBB->getParent();    
-    
+  
   BasicBlock* slowPathFcn = nullptr;
   if(!isTre) {
     BasicBlock * contBB = Detach.getContinue(); 
@@ -1379,7 +1079,7 @@ void UNWINDABI::createJumpTableInit(DetachInst &Detach, BasicBlock * GotStolenHa
 
   B.SetInsertPoint(ThiefEntry);
   B.CreateBr(slowPathPrologue);
-  DT->insertEdge(ThiefEntry, slowPathPrologue);
+  //DT->insertEdge(ThiefEntry, slowPathPrologue);
 
   B.SetInsertPoint(AttemptUnwinding);
   B.CreateBr(returnInUnwind);
@@ -1874,14 +1574,23 @@ void UNWINDABI::preProcessFunction(Function &F) {
       MD[SP->getType()].reset(SP->getType());
       MD[SP->getFile()].reset(SP->getFile());  
       MD[SP].reset(SP); 
-    }        
-     
-    
+    }               
     
     // Perform the actual cloning
     for (auto pBB : bb2clones){
       VMapSlowPath[pBB] = CloneBasicBlock(pBB, VMapSlowPath, ".slowPath", &F, nullptr, &DIFinder);       
     }
+    
+    //SmallVector<DominatorTree::UpdateType, 4> DTUpdates;
+    for(auto pBB: bb2clones) {
+      SmallVector< BasicBlock *, 8 > Result;
+      DT->getDescendants (pBB, Result);      
+      for(auto pBB2 : Result) {
+	//DTUpdates.push_back({DT->Insert, dyn_cast<BasicBlock>(VMapSlowPath[pBB]), dyn_cast<BasicBlock>(VMapSlowPath[pBB2])});
+	//DT->insertEdge(dyn_cast<BasicBlock>(VMapSlowPath[pBB]), dyn_cast<BasicBlock>(VMapSlowPath[pBB2]));      
+      }	        
+    }
+    //DT->applyUpdates(DTUpdates);
     
     // --------------------------------------------------------------
     // Remap the cloned instruction
@@ -1928,6 +1637,21 @@ void UNWINDABI::preProcessFunction(Function &F) {
     }      
   }    
 
+  /*
+  DT->recalculate(F);
+  outs() << "Return something \n";
+  for(auto pBB: bb2clones) {
+    SmallVector< BasicBlock *, 8 > Result;
+    DT->getDescendants (dyn_cast<BasicBlock>(VMapSlowPath[pBB]), Result);      
+    for(auto pBB2 : Result) {
+      pBB2->dump();
+    }	    
+  }    
+  F.dump();
+  DT->print(outs());
+  outs() << "Return ---------- \n";
+  */
+
   // Insert polling in prologue and epilogue
   //instrumentSpawningFcn(F);  
   
@@ -1939,6 +1663,14 @@ void UNWINDABI::preProcessFunction(Function &F) {
 void UNWINDABI::postProcessFunction(Function &F) {
   // Fix unwindPathEntry's phi 
   // --------------------------------------------------------------  
+  
+  DT->recalculate(F);
+  outs() << "Return something \n";
+  F.dump();
+  DT->print(outs());  
+  outs() << "Return ---------- \n";
+
+
   outs() << "Look for incoming bb\n";
   unwindPathEntry->dump();
   for( auto pair: mapInstToPhiM ) {
@@ -1964,7 +1696,133 @@ void UNWINDABI::postProcessFunction(Function &F) {
     }
   }
   outs() << "========\n";
+  // -----------------------------------------------------------------------------------
+  for(auto SI : syncList) {
+    auto cr = contListV.rbegin(); 
+    auto ce = contListV.rend();    
+    static DenseMap<Instruction*, PHINode*> mapInst2PhiInSlowPath;
+   
+    BasicBlock * succ = SI->getSuccessor(0);        
+    for (; cr != ce; ) {
+      BasicBlock *contBB = *cr;
+      ++cr;
+      BasicBlock *contBBslow = dyn_cast<BasicBlock>(VMapSlowPath[contBB]);
+      auto liveInstList = liveInstAfterBB[contBB];
+      for(auto II : liveInstList) {
+	II->dump();
+	contBB->dump();
+      
+	// Create phi node
+	IRBuilder<> B(contBBslow->getFirstNonPHIOrDbgOrLifetime());        
+	auto phiNode = B.CreatePHI(II->getType(), 2);  
+	
+	Instruction *slowI = dyn_cast<Instruction>(VMapSlowPath[II]); 
+	if(mapInst2PhiInSlowPath.lookup(II)){
+	  slowI = mapInst2PhiInSlowPath[II];
+	}
+	
+	outs () << "Recursive basic block\n";
+	for (auto it = pred_begin(contBBslow), et = pred_end(contBBslow); it!=et; ++it){
+	  BasicBlock* pred = *it;
+	  pred->dump();
+	  slowPathPrologue->dump();
+	  if(isa<DetachInst>(pred->getTerminator()) || isa<ReattachInst>(pred->getTerminator())) {
+	    //if (DT->dominates(phiRes, pred) ){
+	    // Slow
+	    outs() << "Slow Basic block : \n";
+	    phiNode->addIncoming(slowI, pred);
+	
+	    phiNode->dump();
 
+	  } else {
+	    outs() << "Fast Basic block : \n";
+	    phiNode->addIncoming(mapInstToPhiM[II], pred);
+	    //phiNode->addIncoming(UndefValue::get(II->getType()), pred);
+	    phiNode->dump();	    
+	  }
+	}
+	outs() << "------------------------\n";
+       	
+	Value::use_iterator UI = slowI->use_begin(), E = slowI->use_end();
+	for (; UI != E;) {
+	  Use &U = *UI;
+	  ++UI;
+	  auto *Usr = dyn_cast<Instruction>(U.getUser());
+	  // FIXME: Remove if hack, need to fix DT
+	  if (Usr && !isa<PHINode>(Usr) &&  
+	      ( DT->dominates(phiNode, Usr) || contBBslow == Usr->getParent()) )           
+	    U.set(phiNode);	
+	
+	  SmallVector< BasicBlock *, 8 > Result;
+	  DT->getDescendants (dyn_cast<BasicBlock>(VMapSlowPath[II->getParent()]), Result);
+	  
+	  outs() << "Node dominated by---- :\n";
+	  //phiNode->getParent()->dump();
+	  dyn_cast<BasicBlock>(VMapSlowPath[II->getParent()])->dump();
+	  outs() << "Res:\n";
+	  for(auto pBB : Result) {
+	    pBB->dump();
+	  }	  
+	  outs() << "Node end------------------------------\n";
+	}
+	outs() << "Add inst to phi\n";
+	mapInst2PhiInSlowPath[II] = phiNode;
+	II->dump();
+	phiNode->dump();
+	outs() << "===========\n";
+      }      
+      outs() << "After inser phi \n";
+      contBBslow->dump();
+      outs() << "=====================\n";      
+      outs() << "---------------\n";
+    }
+    
+    for(auto II : liveAfterSyncV) {    
+      if(mapInstToSyncM[II] = SI){
+	outs() << "Create PhiNode: \n";
+	II->dump();
+	II->getType()->dump();
+	(dyn_cast<Instruction>(VMapSlowPath[II]))->dump();
+	outs() << "In sync: \n";
+	SI->dump();
+	
+	Instruction *slowI = dyn_cast<Instruction>(VMapSlowPath[II]); 
+	if(mapInst2PhiInSlowPath.lookup(II)){
+	  slowI = mapInst2PhiInSlowPath[II];
+	}
+	  
+	IRBuilder<> B(succ->getFirstNonPHIOrDbgOrLifetime());        
+	auto phiNode = B.CreatePHI(II->getType(), 2);  
+	for (auto it = pred_begin(succ), et = pred_end(succ); it!=et; ++it){
+	  BasicBlock* pred = *it;
+	  if (DT->dominates(slowI, pred)){
+	    outs() << "Basic block : \n";
+	    pred->dump();
+	    outs() << "Instruction in Phi Slow: \n";
+	    (dyn_cast<Instruction>(VMapSlowPath[II]))->dump();
+	    phiNode->addIncoming(slowI, pred);
+	  } else {
+	    outs() << "Basic block : \n";
+	    pred->dump();
+	    outs() << "Instruction in Phi Fast: \n";
+	    II->dump();
+	    phiNode->addIncoming(II, pred);	 
+	  }
+	}
+
+	Value::use_iterator UI = II->use_begin(), E = II->use_end();
+	for (; UI != E;) {
+	  Use &U = *UI;
+	  ++UI;
+	  auto *Usr = dyn_cast<Instruction>(U.getUser());
+	  if (Usr && !isa<PHINode>(Usr) && 
+	      (DT->dominates(succ->getFirstNonPHIOrDbgOrLifetime(), Usr->getParent()) || succ == Usr->getParent()) )            
+	    U.set(phiNode);
+	}	
+      }
+    }
+  }
+  // TODO: Need to update phi node here since DT is updated here
   return;
 }
 

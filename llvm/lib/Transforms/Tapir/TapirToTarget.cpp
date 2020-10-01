@@ -500,7 +500,6 @@ bool TapirToTargetImpl::processFunction(
   Target->postProcessFunction(F);
   for (Function *H : NewHelpers)
     Target->postProcessHelper(*H);
-<<<<<<< HEAD
   } // end timed region
 
   LLVM_DEBUG({
@@ -519,11 +518,6 @@ bool TapirToTargetImpl::processFunction(
   });
 
   return ChangedCFG || !NewHelpers.empty();
-=======
-  if (verifyFunction(F, &errs()))
-    llvm_unreachable("Tapir lowering produced bad IR!");
-  return;
->>>>>>> Add function to find inst that are live after the continuation and sync inst. Create phi node in the unwindpath entry and the continuation in the slow path to ensure proper data flow. In TapirToTarget, verify IR after postProcessFunction. Need to fix Dominatortree
 }
 
 
