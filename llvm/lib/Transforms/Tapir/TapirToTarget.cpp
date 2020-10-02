@@ -298,13 +298,7 @@ bool TapirToTargetImpl::processSimpleABI(Function &F, BasicBlock *TFEntry) {
 	detachSyncPair = SI;
 	break;
       }
-    }
-    
-    outs() << "DI - SI pair\n";
-    DI->dump();
-    detachSyncPair->dump();
-    outs() << "---------\n";
-    
+    }       
 
     // Lower a detach instruction, and collect the helper function generated in
     // this process for executing the detached task.
@@ -462,6 +456,7 @@ bool TapirToTargetImpl::processFunction(
       processSimpleABI(F, &F.getEntryBlock());
     return ChangedCFG;
   }
+
 
   // Traverse the tasks in this function in post order.
   SmallVector<Spindle *, 8> AllTaskFrames;
