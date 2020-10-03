@@ -80,6 +80,8 @@ namespace llvm {
     void findLiveInstAfterSync(DominatorTree &DT, DetachInst &Detach, SyncInst* Sync);
     void findLiveInstAfterCont(DominatorTree &DT, DetachInst &Detach, SyncInst* Sync);
     bool reachFromBB2Inst(BasicBlock * src, BasicBlock * dst, BasicBlock * skip = nullptr);
+    void changeUseAfterPhi(Instruction* II, PHINode* phiNode, BasicBlock* BB, BasicBlock * skip = nullptr);
+
     bool isTre;
   };
 
