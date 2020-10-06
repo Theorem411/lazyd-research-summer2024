@@ -22,6 +22,7 @@
 #include "llvm/Transforms/Tapir/TapirTargetIDs.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/DominanceFrontier.h"
 
 namespace llvm {
 

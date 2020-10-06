@@ -855,41 +855,6 @@ Function* UNWINDABI::createDetach(DetachInst &Detach,
   return NULL;
 }
 
-void UNWINDABI::findLiveInstAfterCont(DominatorTree &DT, DetachInst &Detach, SyncInst* Sync) {
-  // Iterate over the original basic block
- 
-  for(auto pBB : bb2clones) {
-    for(auto &II : *pBB) {
-      if(II.getType()->isTokenTy())
-	continue;
-
-      for (User *U : II.users()) {
-	//if(DT.dominates(&II, Detach.getContinue()) &&
-	//   DT.dominates(Detach.getContinue()->getFirstNonPHIOrDbgOrLifetime(), dyn_cast<Instruction>(U)) ) {
-	bool isConsiderLive = reachFromBB2Inst(Detach.getContinue(), dyn_cast<Instruction>(U)->getParent());
-	bool defBeforeSync = reachFromBB2Inst(II.getParent(), Detach.getContinue())  && !(Detach.getContinue() == II.getParent()) ;
-	isConsiderLive &= defBeforeSync;
-	
-	if(isConsiderLive) {
-	  liveInstAfterBB[Detach.getContinue()].push_back(&II);
-	  
-	  // Create a phi node in the unwind path entry  
-	  if(mapInstToPhiM.lookup(&II)){
-	    mapInstToPhiM[&II]->addIncoming(&II, Detach.getDetached() );
-        
-	  } else {
-	    IRBuilder <> B(unwindPathEntry->getFirstNonPHIOrDbgOrLifetime());
-	    PHINode* phiNode = B.CreatePHI(II.getType(), 2);
-	    phiNode->addIncoming(&II, Detach.getDetached() );
-	    mapInstToPhiM[&II] = phiNode;
-	  }
-	  break;
-	}
-      }
-    }
-  }
-
-}
 
 
 bool UNWINDABI::reachFromBB2Inst(BasicBlock * src, BasicBlock * dst, BasicBlock * skip) {
@@ -927,6 +892,46 @@ bool UNWINDABI::reachFromBB2Inst(BasicBlock * src, BasicBlock * dst, BasicBlock 
   
 }
 
+void UNWINDABI::findLiveInstAfterCont(DominatorTree &DT, DetachInst &Detach, SyncInst* Sync) {
+  // Iterate over the original basic block
+ 
+  for(auto pBB : bb2clones) {
+    for(auto &II : *pBB) {
+      if(II.getType()->isTokenTy())
+	continue;
+      // FIXME: If defined before the first spawn operation
+      if(II.getParent() == &Detach.getParent()->getParent()->getEntryBlock())
+	continue;
+
+      for (User *U : II.users()) {
+	//if(DT.dominates(&II, Detach.getContinue()) &&
+	//   DT.dominates(Detach.getContinue()->getFirstNonPHIOrDbgOrLifetime(), dyn_cast<Instruction>(U)) ) {
+	bool isConsiderLive = reachFromBB2Inst(Detach.getContinue(), dyn_cast<Instruction>(U)->getParent());
+	bool defBeforeSync = reachFromBB2Inst(II.getParent(), Detach.getContinue())  && !(Detach.getContinue() == II.getParent()) ;
+	isConsiderLive &= defBeforeSync;
+	
+	if(isConsiderLive) {
+	  liveInstAfterBB[Detach.getContinue()].push_back(&II);
+	  
+	  // Create a phi node in the unwind path entry  
+	  if(mapInstToPhiM.lookup(&II)){
+	    mapInstToPhiM[&II]->addIncoming(&II, Detach.getDetached() );
+        
+	  } else {
+	    IRBuilder <> B(unwindPathEntry->getFirstNonPHIOrDbgOrLifetime());
+	    PHINode* phiNode = B.CreatePHI(II.getType(), 2);
+	    phiNode->addIncoming(&II, Detach.getDetached() );
+	    mapInstToPhiM[&II] = phiNode;
+	  }
+	  break;
+	}
+      }
+    }
+  }
+
+}
+
+
 void UNWINDABI::findLiveInstAfterSync(DominatorTree &DT, DetachInst &Detach, SyncInst* Sync) {  
   BasicBlock * detachBB = Detach.getDetached();        
   BasicBlock * continueBB = Detach.getContinue();
@@ -944,6 +949,9 @@ void UNWINDABI::findLiveInstAfterSync(DominatorTree &DT, DetachInst &Detach, Syn
     for(auto &II : *pBB) {
       if(II.getType()->isTokenTy())
 	continue;
+      if(II.getParent() == &Detach.getParent()->getParent()->getEntryBlock())
+	continue;
+
 
       // Find the live variables
       for (User *U : II.users()) {	
@@ -961,8 +969,6 @@ void UNWINDABI::findLiveInstAfterSync(DominatorTree &DT, DetachInst &Detach, Syn
 	}
 
       }
-
-
     }
   }
 }
@@ -1641,6 +1647,161 @@ void UNWINDABI::preProcessFunction(Function &F) {
   return;
 }
 
+void UNWINDABI::renameUseToPhiInFrontier(PHINode* phiNode, Instruction* def, BasicBlock* phiNodeBB,
+					 SmallVector< Use*, 4 >& useNeed2Update,  
+					 DenseMap <Use*, PHINode*>& mapUseToPhi, 
+					 SmallVector< PHINode*, 4 >&  phiNeed2Update,
+					 DenseMap <PHINode*, std::vector<unsigned>> mapPhiToVIncome,
+					 DenseMap <PHINode*, std::vector<PHINode*>> mapPhiToVPhi) {
+
+  auto DFI = DF->find(phiNodeBB);
+  if (DFI == DF->end())
+    assert(0);
+
+  const std::set<BasicBlock *> &BBs = DFI->second;  
+  
+  for (auto &use : def->uses()) {
+    auto * user = dyn_cast<Instruction>(use.getUser());
+    BasicBlock * useBB = user->getParent();
+    
+    // If the bb that phiNode originates from dominate the basic block
+    if(DT->dominates(phiNodeBB, useBB) || phiNodeBB == useBB) {
+      useNeed2Update.push_back(&use);
+      mapUseToPhi[&use] = phiNode;
+    } 
+    
+    // Else check if the basic block is dominance frontier of the sync successor
+    else if(BBs.find(useBB) != BBs.end())  {   
+      if(isa<PHINode>(user) && (useBB != unwindPathEntry)) {  	
+	auto piVal = dyn_cast<PHINode> (user);    
+	unsigned incomingPair = piVal->getNumIncomingValues();
+	for(unsigned i = 0; i<incomingPair; i++){
+	  BasicBlock* incomingBB = piVal->getIncomingBlock(i);
+	  if( DT->dominates(phiNodeBB, incomingBB) ){
+	    phiNeed2Update.push_back(piVal);
+	    mapPhiToVIncome[piVal].push_back(i);
+	    mapPhiToVPhi[piVal].push_back(phiNode);
+	  }
+	}	
+      } else {
+	assert(0);
+      }
+      
+    }
+  }
+}
+
+void UNWINDABI::renameUseToPhi(PHINode* phiNode, Instruction* def, SyncInst* si) {
+  SmallVector< Use*, 4 >  useNeed2Update;
+  DenseMap <Use*, PHINode*> mapUseToPhi;
+  SmallVector< PHINode*, 4 >  phiNeed2Update;
+  DenseMap <PHINode*, std::vector<unsigned>> mapPhiToVIncome;
+  DenseMap <PHINode*, std::vector<PHINode*>> mapPhiToVPhi;
+
+  BasicBlock * syncSucc = si->getSuccessor(0);
+ 
+  auto DFI = DF->find(syncSucc);
+  if (DFI == DF->end())
+    assert(0);
+
+  const std::set<BasicBlock *> &BBs = DFI->second;  
+
+  for (auto &use : def->uses()) {
+    auto * user = dyn_cast<Instruction>(use.getUser());
+    BasicBlock * useBB = user->getParent();
+
+    // check if unwind path entry
+    if(isa<PHINode>(user) && (user->getParent() == unwindPathEntry)) {  
+      if( mapInstToPhiM.lookup(def) ) {
+	auto piVal = mapInstToPhiM[def];    
+	unsigned incomingPair = piVal->getNumIncomingValues();
+	for(unsigned i = 0; i<incomingPair; i++){
+	  BasicBlock* incomingBB = piVal->getIncomingBlock(i);
+	  if( DT->dominates(syncSucc->getFirstNonPHIOrDbgOrLifetime(), incomingBB) ){
+	    phiNeed2Update.push_back(piVal);
+	    mapPhiToVIncome[piVal].push_back(i);
+	    mapPhiToVPhi[piVal].push_back(phiNode);
+	  }
+	}
+      }
+    }	      
+  
+    // Else Check if sync successor dominates the basic block, if so, change all the uses to the generated phi node
+    else if(DT->dominates(syncSucc, useBB) || syncSucc == useBB) {
+      useNeed2Update.push_back(&use);
+      mapUseToPhi[&use] = phiNode;
+    } 
+    
+    // Else check if the basic block is dominance frontier of the sync successor
+    else if(BBs.find(useBB) != BBs.end())  { 
+  
+      // check if the definition instruction dominates the basic block, if so, add a phi node and perform renaming again
+      if(DT->dominates(def, user)) {
+	bool skipRename = false;
+	for(auto syncInst : syncList) {
+	  auto bbAfterSync = syncInst->getSuccessor(0);
+	  if(useBB == bbAfterSync) {
+	    skipRename  = true;
+	  }
+	}
+	
+	if(!skipRename) {
+	  outs() << "Instruction unique: \n";
+	  def->dump();
+	  user->dump();
+	  useBB->dump();
+	  outs() << "BB:\n";
+	  def->getParent()->dump();
+	  useBB->dump();
+	  IRBuilder<> B(useBB->getFirstNonPHI());        
+	  auto additionalPhiNode = B.CreatePHI(use->getType(), 2);  
+	  renameUseToPhiInFrontier(additionalPhiNode, def, useBB, useNeed2Update, mapUseToPhi, phiNeed2Update, mapPhiToVIncome, mapPhiToVPhi);	
+	  for (auto it = pred_begin(useBB), et = pred_end(useBB); it!=et; ++it){
+	    BasicBlock* pred = *it;
+	    if (DT->dominates(syncSucc, pred)) {	    
+	      additionalPhiNode->addIncoming(phiNode, pred);
+	    } else {
+	      additionalPhiNode->addIncoming(def, pred);	 
+	    }
+	  }
+	}
+      }
+      // Else, rename the variable used as an argument to phi node.
+      else {
+	if(isa<PHINode>(user) && (useBB != unwindPathEntry)) {  	
+	  auto piVal = dyn_cast<PHINode> (user);    
+	  unsigned incomingPair = piVal->getNumIncomingValues();
+	  for(unsigned i = 0; i<incomingPair; i++){
+	    BasicBlock* incomingBB = piVal->getIncomingBlock(i);
+	    if( DT->dominates(syncSucc, incomingBB) ){
+	      phiNeed2Update.push_back(piVal);
+	      mapPhiToVIncome[piVal].push_back(i);
+	      mapPhiToVPhi[piVal].push_back(phiNode);
+	    }
+	  }	
+	} else {
+	  assert(0);
+	} 	
+      }
+    } 
+    // Else do nothing
+  }
+
+  // Start updating the 
+  for(auto U: useNeed2Update) {
+    U->set(mapUseToPhi[U]);
+  }
+
+  for(auto P: phiNeed2Update) {
+    int i = 0;
+    for(auto income: mapPhiToVIncome[P]){
+      P->setIncomingValue(income, mapPhiToVPhi[P].at(i));
+      i++;
+    }
+  }
+
+  return;
+}
 
 void UNWINDABI::changeUseAfterPhi(Instruction* II, PHINode* phiNode, BasicBlock* BB, BasicBlock * skip) {
   SmallVector< Use*, 4 >  useNeed2Update;
@@ -1698,8 +1859,10 @@ void UNWINDABI::postProcessFunction(Function &F) {
   unwindPathEntry->dump();
 
   DT->recalculate(F);
+  DF->analyze(*DT);
   outs() << "Return something \n";
   DT->print(outs());  
+  DF->dump();
   outs() << "Return ---------- \n";  
 
   // -----------------------------------------------------------------------------------
@@ -1720,18 +1883,17 @@ void UNWINDABI::postProcessFunction(Function &F) {
     }
     haveProcessed[succ] = true;
     
-    outs() << "Sync : postProcessFunction: \n";
-    SI->dump();
-    
     for(auto II : liveAfterSyncV) {    
       // If the LV are live after sync      
       DenseMap<PHINode*, bool> haveVisited;
       if( std::find( mapInstToSyncM[II].begin(), mapInstToSyncM[II].end(), SI ) != mapInstToSyncM[II].end() ) {
+#if 0
 	bool noPhiFound = true;
-	
+                   
 	SmallVector<PHINode*, 8> phiVec;
 	DenseMap<PHINode*, std::vector<Instruction*>> instMap;
-	DenseMap<PHINode*, std::vector<BasicBlock*>> predMap;
+	DenseMap<PHINode*, std::vector<BasicBlock*>> predMap;	
+
 	// If it already have an existing Phi Node	
 	Value::use_iterator UI = II->use_begin(), E = II->use_end();
 	for (; UI != E;) {
@@ -1789,12 +1951,8 @@ void UNWINDABI::postProcessFunction(Function &F) {
 	    BasicBlock* pred = *it;
 	    if (reachFromBB2Inst(slowPathSyncInst[SI]->getParent(), pred)) {	    
 	      phiNode->addIncoming(slowI, pred);
-	      outs() << "Slow\n:";
-	      pred->dump();
 	    } else {
 	      phiNode->addIncoming(fastI, pred);	 
-	      outs() << "Fast\n:";
-	      pred->dump();	      
 	    }
 	  }	  
 	 
@@ -1804,7 +1962,80 @@ void UNWINDABI::postProcessFunction(Function &F) {
 	  phiNode->dump();
 	  outs() << "~~~~~~~~~~~~~~~~\n";
 	  //mapInst2PhiInSync[II] = phiNode;
-	}	
+	}
+#else
+	bool noPhiFound = true;
+
+	
+	SmallVector<PHINode*, 8> phiVec;
+	DenseMap<PHINode*, std::vector<Instruction*>> instMap;
+	DenseMap<PHINode*, std::vector<BasicBlock*>> predMap;	
+
+	// Get the uses of the Instruction
+	for (auto &U : II->uses()){
+	  auto * Usr = dyn_cast<Instruction>(U.getUser());
+	  // Get the parent of the user
+	  BasicBlock * useBB = Usr->getParent();
+	
+	  // Check if the uses is as a phi node in the sync successor, if so add a slow path in the incoming edge	  
+	  auto phiNodeInSucc = dyn_cast<PHINode>(Usr);
+	  if(haveVisited.lookup(phiNodeInSucc)) {
+	    continue;
+	  }
+	  haveVisited[phiNodeInSucc] = true;
+	  // If phi node is located in successor
+	  if (phiNodeInSucc && (phiNodeInSucc->getParent() == succ)) {
+	    Instruction *slowI = dyn_cast<Instruction>(VMapSlowPath[II]);
+	    // Look for the entry in the phi node 
+	    for (auto it = pred_begin(succ), et = pred_end(succ); it!=et; ++it){
+	      BasicBlock* pred = *it;
+	      if( reachFromBB2Inst(slowI->getParent(), pred, succ) ){
+		phiVec.push_back(phiNodeInSucc);
+		instMap[phiNodeInSucc].push_back(slowI);
+		predMap[phiNodeInSucc].push_back(pred);
+		noPhiFound = false;
+	      } 
+	    }	    
+	  }
+	}
+
+	// Perform the actual update
+	for(auto phiInst : phiVec) {
+	  unsigned iter = 0;
+	  for(auto slowInst : instMap[phiInst]) {
+	    phiInst->addIncoming(slowInst, predMap[phiInst].at(iter));
+	    iter++;
+	  }
+	}
+	
+	if(noPhiFound) {
+	  // Else, create a phi node. Start renaming the use: 
+	  // Add phi node in the sync Instruction    		  
+	  Instruction *slowI = dyn_cast<Instruction>(VMapSlowPath[II]); 
+	  Instruction *fastI = II;
+
+	  IRBuilder<> B(succ->getFirstNonPHI());        
+	  auto phiNode = B.CreatePHI(II->getType(), 2);
+	  
+	  renameUseToPhi(phiNode, II, SI);
+	  
+	  
+	  //changeUseAfterPhi(fastI, phiNode, succ, unwindPathEntry);	
+
+	  // Update the phi node 
+	  for (auto it = pred_begin(succ), et = pred_end(succ); it!=et; ++it){
+	    BasicBlock* pred = *it;
+	    if (reachFromBB2Inst(slowPathSyncInst[SI]->getParent(), pred)) {	    
+	      phiNode->addIncoming(slowI, pred);
+	    } else {
+	      phiNode->addIncoming(fastI, pred);	 
+	    }
+	  }
+
+	  outs() << "Phi node created: \n";
+	  phiNode->dump();
+	}
+#endif        	
       }      
     }    
   }
@@ -1860,6 +2091,8 @@ void UNWINDABI::postProcessFunction(Function &F) {
       //mapInst2PhiInSlowPath[II] = phiNode;
     }
   }
+
+  outs() << " I am done here\n";
 #endif
   //---------------------------------------------------------------
   

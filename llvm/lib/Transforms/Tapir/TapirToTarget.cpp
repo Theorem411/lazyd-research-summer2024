@@ -18,6 +18,7 @@
 #include "llvm/Analysis/LoopPass.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Dominators.h"
+
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Verifier.h"
@@ -68,6 +69,7 @@ public:
     AU.addRequired<LoopInfoWrapperPass>();
     AU.addRequired<AssumptionCacheTracker>();
     AU.addRequired<DominatorTreeWrapperPass>();
+    AU.addRequired<DominanceFrontierWrapperPass>();
     AU.addRequired<TargetTransformInfoWrapperPass>();
   }
 
@@ -88,10 +90,21 @@ private:
                            DominatorTree &DT, AssumptionCache &AC,
                            TaskInfo &TI);
 
+#if 1
 private:
   TapirTarget *Target = nullptr;
 
   Module &M;
+#else
+char LowerTapirToTarget::ID = 0;
+INITIALIZE_PASS_BEGIN(LowerTapirToTarget, "tapir2target",
+                      "Lower Tapir to Target ABI", false, false)
+INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
+INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(DominanceFrontierWrapperPass)
+INITIALIZE_PASS_END(LowerTapirToTarget, "tapir2target",
+                    "Lower Tapir to Target ABI", false, false)
+#endif
 
   function_ref<DominatorTree &(Function &)> GetDT;
   function_ref<TaskInfo &(Function &)> GetTI;
@@ -557,6 +570,7 @@ bool TapirToTargetImpl::run() {
     Function *F = WorkList.pop_back_val();
     LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
     DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(*F).getDomTree();
+    DominanceFrontier &DF = getAnalysis<DominanceFrontierWrapperPass>(*F).getDominanceFrontier();
     AssumptionCacheTracker &ACT = getAnalysis<AssumptionCacheTracker>();
 
     SmallVector<Function *, 4> NewHelpers;

@@ -81,7 +81,13 @@ namespace llvm {
     void findLiveInstAfterCont(DominatorTree &DT, DetachInst &Detach, SyncInst* Sync);
     bool reachFromBB2Inst(BasicBlock * src, BasicBlock * dst, BasicBlock * skip = nullptr);
     void changeUseAfterPhi(Instruction* II, PHINode* phiNode, BasicBlock* BB, BasicBlock * skip = nullptr);
-
+    void renameUseToPhi(PHINode* phiNode, Instruction* def, SyncInst* si);
+    void renameUseToPhiInFrontier(PHINode* phiNode, Instruction* def, BasicBlock* phiNodeBB,
+				  SmallVector< Use*, 4 >& useNeed2Update,  
+				  DenseMap <Use*, PHINode*>& mapUseToPhi, 
+				  SmallVector< PHINode*, 4 >&  phiNeed2Update,
+				  DenseMap <PHINode*, std::vector<unsigned>> mapPhiToVIncome,
+				  DenseMap <PHINode*, std::vector<PHINode*>> mapPhiToVPhi);
     bool isTre;
   };
 
