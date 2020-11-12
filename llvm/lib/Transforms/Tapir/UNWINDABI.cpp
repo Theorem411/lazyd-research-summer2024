@@ -543,60 +543,21 @@ BasicBlock * UNWINDABI::createGotStolenHandler(DetachInst& Detach,  SyncInst * d
   Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
 
   BasicBlock * detachBB = Detach.getDetached(); 
-  // Clone detach Block 
-#if 0
-  // Create label after the call inst. This will be the got stolen handler
-  // -------------------------------------------------------------------------
-  DebugInfoFinder DIFinder;      
-  DISubprogram *SP = F->getSubprogram();
-  if (SP) {
-    //assert(!MustCloneSP || ModuleLevelChanges);
-    // Add mappings for some DebugInfo nodes that we don't want duplicated
-    // even if they're distinct.
-    auto &MD = VMapUNWINDGH.MD();
-    MD[SP->getUnit()].reset(SP->getUnit());
-    MD[SP->getType()].reset(SP->getType());
-    MD[SP->getFile()].reset(SP->getFile());  
-    MD[SP].reset(SP); 
-  }        
-    
-  // Perform the actual cloning
-  BasicBlock * stolenHandlerPathEntry = CloneBasicBlock(detachBB, VMapUNWINDGH, ".gotstolen", F, nullptr, &DIFinder);
-  VMapUNWINDGH[detachBB] = stolenHandlerPathEntry;        
-     
-  // --------------------------------------------------------------
-  // Remap the cloned instruction
-  for (Instruction &II : *stolenHandlerPathEntry) {
-    RemapInstruction(&II, VMapUNWINDGH, RF_IgnoreMissingLocals, nullptr, nullptr);
-  }
-#else
-
   BasicBlock * stolenHandlerPathEntry = BasicBlock::Create(C, "gotstolenhandler", F);
 
-#endif
+
   // Add potential jump from detachBB to got stolen handler
   // Add potential jump after "spawn to fib" to avoid merging the gotstolen handler and the detachBlock
   IRBuilder<> builder(detachBB->getTerminator()); 
   builder.CreateCall(potentialJump, {BlockAddress::get( stolenHandlerPathEntry )});        
 
-#if 0
-  builder.SetInsertPoint(stolenHandlerPathEntry->getTerminator());
-#else
   builder.SetInsertPoint(stolenHandlerPathEntry);
-#endif
         
   // Perform synchronizatoin here        
   builder.CreateCall(suspend2scheduler, {ConstantPointerNull::get(builder.getInt32Ty()->getPointerTo())});        
 
-#if 0
-  Instruction* iterm = stolenHandlerPathEntry->getTerminator();                
-  //BranchInst* resumeBr = BranchInst::Create(unwindPathEntry);
-  BranchInst* resumeBr = BranchInst::Create(slowPathPrologue);
-  ReplaceInstWithInst(iterm, resumeBr);
-#else
   //builder.CreateBr(slowPathPrologue);        
   builder.CreateUnreachable();
-#endif 
 
   //Split basic block here. Used as hack to reload join counter in -0O
   //stolenHandlerPathEntry->splitBasicBlock(stolenHandlerPathEntry->getTerminator()->getPrevNode());
@@ -645,26 +606,33 @@ BasicBlock * UNWINDABI::createGotStolenHandler(DetachInst& Detach,  SyncInst * d
     }
   }
 #else
-  // Look for the store instruction
-  Instruction * strInst = inst2delete.front()->clone(); 
+  if(!inst2delete.empty()) {
+    // Look for the store instruction
+    Instruction * strInst = inst2delete.front()->clone();   
+    StoreInst* storeAfterFork = dyn_cast<StoreInst>(strInst);
+    storeAfterFork->insertBefore(stolenHandlerPathEntry->getFirstNonPHIOrDbgOrLifetime());
+    storeAfterFork->setVolatile(true);
+    
+    // Create restore path
+    if (!sync2bb.lookup(detachSyncPair)){
+      sync2bb[detachSyncPair] = BasicBlock::Create(C, "restore.path", F); 
+      builder.SetInsertPoint(sync2bb[detachSyncPair]);
+      builder.CreateUnreachable();
+    }
+    builder.SetInsertPoint(sync2bb[detachSyncPair]->getTerminator());
   
-  StoreInst* storeAfterFork = dyn_cast<StoreInst>(strInst);
-  storeAfterFork->insertBefore(stolenHandlerPathEntry->getFirstNonPHIOrDbgOrLifetime());
-  storeAfterFork->setVolatile(true);
-  // Create a load instruction
-
-  if (!sync2bb.lookup(detachSyncPair)){
-    sync2bb[detachSyncPair] = BasicBlock::Create(C, "restore.path", F); 
-    builder.SetInsertPoint(sync2bb[detachSyncPair]);
-    builder.CreateUnreachable();
-  }
-  builder.SetInsertPoint(sync2bb[detachSyncPair]->getTerminator());
-  
-
-  LoadInst* LI = builder.CreateLoad(storeAfterFork->getValueOperand()->getType(), storeAfterFork->getPointerOperand());
-  LI->setVolatile(true);
-  callInstV2.push_back(LI);
-  
+    // Create a load instruction    
+    LoadInst* LI = builder.CreateLoad(storeAfterFork->getValueOperand()->getType(), storeAfterFork->getPointerOperand());
+    LI->setVolatile(true);
+    callInstV2.push_back(LI);
+  } else {
+    // Create restore path
+    if (!sync2bb.lookup(detachSyncPair)){
+      sync2bb[detachSyncPair] = BasicBlock::Create(C, "restore.path", F); 
+      builder.SetInsertPoint(sync2bb[detachSyncPair]);
+      builder.CreateUnreachable();
+    }
+  } 
 
 #endif
 
@@ -902,30 +870,46 @@ void UNWINDABI::findLiveInstAfterCont(DominatorTree &DT, DetachInst &Detach, Syn
       // FIXME: If defined before the first spawn operation
       if(II.getParent() == &Detach.getParent()->getParent()->getEntryBlock())
 	continue;
+      
+      DenseMap<PHINode*, std::vector<Instruction*>> phi2inst;
+      DenseMap<PHINode*, std::vector<BasicBlock*>> phi2bb;
 
       for (User *U : II.users()) {
 	//if(DT.dominates(&II, Detach.getContinue()) &&
 	//   DT.dominates(Detach.getContinue()->getFirstNonPHIOrDbgOrLifetime(), dyn_cast<Instruction>(U)) ) {
 	bool isConsiderLive = reachFromBB2Inst(Detach.getContinue(), dyn_cast<Instruction>(U)->getParent());
 	bool defBeforeSync = reachFromBB2Inst(II.getParent(), Detach.getContinue())  && !(Detach.getContinue() == II.getParent()) ;
-	isConsiderLive &= defBeforeSync;
-	
+	isConsiderLive &= defBeforeSync;	
+
 	if(isConsiderLive) {
 	  liveInstAfterBB[Detach.getContinue()].push_back(&II);
 	  
 	  // Create a phi node in the unwind path entry  
 	  if(mapInstToPhiM.lookup(&II)){
-	    mapInstToPhiM[&II]->addIncoming(&II, Detach.getDetached() );
-        
+	    //mapInstToPhiM[&II]->addIncoming(&II, Detach.getDetached() );
+	    phi2inst[mapInstToPhiM[&II]].push_back(&II);
+	    phi2bb[mapInstToPhiM[&II]].push_back(Detach.getDetached());
+
 	  } else {
+	    unwindPathEntry->dump();
 	    IRBuilder <> B(unwindPathEntry->getFirstNonPHIOrDbgOrLifetime());
 	    PHINode* phiNode = B.CreatePHI(II.getType(), 2);
-	    phiNode->addIncoming(&II, Detach.getDetached() );
+	    //phiNode->addIncoming(&II, Detach.getDetached() );
 	    mapInstToPhiM[&II] = phiNode;
+	    phi2inst[phiNode].push_back(&II);
+	    phi2bb[phiNode].push_back(Detach.getDetached());
 	  }
 	  break;
 	}
       }
+
+      // Do the actual update
+      for(auto pairMap : mapInstToPhiM) {
+	for(BasicBlock * bb : phi2bb[pairMap.second] ) {
+	  pairMap.second->addIncoming(pairMap.first, bb);	
+	}
+      }
+
     }
   }
 
@@ -933,10 +917,11 @@ void UNWINDABI::findLiveInstAfterCont(DominatorTree &DT, DetachInst &Detach, Syn
 
 
 void UNWINDABI::findLiveInstAfterSync(DominatorTree &DT, DetachInst &Detach, SyncInst* Sync) {  
+  assert(Sync);
   BasicBlock * detachBB = Detach.getDetached();        
   BasicBlock * continueBB = Detach.getContinue();
   BasicBlock * succ = Sync->getSuccessor(0);
-  assert(Sync);
+
   
   contListV.push_back(continueBB);
   mapBBToSyncM[continueBB] = Sync;
@@ -1298,7 +1283,8 @@ void UNWINDABI::createUnwindHandler(Function& F) {
   else if (F.getReturnType()->isIntegerTy())
     B.CreateRet(ZERO);
   else
-    assert(0 && "Return type not supported yet");
+    B.CreateRet(ZERO);
+    //assert(0 && "Return type not supported yet");
 
   B.SetInsertPoint(unwindBody);
   // Change the child return address to default
@@ -1363,7 +1349,8 @@ void UNWINDABI::createUnwindHandler(Function& F) {
   else if (F.getReturnType()->isIntegerTy())
     B.CreateRet(ZERO);
   else
-    assert(0 && "Return type not supported yet");
+    B.CreateRet(ZERO);
+  //assert(0 && "Return type not supported yet");
 }
 #endif
 
@@ -1622,8 +1609,7 @@ void UNWINDABI::preProcessFunction(Function &F) {
     //createRestorePath(F, SI);
     createUnwindHandler(F);
     gworkCtx = createSlowPathPrologue(F);
-    //createSlowPathEpilogue(F, workCtx);
-    
+    //createSlowPathEpilogue(F, workCtx);    
   }  
 
   
@@ -1887,85 +1873,7 @@ void UNWINDABI::postProcessFunction(Function &F) {
       // If the LV are live after sync      
       DenseMap<PHINode*, bool> haveVisited;
       if( std::find( mapInstToSyncM[II].begin(), mapInstToSyncM[II].end(), SI ) != mapInstToSyncM[II].end() ) {
-#if 0
 	bool noPhiFound = true;
-                   
-	SmallVector<PHINode*, 8> phiVec;
-	DenseMap<PHINode*, std::vector<Instruction*>> instMap;
-	DenseMap<PHINode*, std::vector<BasicBlock*>> predMap;	
-
-	// If it already have an existing Phi Node	
-	Value::use_iterator UI = II->use_begin(), E = II->use_end();
-	for (; UI != E;) {
-	  Use &U = *UI;
-	  ++UI;	  
-	  auto *Usr = dyn_cast<Instruction>(U.getUser());
-	  auto phiNodeInSucc = dyn_cast<PHINode>(Usr);
-	  if(haveVisited.lookup(phiNodeInSucc)) {
-	    continue;
-	  }
-	  haveVisited[phiNodeInSucc] = true;
-
-	  // If phi node is located in successor
-	  if (phiNodeInSucc && (phiNodeInSucc->getParent() == succ)) {
-	    Instruction *slowI = dyn_cast<Instruction>(VMapSlowPath[II]);
-	    for (auto it = pred_begin(succ), et = pred_end(succ); it!=et; ++it){
-	      BasicBlock* pred = *it;
-	      //if (reachFromBB2Inst(slowPathSyncInst[SI]->getParent(), pred)) {	    		
-	      if( reachFromBB2Inst(slowI->getParent(), pred, succ) ){
-		//phiNodeInSucc->addIncoming(slowI, pred);
-		phiVec.push_back(phiNodeInSucc);
-		instMap[phiNodeInSucc].push_back(slowI);
-		predMap[phiNodeInSucc].push_back(pred);
-		noPhiFound = false;
-	      } 
-	    }
-	  }	  
-	}
-
-	for(auto phiInst : phiVec) {
-	  unsigned iter = 0;
-	  for(auto slowInst : instMap[phiInst]) {
-	    phiInst->addIncoming(slowInst, predMap[phiInst].at(iter));
-	    iter++;
-	  }
-	}
-  
-	if(noPhiFound) {
-	  // Add phi node in the sync Instruction    	
-	  Instruction *slowI = dyn_cast<Instruction>(VMapSlowPath[II]); 
-	  if(mapInst2PhiInSlowPath.lookup(II)){
-	    //slowI = mapInst2PhiInSlowPath[II];
-	  }
-	
-	  Instruction *fastI = II;
-	  if(mapInst2PhiInSync.lookup(II)) {
-	    //fastI = mapInst2PhiInSync[II];
-	  }
-
-	  IRBuilder<> B(succ->getFirstNonPHI());        
-	  auto phiNode = B.CreatePHI(II->getType(), 2);  
-	  changeUseAfterPhi(fastI, phiNode, succ, unwindPathEntry);	
-	  outs() << "------------------\n";
-	  for (auto it = pred_begin(succ), et = pred_end(succ); it!=et; ++it){
-	    BasicBlock* pred = *it;
-	    if (reachFromBB2Inst(slowPathSyncInst[SI]->getParent(), pred)) {	    
-	      phiNode->addIncoming(slowI, pred);
-	    } else {
-	      phiNode->addIncoming(fastI, pred);	 
-	    }
-	  }	  
-	 
-	  fastI->dump();
-	  slowI->dump();
-	  slowI->getParent()->dump();
-	  phiNode->dump();
-	  outs() << "~~~~~~~~~~~~~~~~\n";
-	  //mapInst2PhiInSync[II] = phiNode;
-	}
-#else
-	bool noPhiFound = true;
-
 	
 	SmallVector<PHINode*, 8> phiVec;
 	DenseMap<PHINode*, std::vector<Instruction*>> instMap;
@@ -2035,7 +1943,6 @@ void UNWINDABI::postProcessFunction(Function &F) {
 	  outs() << "Phi node created: \n";
 	  phiNode->dump();
 	}
-#endif        	
       }      
     }    
   }
@@ -2048,9 +1955,6 @@ void UNWINDABI::postProcessFunction(Function &F) {
   for (; cr != ce; ) {
     BasicBlock *contBB = *cr;
     ++cr;
-    //if(mapBBToSyncM[contBB] != SI){
-    //  continue;
-    //}
 
     // Add phi node to slow path continuation that belongs to this sync instruction
     BasicBlock *contBBslow = dyn_cast<BasicBlock>(VMapSlowPath[contBB]);
@@ -2076,23 +1980,10 @@ void UNWINDABI::postProcessFunction(Function &F) {
 	}
       }
        	
-#if 0      
-      Value::use_iterator UI = slowI->use_begin(), E = slowI->use_end();
-      for (; UI != E;) {
-	Use &U = *UI;
-	++UI;
-	auto *Usr = dyn_cast<Instruction>(U.getUser());
-	if (Usr && !isa<PHINode>(Usr) &&  
-	    ( DT->dominates(phiNode, Usr) || contBBslow == Usr->getParent()) )  {         
-	  U.set(phiNode);
-	}	
-      }
-#endif      
       //mapInst2PhiInSlowPath[II] = phiNode;
     }
   }
 
-  outs() << " I am done here\n";
 #endif
   //---------------------------------------------------------------
   
