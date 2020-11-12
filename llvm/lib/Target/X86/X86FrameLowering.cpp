@@ -1833,7 +1833,8 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     }
   } else if (FrameSize) {
     uint64_t stacklet_size_log2 = MF.getTarget().Options.ULIStackletOverflowCheckSize;
-    if (stacklet_size_log2 && !MF.getFunction()->hasFnAttribute(Attribute::NoStackletCheck)) {
+    if(false) {
+    //if (stacklet_size_log2 && !MF.getFunction().hasFnAttribute(Attribute::NoStackletCheck)) {
       // Add a stacklet overflow check, detecting if the adjusted stack pointer
       // for this stack frame points to memory beyond the stacklet.
       // If so, call the overflow handler hardcoded to `__stacklet_overflow`
