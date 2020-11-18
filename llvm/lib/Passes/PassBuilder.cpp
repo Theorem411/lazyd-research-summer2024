@@ -259,6 +259,7 @@
 
 using namespace llvm;
 
+
 static const Regex DefaultAliasRegex(
     "^(default|thinlto-pre-link|thinlto|lto-pre-link|lto)<(O[0123sz])>$");
 
@@ -718,6 +719,7 @@ Expected<SimplifyCFGOptions> parseSimplifyCFGOptions(StringRef Params) {
   }
   return Result;
 }
+
 
 /// Parser of parameters for LoopVectorize pass.
 Expected<LoopVectorizeOptions> parseLoopVectorizeOptions(StringRef Params) {

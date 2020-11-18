@@ -207,6 +207,12 @@ static cl::opt<bool> DisableTapirOpts(
 static cl::opt<bool> VerifyTapir("verify-tapir", cl::init(false), cl::Hidden,
                                  cl::desc("Verify IR after Tapir passes"));
 
+// Allow to disable call site split for now since it interfere with the register allocator + EHPad
+static cl::opt<bool> DisableCallSiteSplit(
+    "disable-callsite-split", cl::init(false), cl::NotHidden,
+    cl::desc("Disable Call Site Splitting (default = off)"));
+
+
 PassManagerBuilder::PassManagerBuilder() {
     TapirTarget = TapirTargetID::None;
     OptLevel = 2;
@@ -839,7 +845,7 @@ void PassManagerBuilder::populateModulePassManager(
 
   addExtensionsToPM(EP_ModuleOptimizerEarly, MPM);
 
-  if (OptLevel > 2)
+  if (OptLevel > 2 && !DisableCallSiteSplit)
     MPM.add(createCallSiteSplittingPass());
 
   // Propage constant function arguments by specializing the functions.
@@ -1244,7 +1250,7 @@ void PassManagerBuilder::addLTOOptimizationPasses(legacy::PassManagerBase &PM) {
   // Infer attributes about declarations if possible.
   PM.add(createInferFunctionAttrsLegacyPass());
 
-  if (OptLevel > 1) {
+  if (OptLevel > 1 && !DisableCallSiteSplit) {
     // Split call-site with more constrained arguments.
     PM.add(createCallSiteSplittingPass());
 
