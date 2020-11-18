@@ -273,7 +273,7 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
       }
       if (isa<FuncletPadInst>(PadInst))
         assert(&*BB.begin() == PadInst && "WinEHPrepare failed to demote PHIs");
-    }
+    }        
 
     MachineBasicBlock *MBB = mf.CreateMachineBasicBlock(&BB);
     MBBMap[&BB] = MBB;
@@ -289,6 +289,23 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
     if (BB.isEHPad())
       MBB->setIsEHPad();
 
+    // The entry of the gotstolen handler and slow path entry for now will be considered as EHPad
+    for (auto &ii : BB) {
+      if ( isa<CallInst>(&ii) ) {
+	auto call_inst = dyn_cast<CallInst>(&ii);
+	auto fn = call_inst->getCalledFunction();
+	if(fn && fn->getIntrinsicID() ==  Intrinsic::var_annotation) {
+	  assert(isa<ConstantInt>(call_inst->getArgOperand(3)));
+	  auto intVal = dyn_cast<ConstantInt>(call_inst->getArgOperand(3));
+	  if(intVal->getSExtValue() == 0) {  
+	    outs() << "MBB : " << MBB->getName() << " is set to ehpad\n";
+	    MBB->setIsEHPad();	  
+	  }
+	}
+      }
+    }
+    // --------------------------------------------
+    
     // Create Machine PHI nodes for LLVM PHI nodes, lowering them as
     // appropriate.
     for (const PHINode &PN : BB.phis()) {
