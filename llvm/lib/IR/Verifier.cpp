@@ -1725,6 +1725,7 @@ static bool isFuncOnlyAttr(Attribute::AttrKind Kind) {
   case Attribute::UserLevelInterrupt:
   case Attribute::ULINonAtomic:
   case Attribute::NoStackletCheck:
+  case Attribute::NoUnwindPath:
     return true;
   default:
     break;

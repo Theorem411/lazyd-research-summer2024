@@ -626,6 +626,8 @@ static uint64_t getAttrKindEncoding(Attribute::AttrKind Kind) {
     return bitc::ATTR_KIND_IN_ALLOCA;
   case Attribute::ULINonAtomic:
     return bitc::ATTR_KIND_ULI_NON_ATOMIC;
+  case Attribute::NoUnwindPath:
+    return bitc::ATTR_KIND_NO_UNWIND_PATH;
   case Attribute::UserLevelInterrupt:
     return bitc::ATTR_KIND_USER_LEVEL_INTERRUPT;
   case Attribute::NoStackletCheck:

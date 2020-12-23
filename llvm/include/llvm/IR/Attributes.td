@@ -329,6 +329,10 @@ def ULINonAtomic : EnumAttr<"uli_non_atomic">;
 /// disable stacklet checking for this function
 def NoStackletCheck : EnumAttr<"no_stacklet_check">;
 
+/// disable creating an unwind path this function
+def NoUnwindPath : EnumAttr<"no_unwind_path">;
+
+
 /// Target-independent string attributes.
 def LessPreciseFPMAD : StrBoolAttr<"less-precise-fpmad">;
 def NoInfsFPMath : StrBoolAttr<"no-infs-fp-math">;

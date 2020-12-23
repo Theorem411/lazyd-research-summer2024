@@ -267,6 +267,7 @@ enum Kind {
   kw_user_level_interrupt,
   kw_uli_non_atomic,
   kw_no_stacklet_check,
+  kw_no_unwind_path,
 
   kw_type,
   kw_opaque,

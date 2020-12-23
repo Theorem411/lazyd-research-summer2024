@@ -723,6 +723,7 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(user_level_interrupt);
   KEYWORD(uli_non_atomic);
   KEYWORD(no_stacklet_check);
+  KEYWORD(no_unwind_path);
 
   KEYWORD(type);
   KEYWORD(opaque);

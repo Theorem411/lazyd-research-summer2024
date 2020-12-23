@@ -419,6 +419,10 @@ std::string Attribute::getAsString(bool InAttrGrp) const {
   if (hasAttribute(Attribute::ULINonAtomic))
     return "uli_non_atomic";
 
+  if (hasAttribute(Attribute::NoUnwindPath))
+    return "no_unwind_path";
+
+
   if (hasAttribute(Attribute::NoStackletCheck))
     return "no_stacklet_check";
 
