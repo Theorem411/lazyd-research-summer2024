@@ -1747,24 +1747,25 @@ bool AsmPrinter::doFinalization(Module &M) {
   // we can conditionalize accesses based on whether or not it is nullptr.
   MF = nullptr;
 
-
+#if 0           
   // Create the PreHash Section
   if (!M.CallStealMap.empty()){
     MCSection *PreHashSection = getObjFileLowering().getPreHashSection();
     if (PreHashSection){
       OutStreamer->SwitchSection( PreHashSection);
       EmitAlignment(2);
-      
-      
+            
       Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());      
       M.getOrInsertGlobal("Pre_Hash_table", VoidPtrTy);
       GlobalVariable * preHashTable = M.getNamedGlobal("Pre_Hash_table");
       preHashTable->setLinkage(GlobalValue::ExternalLinkage);
       MCSymbol *PreHashSym = getSymbol(preHashTable);
+      // Seems to allow the user code to access the Pre_Hash_Table or to used for global variable
       EmitLinkage(preHashTable, PreHashSym);
       OutStreamer->EmitLabel(PreHashSym);
-      
-      // Populate the content of PreHash table
+
+       // Populate the content of PreHash table
+
       for(auto &KV :M.CallStealMap){                 
 	MCSymbol * raStartLabel = OutContext.ReturnAddr2LabelMap[(KV.first->getName() + "_start").str()];
 	MCSymbol * raEndLabel = OutContext.ReturnAddr2LabelMap[(KV.first->getName() + "_end").str()];
@@ -1788,7 +1789,7 @@ bool AsmPrinter::doFinalization(Module &M) {
 	  EmitLabelPlusOffset(unwindLabel, 0, 8, false);
 	}
       }
-      
+
       M.getOrInsertGlobal("Pre_Hash_table_end", VoidPtrTy);
       GlobalVariable * preHashTableEnd = M.getNamedGlobal("Pre_Hash_table_end");
       preHashTableEnd->setLinkage(GlobalValue::ExternalLinkage);
@@ -1797,7 +1798,41 @@ bool AsmPrinter::doFinalization(Module &M) {
       OutStreamer->EmitLabel(PreHashSymEnd);
     }
   }
+#else
+  // Generate the Pre_Hash_table in the elf binary
   
+  // Entry:
+  //  - Return address of function that can spawn
+  //  - Unwind Path entry
+  
+  if(!OutContext.preHashTableEntry.empty()) {
+    MCSection *PreHashSection = getObjFileLowering().getPreHashSection();
+    OutStreamer->SwitchSection( PreHashSection);
+    EmitAlignment(2);            
+
+    Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());      
+    M.getOrInsertGlobal("Pre_Hash_table", VoidPtrTy);
+    GlobalVariable * preHashTable = M.getNamedGlobal("Pre_Hash_table");
+    preHashTable->setLinkage(GlobalValue::ExternalLinkage);
+    MCSymbol *PreHashSym = getSymbol(preHashTable);
+    // Seems to allow the user code to access the Pre_Hash_Table or to used for global variable
+    EmitLinkage(preHashTable, PreHashSym);
+    OutStreamer->EmitLabel(PreHashSym);
+   
+    for(auto labelPair: OutContext.preHashTableEntry) {
+      EmitLabelPlusOffset(labelPair.first, 0, 8, false);
+      EmitLabelPlusOffset(labelPair.second, 0, 8, false);	
+    }
+ 
+    M.getOrInsertGlobal("Pre_Hash_table_end", VoidPtrTy);
+    GlobalVariable * preHashTableEnd = M.getNamedGlobal("Pre_Hash_table_end");
+    preHashTableEnd->setLinkage(GlobalValue::ExternalLinkage);
+    MCSymbol *PreHashSymEnd = getSymbol(preHashTableEnd);
+    EmitLinkage(preHashTableEnd, PreHashSymEnd);     
+    OutStreamer->EmitLabel(PreHashSymEnd);
+  }
+
+#endif  
   // Gather all GOT equivalent globals in the module. We really need two
   // passes over the globals: one to compute and another to avoid its emission
   // in EmitGlobalVariable, otherwise we would not be able to handle cases
