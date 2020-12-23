@@ -2052,6 +2052,15 @@ function when the -Xclang -fuli-stacklet-overflow is passed.
   }];
 }
 
+def NoUnwindPathDocs : Documentation {
+  let Category = DocCatFunction;
+  let Heading = "Do no emit unwind path";
+  let Content = [{
+Clang supports the GNU style ``__attribute__((no_unwind_path))`` attribute on
+functions which disables the generation of unwind path.
+  }];
+}
+
 def ULINoPollingDocs : Documentation {
   let Category = DocCatFunction;
   let Heading = "Disable ULI polling (x86)";

@@ -4003,3 +4003,9 @@ def ULINoPolling : InheritableAttr, TargetSpecificAttr<TargetAnyX86> {
   let Subjects = SubjectList<[Function]>;
   let Documentation = [ULINoPollingDocs];
 }
+
+def NoUnwindPath : InheritableAttr, TargetSpecificAttr<TargetAnyX86> {
+  let Spellings = [GNU<"no_unwind_path">];
+  let Subjects = SubjectList<[Function]>;
+  let Documentation = [NoUnwindPathDocs];
+}

@@ -1970,6 +1970,13 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     }
   }
 
+  // we check for no_unwind_path attribute on functions
+  if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
+    if (FD->hasAttr<NoUnwindPathAttr>()) {
+      B.addAttribute(llvm::Attribute::NoUnwindPath);
+    }
+  }
+
   // Add other optimization related attributes if we are optimizing this
   // function.
   if (!D->hasAttr<OptimizeNoneAttr>()) {

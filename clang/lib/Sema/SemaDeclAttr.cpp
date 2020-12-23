@@ -7340,6 +7340,18 @@ static void handleNoStackletCheckAttr(Sema &S, Decl *D,
   handleSimpleAttribute<NoStackletCheckAttr>(S, D, Attr);
 }
 
+static void handleNoUnwindPathAttr(Sema &S, Decl *D,
+			     const AttributeList &Attr) {
+  if (!isFunctionOrMethod(D)) {
+    S.Diag(D->getLocation(), diag::warn_attribute_wrong_decl_type)
+        << "'no_unwind_path'" << ExpectedFunctionOrMethod;
+    return;
+  }
+  handleSimpleAttribute<NoUnwindPathAttr>(S, D, Attr);
+}
+
+
+
 static void handleRISCVInterruptAttr(Sema &S, Decl *D,
                                      const ParsedAttr &AL) {
   // Warn about repeated attributes.
@@ -8273,6 +8285,8 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case ParsedAttr::AT_X86ForceAlignArgPointer:
     handleX86ForceAlignArgPointerAttr(S, D, AL);
+  case AttributeList::AT_NoUnwindPath:
+    handleNoUnwindPathAttr(S, D, Attr);
     break;
   case ParsedAttr::AT_DLLExport:
   case ParsedAttr::AT_DLLImport:
