@@ -144,6 +144,15 @@ private:
   /// Indicate that this basic block is entered via an exception handler.
   bool IsEHPad = false;
 
+  /// Return true if block is gotstolen handler
+  bool IsGotstolenHandler = false;
+
+  /// Return true if block is slow path continuation entry
+  bool IsSlowPathEntry = false;
+  
+  /// Return true if block is unwind path continuation entry
+  bool IsUnwindPathEntry = false;
+  
   /// Indicate that this basic block is potentially the target of an indirect
   /// branch.
   bool AddressTaken = false;
@@ -541,10 +550,28 @@ public:
   /// Returns true if the block is a landing pad. That is this basic block is
   /// entered via an exception handler.
   bool isEHPad() const { return IsEHPad; }
+  
+  /// Return true if block is gotstolen handler
+  bool isGotstolenHandler() const { return IsGotstolenHandler; }
+
+  /// Return true if block is slow path continuation entry
+  bool isSlowPathEntry() const { return IsSlowPathEntry; }
+
+  /// Return true if block is unwind path continuation entry
+  bool isUnwindPathEntry() const { return IsUnwindPathEntry; }
 
   /// Indicates the block is a landing pad.  That is this basic block is entered
   /// via an exception handler.
   void setIsEHPad(bool V = true) { IsEHPad = V; }
+
+  /// Indicate true if block is gotstolen handler
+  void setIsGotstolenHandler(bool V = true) { IsGotstolenHandler = V; }
+
+  /// Indicate true if block is slow path continuation entry
+  void setIsSlowPathEntry(bool V = true) { IsSlowPathEntry = V; }
+
+  /// Indicate true if block is unwind path entry
+  void setIsUnwindPathEntry(bool V = true) { IsUnwindPathEntry = V; }
 
   bool hasEHPadSuccessor() const;
 
@@ -1086,6 +1113,10 @@ public:
   void setIrrLoopHeaderWeight(uint64_t Weight) {
     IrrLoopHeaderWeight = Weight;
   }
+
+  // Store the the AdjustUP instruction that adjust the stack pointer 
+  // Used in gotstolen handler to restore the proper stack pointer
+  DenseMap <MachineInstr*, iterator> mapAdjToGotStolen;
 
 private:
   /// Return probability iterator corresponding to the I successor iterator.
