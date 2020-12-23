@@ -344,6 +344,32 @@ void PEI::calculateCallFrameInfo(MachineFunction &MF) {
   MFI.setAdjustsStack(AdjustsStack);
   MFI.setMaxCallFrameSize(MaxCallFrameSize);
 
+  // Fix the rsp at gotstolen handler
+  // Store the Adjupstack instruction if exists after spawn.
+  // The adjupstack will be copied to the gotstolen handler to fix rsp
+  Function &Fn = MF.getFunction();
+  for (MachineFunction::iterator BB = Fn.begin(), E = Fn.end(); BB != E; ++BB) {
+    for (MachineBasicBlock *SMBB : BB->successors()) {
+      if (SMBB->isGotstolenHandler()) {
+	//outs() << "Gotstolen handler found: " << SMBB->getName() <<"\n";
+	// Get the predecessor 
+	for (MachineBasicBlock *PMBB : BB->predecessors()) {
+	  //outs() << "Predecessors for got handler found: " << PMBB->getName() <<"\n";
+	  for (MachineBasicBlock::iterator I = PMBB->end(), E = PMBB->begin(); I != E;) {
+	    --I;
+	    if (TII.isFrameInstr(*I)) {
+	      unsigned Size = TII.getFrameSize(*I);		
+	      //outs() << "Gotstolen handler name : " << SMBB->getName() << "Spawn name: " << PMBB->getName() << "Size: " << Size << "\n";
+	      //I->dump();
+	      PMBB->mapAdjToGotStolen[&*I] = SMBB->getFirstNonPHI();
+	      break;
+	    }
+	  }	  
+	}
+      }
+    }
+  }
+
   for (MachineBasicBlock::iterator I : FrameSDOps) {
     // If call frames are not being included as part of the stack frame, and
     // the target doesn't indicate otherwise, remove the call frame pseudos

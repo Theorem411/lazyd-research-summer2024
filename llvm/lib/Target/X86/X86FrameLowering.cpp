@@ -42,6 +42,12 @@ STATISTIC(NumFrameExtraProbe,
 
 using namespace llvm;
 
+// Push and pop the unwind path entry
+static cl::opt<bool> EnablePushPopUnwindPath(
+    "enable-pushpop-unwindpath", cl::init(false), cl::NotHidden,
+    cl::desc("Enable push and pop of the unwind path entry if there is any (default = off)"));
+
+
 X86FrameLowering::X86FrameLowering(const X86Subtarget &STI,
                                    MaybeAlign StackAlignOverride)
     : TargetFrameLowering(StackGrowsDown, StackAlignOverride.valueOrOne(),
@@ -1569,10 +1575,49 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
       assert(MFI.getOffsetAdjustment() == -(int)NumBytes &&
              "should calculate same local variable offset for funclets");
 
+#if 0
+    // Not needed if use pre hash table
+    // Push the unwind path entry into the stack
+    if(EnablePushPopUnwindPath) {
+      const BasicBlock *LLVM_BB = MBB.getBasicBlock();
+      auto nextMBB = MBB.getNextNode ();
+      if(nextMBB) {
+	const BasicBlock * nextBB = nextMBB->getBasicBlock();
+	if(nextBB) {
+	  const BlockAddress* ba = BlockAddress::lookup (nextBB);	  
+	  MCSymbol *Label = MF.getLabel();             
+	  const MCInstrDesc &II = TII.get(TargetOpcode::EH_LABEL);        
+	  BuildMI(MBB, MBBI, DL, II).addSym(Label).setMIFlag(MachineInstr::FrameSetup);     
+      
+	  if (Label) {
+	    // Save the entry of the unwind path if exists
+	    auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
+	      .addSym(Label).setMIFlag(MachineInstr::FrameSetup);	        
+	  } else {
+	    auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
+	      .addImm(0).setMIFlag(MachineInstr::FrameSetup);       
+	  }      
+	} else {
+	  // Save the entry of the unwind path if exists
+	  auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
+	    .addImm(0).setMIFlag(MachineInstr::FrameSetup);       
+	}
+      } else {
+	// Save the entry of the unwind path if exists
+	auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
+	  .addImm(0).setMIFlag(MachineInstr::FrameSetup);
+      } 
+      
+      // Save the entry of the unwind path if exists (for stack alignment purpose)
+      auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
+      	.addImm(0).setMIFlag(MachineInstr::FrameSetup);           
+    }
+#endif
+
     // Save EBP/RBP into the appropriate stack slot.
     BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64r : X86::PUSH32r))
       .addReg(MachineFramePtr, RegState::Kill)
-      .setMIFlag(MachineInstr::FrameSetup);   
+      .setMIFlag(MachineInstr::FrameSetup);
     
     if (NeedsDwarfCFI) {
       // Mark the place where EBP/RBP was saved.
@@ -1764,6 +1809,16 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
             false, FrameSize + HackOffset);
         instructions_to_delete.push_back(inst);
       }
+#if 0 
+      // May not be used
+      else if (inst->getOpcode() ==  X86::SETUP_RSP_FROM_RBP) {
+	auto SrcReg =  X86::RBP;
+        auto HackOffset =  -8;
+        addRegOffset(BuildMI(*mb, inst, DL, TII.get(X86::LEA64r), X86::RSP), SrcReg,
+            false, -FrameSize - HackOffset);
+        instructions_to_delete.push_back(inst);
+      }
+#endif
     }
   }
 
@@ -1833,8 +1888,8 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     }
   } else if (FrameSize) {
     uint64_t stacklet_size_log2 = MF.getTarget().Options.ULIStackletOverflowCheckSize;
-    if(false) {
-    //if (stacklet_size_log2 && !MF.getFunction().hasFnAttribute(Attribute::NoStackletCheck)) {
+    //if(false) {
+    if (stacklet_size_log2 && !MF.getFunction().hasFnAttribute(Attribute::NoStackletCheck)) {
       // Add a stacklet overflow check, detecting if the adjusted stack pointer
       // for this stack frame points to memory beyond the stacklet.
       // If so, call the overflow handler hardcoded to `__stacklet_overflow`
@@ -3485,6 +3540,16 @@ bool X86FrameLowering::adjustStackWithPops(MachineBasicBlock &MBB,
 MachineBasicBlock::iterator X86FrameLowering::
 eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
                               MachineBasicBlock::iterator I) const {
+
+  // Get the Adjupstack if exists after function call
+  // Copy that instruction into gotstolen handler to fix up rsp
+  bool bSpawnBB = false;
+  MachineBasicBlock::iterator gotStolen; 
+  if(MBB.mapAdjToGotStolen.count(&*I)  ) {
+    bSpawnBB = true;
+    gotStolen = MBB.mapAdjToGotStolen[&*I];
+  }
+  
   bool reserveCallFrame = hasReservedCallFrame(MF);
   unsigned Opcode = I->getOpcode();
   bool isDestroy = Opcode == TII.getCallFrameDestroyOpcode();
@@ -3557,6 +3622,18 @@ eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
               adjustStackWithPops(MBB, InsertPos, DL, StackAdjustment)))
           BuildStackAdjustment(MBB, InsertPos, DL, StackAdjustment,
                                /*InEpilogue=*/false);
+
+
+	// If the corresponding call instr. related to ADJUPSTACK is a spawn function, copy the translation of stack adjustment instr. 
+	// to the gotstolen handler (for example, if after call inst, there is an "addq 8, rsp", then copy the "addq 8, rsp"
+	// to the gotstolen handler
+	if(bSpawnBB) {
+	  if (!(F.optForMinSize() &&
+		adjustStackWithPops(*gotStolen->getParent(), gotStolen, DL, StackAdjustment)))
+	    BuildStackAdjustment(*gotStolen->getParent(), gotStolen, DL, StackAdjustment,
+				 /*InEpilogue=*/false);
+	}
+
       }
     }
 
