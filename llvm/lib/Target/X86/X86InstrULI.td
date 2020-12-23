@@ -157,6 +157,8 @@ in {
                       [(set GR64:$dst, (int_x86_get_frame_size))]>;
    def SETUP_RBP_FROM_RSP : PseudoI<(outs), (ins),
                       [(int_x86_setup_rbp_from_rsp)]>;
+   def SETUP_RSP_FROM_RBP : PseudoI<(outs), (ins),
+                      [(int_x86_setup_rsp_from_rbp)]>;
    def SETUP_RBP_FROM_SP_IN_RBP : PseudoI<(outs), (ins),
                       [(int_x86_setup_rbp_from_sp_in_rbp)]>;
 }

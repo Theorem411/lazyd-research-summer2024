@@ -1808,17 +1808,15 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
         addRegOffset(BuildMI(*mb, inst, DL, TII.get(X86::LEA64r), X86::RBP), SrcReg,
             false, FrameSize + HackOffset);
         instructions_to_delete.push_back(inst);
-      }
-#if 0 
-      // May not be used
-      else if (inst->getOpcode() ==  X86::SETUP_RSP_FROM_RBP) {
+      } else if (inst->getOpcode() ==  X86::SETUP_RSP_FROM_RBP) {
+	// Used to restore the stack pointer from base pointer
+	// Before returning to the parent's unwind path, use this opcode to restore SP
 	auto SrcReg =  X86::RBP;
         auto HackOffset =  -8;
         addRegOffset(BuildMI(*mb, inst, DL, TII.get(X86::LEA64r), X86::RSP), SrcReg,
             false, -FrameSize - HackOffset);
         instructions_to_delete.push_back(inst);
       }
-#endif
     }
   }
 

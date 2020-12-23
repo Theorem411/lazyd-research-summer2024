@@ -5953,6 +5953,8 @@ let TargetPrefix = "x86" in {
        Intrinsic<[], [llvm_ptr_ty], []>;
   def int_x86_setup_rbp_from_rsp : GCCBuiltin<"__builtin_setup_rbp_from_rsp">,
        Intrinsic<[], [], []>;
+  def int_x86_setup_rsp_from_rbp : GCCBuiltin<"__builtin_setup_rsp_from_rbp">,
+       Intrinsic<[], [], []>;
   def int_x86_setup_rbp_from_sp_in_rbp : GCCBuiltin<"__builtin_setup_rbp_from_sp_in_rbp">,
        Intrinsic<[], [], []>;
 }
