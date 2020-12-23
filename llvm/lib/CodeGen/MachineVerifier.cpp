@@ -653,12 +653,25 @@ MachineVerifier::visitMachineBasicBlockBefore(const MachineBasicBlock *MBB) {
   const MCAsmInfo *AsmInfo = TM->getMCAsmInfo();
   const BasicBlock *BB = MBB->getBasicBlock();
   const Function &F = MF->getFunction();
+
+#if 1
   if (LandingPadSuccs.size() > 1 &&
       !(AsmInfo &&
         AsmInfo->getExceptionHandlingType() == ExceptionHandling::SjLj &&
         BB && isa<SwitchInst>(BB->getTerminator())) &&
       !isScopedEHPersonality(classifyEHPersonality(F.getPersonalityFn())))
     report("MBB has more than one landing pad successor", MBB);
+#else
+  // When we have spawn fcn, landingpadsucc > 1 and it should not have a personality function
+  if (LandingPadSuccs.size() > 1 && F.hasPersonalityFn() ) {     
+    if (LandingPadSuccs.size() > 1 &&
+	!(AsmInfo &&
+	  AsmInfo->getExceptionHandlingType() == ExceptionHandling::SjLj &&
+	  BB && isa<SwitchInst>(BB->getTerminator())) &&
+	!isFuncletEHPersonality(classifyEHPersonality(F.getPersonalityFn()))) 
+      report("MBB has more than one landing pad successor", MBB);
+  }
+#endif
 
   // Call analyzeBranch. If it succeeds, there several more conditions to check.
   MachineBasicBlock *TBB = nullptr, *FBB = nullptr;

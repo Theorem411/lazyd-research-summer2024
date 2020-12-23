@@ -290,6 +290,7 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
       MBB->setIsEHPad();
 
     // The entry of the gotstolen handler and slow path entry for now will be considered as EHPad
+    // Used so that register are spilled before the call to the fcn
     for (auto &ii : BB) {
       if ( isa<CallInst>(&ii) ) {
 	auto call_inst = dyn_cast<CallInst>(&ii);
@@ -297,9 +298,17 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
 	if(fn && fn->getIntrinsicID() ==  Intrinsic::var_annotation) {
 	  assert(isa<ConstantInt>(call_inst->getArgOperand(3)));
 	  auto intVal = dyn_cast<ConstantInt>(call_inst->getArgOperand(3));
-	  if(intVal->getSExtValue() == 0) {  
-	    outs() << "MBB : " << MBB->getName() << " is set to ehpad\n";
+	  if(intVal->getSExtValue() == 0 || intVal->getSExtValue() == 2 || intVal->getSExtValue() == 3) {  
 	    MBB->setIsEHPad();	  
+	    
+	    // Identify which path does this basic block belongs to 
+	    if(intVal->getSExtValue() == 0) {
+	      MBB->setIsGotstolenHandler();
+	    } else if (intVal->getSExtValue() == 2) {
+	      MBB->setIsSlowPathEntry();
+	    } else if (intVal->getSExtValue() == 3) {
+	      MBB->setIsUnwindPathEntry();
+	    }
 	  }
 	}
       }
