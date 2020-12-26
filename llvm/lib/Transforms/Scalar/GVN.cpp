@@ -3146,6 +3146,14 @@ public:
       : FunctionPass(ID), Impl(GVNOptions().setMemDep(!NoMemDepAnalysis)) {
     initializeGVNLegacyPassPass(*PassRegistry::getPassRegistry());
   }
+  
+  // Run GVN using arguments provided by the caller
+  bool runGVN(Function &F, AssumptionCache &RunAC, DominatorTree &RunDT,
+	      const TargetLibraryInfo &RunTLI, AAResults &RunAA,
+	      MemoryDependenceResults *RunMD, LoopInfo *LI,
+	      OptimizationRemarkEmitter *RunORE) {    
+    return Impl.runImpl(F, RunAC, RunDT, RunTLI, RunAA, RunMD, LI, RunORE);
+  }
 
   bool runOnFunction(Function &F) override {
     if (skipFunction(F))
@@ -3206,4 +3214,12 @@ INITIALIZE_PASS_END(GVNLegacyPass, "gvn", "Global Value Numbering", false, false
 // The public interface to this file...
 FunctionPass *llvm::createGVNPass(bool NoMemDepAnalysis) {
   return new GVNLegacyPass(NoMemDepAnalysis);
+}
+
+// Allow a pass to run GVN in the middle of its pass.
+bool llvm::runOldGVN(bool NoLoads, Function &F, AssumptionCache &RunAC, DominatorTree &RunDT,
+		     const TargetLibraryInfo &RunTLI, AAResults &RunAA,
+		     MemoryDependenceResults *RunMD, LoopInfo *LI,
+		     OptimizationRemarkEmitter *RunORE) {
+  return GVNLegacyPass(NoLoads).runGVN(F, RunAC, RunDT, RunTLI, RunAA, NoLoads ? nullptr:RunMD, LI, RunORE);
 }

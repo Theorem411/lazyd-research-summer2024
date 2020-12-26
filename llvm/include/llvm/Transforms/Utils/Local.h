@@ -17,7 +17,18 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+
 #include "llvm/Analysis/Utils/Local.h"
+
+// TODO: Chrisma Remove this
+#if 0
+#include "llvm/ADT/TinyPtrVector.h"
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/MemoryDependenceAnalysis.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
+#include "llvm/IR/CallSite.h"
+#endif
+
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
@@ -242,6 +253,13 @@ CallInst *createCallMatchingInvoke(InvokeInst *II);
 
 /// This function converts the specified invoek into a normall call.
 CallInst *changeToCall(InvokeInst *II, DomTreeUpdater *DTU = nullptr);
+
+/// This function is used to run GVN in the middle of a pass.
+/// Able to remove redundant loads  
+bool runOldGVN(bool NoLoads, Function &F, AssumptionCache &RunAC, DominatorTree &RunDT,
+	       const TargetLibraryInfo &RunTLI, AAResults &RunAA,
+	       MemoryDependenceResults *RunMD, LoopInfo *LI,
+	       OptimizationRemarkEmitter *RunORE);
 
 ///===---------------------------------------------------------------------===//
 ///  Dbg Intrinsic utilities
