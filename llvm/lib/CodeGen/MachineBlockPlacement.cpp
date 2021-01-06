@@ -712,7 +712,13 @@ BranchProbability MachineBlockPlacement::collectViableSuccessors(
   auto AdjustedSumProb = BranchProbability::getOne();
   for (MachineBasicBlock *Succ : BB->successors()) {
     bool SkipSucc = false;
-    if (Succ->isEHPad() || (BlockFilter && !BlockFilter->count(Succ))) {
+
+    // If the "landing pad" is a gotstolen handler or slow path entry or unwind path, then consider 
+    // it as a viable successor, otherwise it would generate the wrong control flow in backend
+    bool bOnlyEHPad = Succ->isEHPad();
+    bOnlyEHPad = bOnlyEHPad &&( !( Succ->isGotstolenHandler()  || Succ->isSlowPathEntry() || Succ->isUnwindPathEntry() ));
+
+    if (bOnlyEHPad || (BlockFilter && !BlockFilter->count(Succ))) {
       SkipSucc = true;
     } else {
       BlockChain *SuccChain = BlockToChain[Succ];
