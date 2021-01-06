@@ -512,7 +512,177 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
     // This performs initialization so lowering for SplitCSR will be correct.
     TLI->initializeSplitCSR(EntryMBB);
 
+  
   SelectAllBasicBlocks(Fn);
+#if 1
+  // Iterate the machine basic block to look for gotstolen handler basic block
+  for(auto &mbb: *MF) {
+    // Get the IR basic block
+    auto pBB = mbb.getBasicBlock();
+    
+    // Iterate through instruction
+    for(auto &ii : *pBB) {
+      if ( isa<CallInst>(&ii) ) {
+	
+	// Check if instruction is annotation 
+	auto call_inst = dyn_cast<CallInst>(&ii);
+	auto fn = call_inst->getCalledFunction();       	
+	if(fn && fn->getIntrinsicID() ==  Intrinsic::var_annotation) {
+
+	  // Check the type
+	  assert(isa<ConstantInt>(call_inst->getArgOperand(3)));
+	  auto intVal = dyn_cast<ConstantInt>(call_inst->getArgOperand(3));
+	  
+	  // If basic block is  Gotstolen handler
+	  if(intVal->getSExtValue() == 0) {
+	    BlockAddress* parentba = dyn_cast<BlockAddress>(call_inst->getArgOperand(0));
+	    assert(parentba);
+	    
+	    // Get the machine basic block that corresponds to basic block that spawns
+	    auto parentbb = parentba->getBasicBlock();
+	    auto parentmbb = FuncInfo->MBBMap[parentbb];
+
+	    // Find the spawn instruction related to this basic block (a call inst),
+	    // then the first register that stores the result of the fork (spawn) immediately after the fork,
+	    // then the register used by the gotstolen handler to access the fork result 
+	    bool bFoundCall = false;
+	    bool bFoundCopy = false;
+	    // The latest copy instruction use by the gotstolen handler
+	    MachineInstr* latestMove = nullptr;
+	    // The earliest copy instruction after the fork instruction (contain the register that storest the fork result)
+	    MachineInstr* earliestMove = nullptr;
+	    for(auto& mii:  *parentmbb) {	      
+	      // Third: find the second copy instruction (if any) that takes the result of the first copy
+	      if(bFoundCopy && mii.isCopy()) {
+		auto regN = latestMove->getOperand(0).getReg();
+		if(mii.readsRegister(regN)) {
+		  latestMove =  &mii;
+		  break; // Is this needed?
+		}
+	      }	      
+
+	      // Second: find the first copy instruction that takes the return result of the call instruction
+	      if(bFoundCall && mii.isCopy()) {
+		earliestMove = &mii;
+		latestMove =  &mii;
+
+		bFoundCopy = true;
+		bFoundCall = false;
+	      }
+	      
+	      // First: find the instruction that can spawn
+	      if(mii.isCall()) {
+		bFoundCall = true;
+	      }	      
+	    }
+	    
+	    // If found the spawn inst and if it returns a result, modify the gotstolen handler mbb 
+	    if(latestMove) {	      
+	      // Get the regno of the register that stores the fork result
+	      auto regn = earliestMove->getOperand(1).getReg();	      
+	      // Set regno as live in in the mbb gotstolen handler
+	      mbb.addLiveIn(regn);
+
+	      // The register used by gotstolen handler (the result will be stored in the fork storage)
+	      auto regn2 = latestMove->getOperand(0).getReg();
+	      
+	      const TargetRegisterInfo &TRI = *MF->getSubtarget().getRegisterInfo();	      
+	      // Iterate the machine basic block to look for store inst
+	      for(auto& mii:  mbb) {
+		// Find the store instruction that should store the fork result register instead of the latest copy register
+		if(mii.mayStore() ) {
+		  // If the store instruction uses the latest copy register, then ...
+		  if(mii.readsRegister(regn2) ) {
+		    // Replace the latest copy register with fork register 
+		    mii.substituteRegister(regn2, regn, 0, TRI);
+		    break;
+		  }
+		}
+	      }
+	    }
+	  }
+	}
+      }
+    }
+  }
+
+#endif
+
+  //TODO: Might remove this, keep this for reference
+#if 0  
+  // TODO :remove potential jump. Need to add annoatation before and after potential jump to indicate that the code in between need to be removed
+  // Properly set the successors of the basic block that contains spawn to the slow path and gotstolen handler and the fast path continuation 
+  SmallVector<MachineBasicBlock*, 4> mbb2delete;
+  SmallVector<MachineBasicBlock*, 4> mbb2update;
+  SmallPtrSet<MachineBasicBlock*, 8> mbbRemovePotJmp;
+  for( auto &mbb: *MF) {    
+    auto pBB = mbb.getBasicBlock();
+    for(auto &ii : *pBB) {
+      if ( isa<CallInst>(&ii) ) {
+	auto call_inst = dyn_cast<CallInst>(&ii);
+	auto fn = call_inst->getCalledFunction();
+	if(fn && fn->getIntrinsicID() ==  Intrinsic::var_annotation) {
+	  assert(isa<ConstantInt>(call_inst->getArgOperand(3)));
+	  auto intVal = dyn_cast<ConstantInt>(call_inst->getArgOperand(3));
+	  if(intVal->getSExtValue() == 1) {
+	    BlockAddress* parentba = dyn_cast<BlockAddress>(call_inst->getArgOperand(0));
+	    assert(parentba);
+	    auto parentbb = parentba->getBasicBlock();
+	    auto parentmbb = FuncInfo->MBBMap[parentbb];
+
+	    // Delete instruction from annotation to 
+	    //outs() << "-----------------------\n";
+	    for (auto &mi : mbb) {
+	      //  mi.dump();
+	    }
+	    //outs() << "==================\n";
+	    for (auto &inst : *pBB) {
+	      // inst.dump();
+	    }
+
+	    // Update successor	    
+	    if(&mbb != parentmbb) { 	     
+	      parentmbb->transferSuccessors(&mbb);
+	      mbb2delete.push_back(&mbb);
+	      mbb2update.push_back(parentmbb);
+	    }
+
+	    mbbRemovePotJmp.insert(parentmbb);
+	    
+	  }  	    
+	}
+      }
+    }
+  }
+
+  // Delete machine basic block
+  int cntr = 0;
+  for(auto pMBB : mbb2delete) {
+    auto parentBB = mbb2update[cntr];
+    parentBB->removeSuccessor(pMBB);
+    pMBB->eraseFromParent ();
+    cntr++;
+  }
+#endif
+
+  //TODO: Might remove this, keep this for reference
+#if 0
+  for(auto pMBB : mbbRemovePotJmp) {
+    SmallVector<MachineInstr*, 4> mi2delete;    
+    bool foundJmp = false;
+    for (auto &mi : *pMBB) {
+      if (mi.getOpcode() == ISD::POTENTIALJMP) {
+	foundJmp = true;
+      }
+      if(foundJmp)
+	mi2delete.push_back(&mi);
+    }
+    for(auto mi : mi2delete) {
+      pMBB->erase_instr(mi);
+    }
+  }
+#endif
+
   if (FastISelFailed && EnableFastISelFallbackReport) {
     DiagnosticInfoISelFallback DiagFallback(Fn);
     Fn.getContext().diagnose(DiagFallback);
@@ -1497,7 +1667,9 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
     if (LLVMBB->isEHPad())
       if (!PrepareEHLandingPad())
         continue;
-    
+
+  //TODO: Might remove this, keep this for reference
+#if 0    
     // Add a label at the entry of a steal request handler
     if(Fn.getParent()->StealHandlerExists.lookup(LLVMBB)){
       MachineBasicBlock *MBB = FuncInfo->MBB;        
@@ -1509,7 +1681,8 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
         
       // Map steal handler basic block with a its entry label
       MF->addStealHandler2LabelMap(LLVMBB->getName(), Label);        
-    }    
+    }
+#endif    
 
     // Before doing SelectionDAG ISel, see if FastISel has been requested.
     if (FastIS) {
