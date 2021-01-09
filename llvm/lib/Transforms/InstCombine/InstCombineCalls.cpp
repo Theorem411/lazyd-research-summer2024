@@ -2626,6 +2626,12 @@ Instruction *InstCombinerImpl::visitCallBrInst(CallBrInst &CBI) {
   return visitCallBase(CBI);
 }
 
+// MultiRetCallInst simplification
+Instruction *InstCombiner::visitMultiRetCallInst(MultiRetCallInst &II) {
+  return visitCallSite(&II);
+}
+
+
 /// If this cast does not affect the value passed through the varargs area, we
 /// can eliminate the use of the cast.
 static bool isSafeToEliminateVarargsCast(const CallBase &Call,

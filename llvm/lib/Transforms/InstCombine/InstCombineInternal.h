@@ -144,6 +144,7 @@ public:
   Instruction *visitCallInst(CallInst &CI);
   Instruction *visitInvokeInst(InvokeInst &II);
   Instruction *visitCallBrInst(CallBrInst &CBI);
+  Instruction *visitMultiRetCallInst(MultiRetCallInst &II);
 
   Instruction *SliceUpIllegalIntegerPHI(PHINode &PN);
   Instruction *visitPHINode(PHINode &PN);
