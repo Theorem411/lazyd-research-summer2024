@@ -3025,6 +3025,93 @@ void SelectionDAGBuilder::visitCallBr(const CallBrInst &I) {
                           DAG.getBasicBlock(Return)));
 }
 
+
+//////////////
+
+void SelectionDAGBuilder::visitMultiRetCall(const MultiRetCallInst &I) {
+  MachineBasicBlock *MultiRetCallMBB = FuncInfo.MBB;
+  // Deopt bundles are lowered in LowerCallSiteWithDeoptBundle, and we don't
+  // have to do anything here to lower funclet bundles.
+  assert(!I.hasOperandBundlesOtherThan(
+             {LLVMContext::OB_deopt, LLVMContext::OB_funclet}) &&
+         "Cannot lower multiretcall with arbitrary operand bundles yet!");
+  // Retrieve successors.
+  MachineBasicBlock *Return = FuncInfo.MBBMap[I.getDefaultDest()];
+
+  const Value *Callee(I.getCalledValue());
+  const Function *Fn = dyn_cast<Function>(Callee);
+  if (isa<InlineAsm>(Callee)) {
+    assert(0 && "Stop here first\n");
+#if 0
+    visitInlineAsm(&I);
+#endif
+  } else if (Fn && Fn->isIntrinsic()) {
+    assert(0 && "Stop here first\n");
+#if 0
+    outs() << "Name of the fcn that causes issue: " <<Fn->getName() <<"\n"; 
+
+    switch (Fn->getIntrinsicID()) {
+    default:
+      llvm_unreachable("Cannot invoke this intrinsic");
+    case Intrinsic::donothing:
+      // Ignore invokes to @llvm.donothing: jump directly to the next BB.
+      break;
+    case Intrinsic::experimental_patchpoint_void:
+    case Intrinsic::experimental_patchpoint_i64:
+      visitPatchpoint(&I, nullptr);
+      break;
+    case Intrinsic::experimental_gc_statepoint:
+      LowerStatepoint(ImmutableStatepoint(&I), nullptr);
+      break;
+    }
+#endif
+  } else if (I.countOperandBundlesOfType(LLVMContext::OB_deopt)) {
+    assert(0 && "Stop here first\n");
+#if 0
+    outs() << "Name of the fcn that causes issue: " <<Fn->getName() <<"\n"; 
+    // Currently we do not lower any intrinsic calls with deopt operand bundles.
+    // Eventually we will support lowering the @llvm.experimental.deoptimize
+    // intrinsic, and right now there are no plans to support other intrinsics
+    // with deopt state.
+    LowerCallSiteWithDeoptBundle(&I, getValue(Callee), nullptr);
+#endif
+  } else {
+    // Need one for multi return call 
+    LowerCallTo(&I, getValue(Callee), false, nullptr);
+  }
+
+  // If the value of the invoke is used outside of its defining block, make it
+  // available as a virtual register.
+  // We already took care of the exported value for the statepoint instruction
+  // during call to the LowerStatepoint.
+  if (!isStatepoint(I)) {
+    CopyToExportRegsIfNeeded(&I);
+  }
+
+  // Update successor info.
+  addSuccessorWithProb(MultiRetCallMBB, Return, BranchProbability::getOne());
+  for (unsigned i = 0, e = I.getNumIndirectDests(); i < e; ++i) {
+    MachineBasicBlock *Target = FuncInfo.MBBMap[I.getIndirectDest(i)];
+    addSuccessorWithProb(MultiRetCallMBB, Target, BranchProbability::getZero());
+    
+    // FIXME : setIsInlineAsmBrIndirectTarget: Implement this
+    /*
+      void setIsInlineAsmBrIndirectTarget(bool V = true) {
+	IsInlineAsmBrIndirectTarget = V;
+      }
+    */
+    //Target->setIsInlineAsmBrIndirectTarget();
+  }
+  MultiRetCallMBB->normalizeSuccProbs();
+ 
+  // Drop into normal successor.
+  DAG.setRoot(DAG.getNode(ISD::BR, getCurSDLoc(),
+                          MVT::Other, getControlRoot(),
+                          DAG.getBasicBlock(Return)));
+}
+
+/////////////
+
 void SelectionDAGBuilder::visitResume(const ResumeInst &RI) {
   llvm_unreachable("SelectionDAGBuilder shouldn't visit resume instructions!");
 }
@@ -3032,6 +3119,9 @@ void SelectionDAGBuilder::visitResume(const ResumeInst &RI) {
 void SelectionDAGBuilder::visitLandingPad(const LandingPadInst &LP) {
   assert(FuncInfo.MBB->isEHPad() &&
          "Call to landingpad not in landing pad!");
+
+  //MachineBasicBlock *MBB = FuncInfo.MBB;
+  //addLandingPadInfo(LP, *MBB);
 
   // If there aren't registers to copy the values into (e.g., during SjLj
   // exceptions), then don't bother to create these DAG nodes.

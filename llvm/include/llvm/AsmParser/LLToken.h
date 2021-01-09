@@ -370,7 +370,7 @@ enum Kind {
   kw_catchpad,
   kw_cleanuppad,
   kw_callbr,
-
+  kw_multiretcall,
   kw_alloca,
   kw_load,
   kw_store,

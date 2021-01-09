@@ -631,6 +631,7 @@ public:
     case Instruction::CatchRet:
     case Instruction::Call:
     case Instruction::Invoke:
+    case Instruction::MultiRetCall: 
       return true;
     }
   }

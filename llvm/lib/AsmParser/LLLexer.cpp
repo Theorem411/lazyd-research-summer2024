@@ -930,6 +930,7 @@ lltok::Kind LLLexer::LexIdentifier() {
   INSTKEYWORD(detach,      Detach);
   INSTKEYWORD(reattach,    Reattach);
   INSTKEYWORD(sync,        Sync);
+  INSTKEYWORD(multiretcall,        MultiRetCall);
 
   INSTKEYWORD(alloca,      Alloca);
   INSTKEYWORD(load,        Load);

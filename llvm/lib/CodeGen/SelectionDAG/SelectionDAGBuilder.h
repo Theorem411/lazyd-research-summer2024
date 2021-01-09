@@ -67,6 +67,7 @@ class GCResultInst;
 class GCStatepointInst;
 class IndirectBrInst;
 class InvokeInst;
+class MultiRetCallInst;
 class LandingPadInst;
 class LLVMContext;
 class LoadInst;
@@ -487,6 +488,7 @@ private:
   // These all get lowered before this pass.
   void visitInvoke(const InvokeInst &I);
   void visitCallBr(const CallBrInst &I);
+  void visitMultiRetCall(const MultiRetCallInst &I);
   void visitResume(const ResumeInst &I);
 
   void visitUnary(const User &I, unsigned Opcode);

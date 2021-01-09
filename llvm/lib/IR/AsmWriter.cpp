@@ -4254,6 +4254,52 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
       writeOperand(CBI->getIndirectDest(i), true);
     }
     Out << ']';
+  } else if (const MultiRetCallInst *II = dyn_cast<MultiRetCallInst>(&I)) {
+    Operand = II->getCalledValue();
+    FunctionType *FTy = II->getFunctionType();
+    Type *RetTy = FTy->getReturnType();
+    const AttributeList &PAL = II->getAttributes();
+
+    // Print the calling convention being used.
+    if (II->getCallingConv() != CallingConv::C) {
+      Out << " ";
+      PrintCallingConv(II->getCallingConv(), Out);
+    }
+
+    if (PAL.hasAttributes(AttributeList::ReturnIndex))
+      Out << ' ' << PAL.getAsString(AttributeList::ReturnIndex);
+
+    // If possible, print out the short form of the multiretcall instruction. We can
+    // only do this if the first argument is a pointer to a nonvararg function,
+    // and if the return type is not a pointer to a function.
+    //
+    Out << ' ';
+    TypePrinter.print(FTy->isVarArg() ? FTy : RetTy, Out);
+    Out << ' ';
+    writeOperand(Operand, false);
+    Out << '(';
+
+    for (unsigned op = 0, Eop = II->getNumArgOperands(); op < Eop; ++op) {
+      if (op)
+        Out << ", ";
+      writeParamOperand(II->getArgOperand(op), PAL.getParamAttributes(op));
+    }
+
+    Out << ')';
+    if (PAL.hasAttributes(AttributeList::FunctionIndex))
+      Out << " #" << Machine.getAttributeGroupSlot(PAL.getFnAttributes());
+
+    writeOperandBundles(II);
+
+    Out << "\n          to ";
+    writeOperand(II->getDefaultDest(), true);
+    Out << " [";
+    for (unsigned i = 0, e = II->getNumIndirectDests(); i != e; ++i) {
+      if (i != 0)
+	Out << ", ";
+      writeOperand(II->getIndirectDest(i), true);
+    }
+    Out << " ]";
   } else if (const AllocaInst *AI = dyn_cast<AllocaInst>(&I)) {
     Out << ' ';
     if (AI->isUsedWithInAlloca())

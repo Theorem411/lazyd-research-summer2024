@@ -362,6 +362,7 @@ const char *Instruction::getOpcodeName(unsigned OpCode) {
   case Detach: return "detach";
   case Reattach: return "reattach";
   case Sync:   return "sync";
+  case MultiRetCall:   return "multiretcall";
 
   // Standard unary operators...
   case FNeg: return "fneg";
@@ -471,6 +472,10 @@ static bool haveSameSpecialState(const Instruction *I1, const Instruction *I2,
     return CI->getCallingConv() == cast<CallBrInst>(I2)->getCallingConv() &&
            CI->getAttributes() == cast<CallBrInst>(I2)->getAttributes() &&
            CI->hasIdenticalOperandBundleSchema(*cast<CallBrInst>(I2));
+  if (const MultiRetCallInst *CI = dyn_cast<MultiRetCallInst>(I1))
+    return CI->getCallingConv() == cast<MultiRetCallInst>(I2)->getCallingConv() &&
+           CI->getAttributes() == cast<MultiRetCallInst>(I2)->getAttributes() &&
+           CI->hasIdenticalOperandBundleSchema(*cast<MultiRetCallInst>(I2));
   if (const InsertValueInst *IVI = dyn_cast<InsertValueInst>(I1))
     return IVI->getIndices() == cast<InsertValueInst>(I2)->getIndices();
   if (const ExtractValueInst *EVI = dyn_cast<ExtractValueInst>(I1))
@@ -589,6 +594,8 @@ bool Instruction::mayReadFromMemory() const {
   case Instruction::Invoke:
   case Instruction::CallBr:
     return !cast<CallBase>(this)->onlyWritesMemory();
+  case Instruction::MultiRetCall:
+    return !cast<MultiRetCallInst>(this)->doesNotAccessMemory();
   case Instruction::Store:
     return !cast<StoreInst>(this)->isUnordered();
   }
@@ -610,6 +617,8 @@ bool Instruction::mayWriteToMemory() const {
   case Instruction::Invoke:
   case Instruction::CallBr:
     return !cast<CallBase>(this)->onlyReadsMemory();
+  case Instruction::MultiRetCall:
+    return !cast<MultiRetCallInst>(this)->onlyReadsMemory();
   case Instruction::Load:
     return !cast<LoadInst>(this)->isUnordered();
   }

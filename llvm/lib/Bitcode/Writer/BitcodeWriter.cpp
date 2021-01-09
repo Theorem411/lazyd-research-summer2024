@@ -3068,7 +3068,38 @@ void ModuleBitcodeWriter::writeInstruction(const Instruction &I,
       pushValue(SI.getSyncRegion(), InstID, Vals);
     }
     break;
+  case Instruction::MultiRetCall: {
+    const MultiRetCallInst *II = cast<MultiRetCallInst>(&I);
+    const Value *Callee = II->getCalledValue();
+    FunctionType *FTy = II->getFunctionType();
 
+    if (II->hasOperandBundles())
+      writeOperandBundles(II, InstID);
+
+    Code = bitc::FUNC_CODE_INST_MULTIRETCALL;
+
+    Vals.push_back(VE.getAttributeListID(II->getAttributes()));
+    Vals.push_back(II->getCallingConv() | 1 << 13);
+    Vals.push_back(VE.getValueID(II->getDefaultDest()));
+    Vals.push_back(II->getNumIndirectDests());
+    for (unsigned i = 0, e = II->getNumIndirectDests(); i != e; ++i)
+      Vals.push_back(VE.getValueID(II->getIndirectDest(i)));
+
+    Vals.push_back(VE.getTypeID(FTy));
+    pushValueAndType(Callee, InstID, Vals);
+
+    // Emit value #'s for the fixed parameters.
+    for (unsigned i = 0, e = FTy->getNumParams(); i != e; ++i)
+      pushValue(I.getOperand(i), InstID, Vals); // fixed param.
+
+    // Emit type/value pairs for varargs params.
+    if (FTy->isVarArg()) {
+      for (unsigned i = FTy->getNumParams(), e = II->getNumArgOperands();
+           i != e; ++i)
+        pushValueAndType(I.getOperand(i), InstID, Vals); // vararg
+    }
+    break;
+  }
   case Instruction::PHI: {
     const PHINode &PN = cast<PHINode>(I);
     Code = bitc::FUNC_CODE_INST_PHI;

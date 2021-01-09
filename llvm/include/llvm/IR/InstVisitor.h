@@ -261,7 +261,12 @@ public:
   RetTy visitSyncInst(SyncInst &I) {
     return static_cast<SubClass *>(this)->visitTerminator(I);
   }
+
   RetTy visitTerminator(Instruction &I)    { DELEGATE(Instruction);}
+
+  RetTy visitMultiRetCallInst(MultiRetCallInst &I) {
+    return static_cast<SubClass*>(this)->visitCallSite(&I);
+  }
 
   // Next level propagators: If the user does not overload a specific
   // instruction type, they can overload one of these to get the whole class
@@ -276,10 +281,12 @@ public:
   // The next level delegation for `CallBase` is slightly more complex in order
   // to support visiting cases where the call is also a terminator.
   RetTy visitCallBase(CallBase &I) {
-    if (isa<InvokeInst>(I) || isa<CallBrInst>(I))
+    if (isa<InvokeInst>(I) || isa<CallBrInst>(I) || isa<MultiRetCallInst>(I))
       return static_cast<SubClass *>(this)->visitTerminator(I);
 
     DELEGATE(Instruction);
+    //assert(CS.isInvoke() || CS.isMultiRetCall());
+    //DELEGATE(TerminatorInst);
   }
 
   // If the user wants a 'default' case, they can choose to override this

@@ -4971,7 +4971,7 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
       InstructionList.push_back(I);
       break;
     }
-      case bitc::FUNC_CODE_INST_REATTACH: { // REATTACH: [bb#, val]
+    case bitc::FUNC_CODE_INST_REATTACH: { // REATTACH: [bb#, val]
       if (Record.size() != 2)
         return error("Invalid record");
 
@@ -5002,6 +5002,74 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
 
       I = SyncInst::Create(Continue, SyncRegion);
       InstructionList.push_back(I);
+      break;
+    }
+    case bitc::FUNC_CODE_INST_MULTIRETCALL: {
+      // MULTIRETCALL: [attrs, cc, normBB, transfs, fnty, op0,op1,op2, ...]
+
+      unsigned OpNum = 0;
+      AttributeList PAL = getAttributes(Record[OpNum++]);
+      unsigned CCInfo = Record[OpNum++];
+
+      BasicBlock *DefaultDest = getBasicBlock(Record[OpNum++]);
+
+      unsigned NumIndirectDests = Record[OpNum++];
+      SmallVector<BasicBlock *, 16> IndirectDests;
+      for (unsigned i = 0, e = NumIndirectDests; i != e; ++i)
+	IndirectDests.push_back(getBasicBlock(Record[OpNum++]));
+
+      FunctionType *FTy = nullptr;
+      if (CCInfo >> 13 & 1 &&
+          !(FTy = dyn_cast<FunctionType>(getTypeByID(Record[OpNum++]))))
+        return error("Explicit invoke type is not a function type");
+
+      Value *Callee;
+      if (getValueTypePair(Record, OpNum, NextValueNo, Callee))
+        return error("Invalid record");
+
+      PointerType *CalleeTy = dyn_cast<PointerType>(Callee->getType());
+      if (!CalleeTy)
+        return error("Callee is not a pointer");
+      if (!FTy) {
+        FTy = dyn_cast<FunctionType>(CalleeTy->getElementType());
+        if (!FTy)
+          return error("Callee is not of pointer to function type");
+      } else if (CalleeTy->getElementType() != FTy)
+        return error("Explicit invoke type does not match pointee type of "
+                     "callee operand");
+      if (Record.size() < FTy->getNumParams() + OpNum)
+        return error("Insufficient operands to call");
+
+      SmallVector<Value*, 16> Ops;
+      for (unsigned i = 0, e = FTy->getNumParams(); i != e; ++i, ++OpNum) {
+	if (FTy->getParamType(i)->isLabelTy())
+	  Ops.push_back(getBasicBlock(Record[OpNum]));
+	else
+	  Ops.push_back(getValue(Record, OpNum, NextValueNo,
+                               FTy->getParamType(i)));
+        if (!Ops.back())
+          return error("Invalid record");
+      }
+
+      if (!FTy->isVarArg()) {
+        if (Record.size() != OpNum)
+          return error("Invalid record");
+      } else {
+        // Read type/value pairs for varargs params.
+        while (OpNum != Record.size()) {
+          Value *Op;
+          if (getValueTypePair(Record, OpNum, NextValueNo, Op))
+            return error("Invalid record");
+          Ops.push_back(Op);
+        }
+      }
+
+      I = MultiRetCallInst::Create(Callee, DefaultDest, IndirectDests, Ops, OperandBundles);
+      OperandBundles.clear();
+      InstructionList.push_back(I);
+      cast<MultiRetCallInst>(I)->setCallingConv(
+          static_cast<CallingConv::ID>(CallingConv::MaxID & CCInfo));
+      cast<MultiRetCallInst>(I)->setAttributes(PAL);
       break;
     }
     case bitc::FUNC_CODE_INST_PHI: { // PHI: [ty, val0,bb0, ...]

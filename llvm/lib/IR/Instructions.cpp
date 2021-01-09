@@ -45,9 +45,25 @@
 
 using namespace llvm;
 
+
 static cl::opt<bool> DisableI2pP2iOpt(
     "disable-i2p-p2i-opt", cl::init(false),
     cl::desc("Disables inttoptr/ptrtoint roundtrip optimization"));
+
+#if 0
+//===----------------------------------------------------------------------===//
+//                            CallSite Class
+//===----------------------------------------------------------------------===//
+
+User::op_iterator CallSite::getCallee() const {
+  Instruction *II(getInstruction());
+
+  return isCall()
+    ? cast<CallInst>(II)->op_end() - 1 // Skip Callee
+    : isMultiRetCall() ? cast<InvokeInst>(II)->op_end() - 1
+                       : cast<InvokeInst>(II)->op_end() - 3; // Skip BB, BB, Callee
+}
+#endif
 
 //===----------------------------------------------------------------------===//
 //                            AllocaInst Class
@@ -974,6 +990,189 @@ CallBrInst *CallBrInst::Create(CallBrInst *CBI, ArrayRef<OperandBundleDef> OpB,
   NewCBI->setDebugLoc(CBI->getDebugLoc());
   NewCBI->NumIndirectDests = CBI->NumIndirectDests;
   return NewCBI;
+}
+
+//===----------------------------------------------------------------------===//
+//                        MultiRetCallInst Implementation
+//===----------------------------------------------------------------------===//
+// Mostly copied from CallBr
+void MultiRetCallInst::init(FunctionType *FTy, Value *Fn, BasicBlock *Fallthrough,
+			    ArrayRef<BasicBlock* > IndirectDests, ArrayRef<Value *> Args,
+			    ArrayRef<OperandBundleDef> Bundles,
+			    const Twine &NameStr) {
+  this->FTy = FTy;
+  
+  assert((int)getNumOperands() == ComputeNumOperands(Args.size(), IndirectDests.size(), CountBundleInputs(Bundles)) && "NumOperands not set up?");
+	 
+
+  NumIndirectDests = IndirectDests.size();	 
+  setDefaultDest(Fallthrough);
+  for (unsigned i = 0; i != NumIndirectDests; ++i)
+   setIndirectDest(i, IndirectDests[i]);
+  setCalledFunction(Fn);	 
+
+#ifndef NDEBUG
+  assert(((Args.size() == FTy->getNumParams()) ||
+          (FTy->isVarArg() && Args.size() > FTy->getNumParams())) &&
+         "Calling a function with bad signature");
+
+  for (unsigned i = 0, e = Args.size(); i != e; i++)
+    assert((i >= FTy->getNumParams() || 
+            FTy->getParamType(i) == Args[i]->getType()) &&
+           "Calling a function with a bad signature!");
+#endif
+
+  std::copy(Args.begin(), Args.end(), op_begin());
+
+  auto It = populateBundleOperandInfos(Bundles, Args.size());
+  (void)It;
+  assert(It + 2 + IndirectDests.size() == op_end() && "Should add up!");
+
+  setName(NameStr);
+}
+
+void MultiRetCallInst::updateArgBlockAddresses(unsigned i, BasicBlock *B) {
+  assert(getNumIndirectDests() > i && "IndirectDest # out of range for multiretcall");
+  if (BasicBlock *OldBB = getIndirectDest(i)) {
+    BlockAddress *Old = BlockAddress::get(OldBB);
+    BlockAddress *New = BlockAddress::get(B);
+    for (unsigned ArgNo = 0, e = getNumArgOperands(); ArgNo != e; ++ArgNo)
+      if (dyn_cast<BlockAddress>(getArgOperand(ArgNo)) == Old)
+	setArgOperand(ArgNo, New);
+  }
+}
+
+MultiRetCallInst::MultiRetCallInst(const MultiRetCallInst &II)
+    : TerminatorInst(II.getType(), Instruction::MultiRetCall,
+                     OperandTraits<MultiRetCallInst>::op_end(this) -
+                         II.getNumOperands(),
+                     II.getNumOperands()),
+      Attrs(II.Attrs), FTy(II.FTy) {
+  setCallingConv(II.getCallingConv());
+  std::copy(II.op_begin(), II.op_end(), op_begin());
+  std::copy(II.bundle_op_info_begin(), II.bundle_op_info_end(),
+            bundle_op_info_begin());
+  SubclassOptionalData = II.SubclassOptionalData;
+  NumIndirectDests = II.NumIndirectDests;
+}
+
+MultiRetCallInst *MultiRetCallInst::Create(MultiRetCallInst *II, ArrayRef<OperandBundleDef> OpB,
+                               Instruction *InsertPt) {
+  std::vector<Value *> Args(II->arg_begin(), II->arg_end());
+
+  auto *NewII = MultiRetCallInst::Create(II->getCalledValue(), II->getDefaultDest(),
+                                   II->getIndirectDests(), Args, OpB,
+                                   II->getName(), InsertPt);
+  NewII->setCallingConv(II->getCallingConv());
+  NewII->SubclassOptionalData = II->SubclassOptionalData;
+  NewII->setAttributes(II->getAttributes());
+  NewII->setDebugLoc(II->getDebugLoc());
+  NewII->NumIndirectDests = II->NumIndirectDests;
+  return NewII;
+}
+
+Value *MultiRetCallInst::getReturnedArgOperand() const {
+  unsigned Index;
+
+  if (Attrs.hasAttrSomewhere(Attribute::Returned, &Index) && Index)
+    return getArgOperand(Index - AttributeList::FirstArgIndex);
+  if (const Function *F = getCalledFunction())
+    if (F->getAttributes().hasAttrSomewhere(Attribute::Returned, &Index) &&
+        Index)
+      return getArgOperand(Index - AttributeList::FirstArgIndex);
+
+  return nullptr;
+}
+
+bool MultiRetCallInst::hasRetAttr(Attribute::AttrKind Kind) const {
+  if (Attrs.hasAttribute(AttributeList::ReturnIndex, Kind))
+    return true;
+
+  // Look at the callee, if available.
+  if (const Function *F = getCalledFunction())
+    return F->getAttributes().hasAttribute(AttributeList::ReturnIndex, Kind);
+  return false;
+}
+
+bool MultiRetCallInst::paramHasAttr(unsigned i, Attribute::AttrKind Kind) const {
+  assert(i < getNumArgOperands() && "Param index out of bounds!");
+
+  if (Attrs.hasParamAttribute(i, Kind))
+    return true;
+  if (const Function *F = getCalledFunction())
+    return F->getAttributes().hasParamAttribute(i, Kind);
+  return false;
+}
+
+bool MultiRetCallInst::dataOperandHasImpliedAttr(unsigned i,
+                                           Attribute::AttrKind Kind) const {
+  // There are getNumOperands() - 3 data operands.  The last three operands are
+  // the callee and the two successor basic blocks.
+  assert(i < (getNumOperands() - 2) && "Data operand index out of bounds!");
+
+  // The attribute A can either be directly specified, if the operand in
+  // question is an invoke argument; or be indirectly implied by the kind of its
+  // containing operand bundle, if the operand is a bundle operand.
+
+  if (i == AttributeList::ReturnIndex)
+    return hasRetAttr(Kind);
+
+  // FIXME: Avoid these i - 1 calculations and update the API to use zero-based
+  // indices.
+  if (i < (getNumArgOperands() + 1))
+    return paramHasAttr(i - 1, Kind);
+
+  assert(hasOperandBundles() && i >= (getBundleOperandsStartIndex() + 1) &&
+         "Must be either an invoke argument or an operand bundle!");
+  return bundleOperandHasAttr(i - 1, Kind);
+}
+
+void MultiRetCallInst::addAttribute(unsigned i, Attribute::AttrKind Kind) {
+  AttributeList PAL = getAttributes();
+  PAL = PAL.addAttribute(getContext(), i, Kind);
+  setAttributes(PAL);
+}
+
+void MultiRetCallInst::addAttribute(unsigned i, Attribute Attr) {
+  AttributeList PAL = getAttributes();
+  PAL = PAL.addAttribute(getContext(), i, Attr);
+  setAttributes(PAL);
+}
+
+void MultiRetCallInst::addParamAttr(unsigned ArgNo, Attribute::AttrKind Kind) {
+  AttributeList PAL = getAttributes();
+  PAL = PAL.addParamAttribute(getContext(), ArgNo, Kind);
+  setAttributes(PAL);
+}
+
+void MultiRetCallInst::removeAttribute(unsigned i, Attribute::AttrKind Kind) {
+  AttributeList PAL = getAttributes();
+  PAL = PAL.removeAttribute(getContext(), i, Kind);
+  setAttributes(PAL);
+}
+
+void MultiRetCallInst::removeAttribute(unsigned i, StringRef Kind) {
+  AttributeList PAL = getAttributes();
+  PAL = PAL.removeAttribute(getContext(), i, Kind);
+  setAttributes(PAL);
+}
+
+void MultiRetCallInst::removeParamAttr(unsigned ArgNo, Attribute::AttrKind Kind) {
+  AttributeList PAL = getAttributes();
+  PAL = PAL.removeParamAttribute(getContext(), ArgNo, Kind);
+  setAttributes(PAL);
+}
+
+void MultiRetCallInst::addDereferenceableAttr(unsigned i, uint64_t Bytes) {
+  AttributeList PAL = getAttributes();
+  PAL = PAL.addDereferenceableAttr(getContext(), i, Bytes);
+  setAttributes(PAL);
+}
+
+void MultiRetCallInst::addDereferenceableOrNullAttr(unsigned i, uint64_t Bytes) {
+  AttributeList PAL = getAttributes();
+  PAL = PAL.addDereferenceableOrNullAttr(getContext(), i, Bytes);
+  setAttributes(PAL);
 }
 
 //===----------------------------------------------------------------------===//
@@ -4957,6 +5156,13 @@ CallBrInst *CallBrInst::cloneImpl() const {
     return new (getNumOperands(), DescriptorBytes) CallBrInst(*this);
   }
   return new (getNumOperands()) CallBrInst(*this);
+}
+MultiRetCallInst *MultiRetCallInst::cloneImpl() const {
+  if (hasOperandBundles()) {
+    unsigned DescriptorBytes = getNumOperandBundles() * sizeof(BundleOpInfo);
+    return new(getNumOperands(), DescriptorBytes) MultiRetCallInst(*this);
+  }
+  return new(getNumOperands()) MultiRetCallInst(*this);
 }
 
 ResumeInst *ResumeInst::cloneImpl() const { return new (1) ResumeInst(*this); }
