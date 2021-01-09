@@ -1103,6 +1103,37 @@ public:
                         DefaultDest, IndirectDests, Args, Name);
   }
 
+  /// \brief Create a callbr instruction.
+  MultiRetCallInst *CreateMultiRetCall(FunctionType *Ty, Value *Callee,
+			   BasicBlock *DefaultDest,
+			   ArrayRef<BasicBlock *> IndirectDests,
+			   ArrayRef<Value *> Args = None,
+			   const Twine &Name = "") {
+    return Insert(MultiRetCallInst::Create(Ty, Callee, DefaultDest, IndirectDests,
+				     Args), Name);
+  }
+
+  MultiRetCallInst *CreateMultiRetCall(FunctionType *Ty, Value *Callee,
+			   BasicBlock *DefaultDest,
+			   ArrayRef<BasicBlock *> IndirectDests,
+			   ArrayRef<Value *> Args,
+			   ArrayRef<OperandBundleDef> OpBundles,
+			   const Twine &Name = "") {
+    return Insert(
+		  MultiRetCallInst::Create(Ty, Callee, DefaultDest, IndirectDests, Args,
+				     OpBundles), Name);
+  }  
+
+  MultiRetCallInst *CreateMultiRetCall(Function *Callee,
+				       BasicBlock *DefaultDest,
+				       ArrayRef<BasicBlock *> IndirectDests,
+				       ArrayRef<Value *> Args,
+				       ArrayRef<OperandBundleDef> OpBundles,
+			   const Twine &Name = "") {
+    return CreateMultiRetCall(Callee->getFunctionType(), Callee, DefaultDest, IndirectDests, Args, OpBundles, Name);
+  }  
+
+
   ResumeInst *CreateResume(Value *Exn) {
     return Insert(ResumeInst::Create(Exn));
   }
