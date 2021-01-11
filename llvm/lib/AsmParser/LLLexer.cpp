@@ -951,6 +951,7 @@ lltok::Kind LLLexer::LexIdentifier() {
   INSTKEYWORD(catchswitch,  CatchSwitch);
   INSTKEYWORD(catchpad,     CatchPad);
   INSTKEYWORD(cleanuppad,   CleanupPad);
+  INSTKEYWORD(retpad,   RetPad);
 
   INSTKEYWORD(freeze,       Freeze);
 

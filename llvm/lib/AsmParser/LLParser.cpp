@@ -6131,6 +6131,8 @@ int LLParser::parseInstruction(Instruction *&Inst, BasicBlock *BB,
   }
   case lltok::kw_landingpad:
     return parseLandingPad(Inst, PFS);
+  case lltok::kw_retpad:         
+    Inst = new RetPadInst(Context); return false;
   case lltok::kw_freeze:
     return parseFreeze(Inst, PFS);
   // Call.

@@ -5619,6 +5619,42 @@ struct OperandTraits<SyncInst> : public VariadicOperandTraits<SyncInst, 1> {
 DEFINE_TRANSPARENT_OPERAND_ACCESSORS(SyncInst, Value)
 
 //===----------------------------------------------------------------------===//
+//                           RetPadInst Class
+//===----------------------------------------------------------------------===//
+
+//===---------------------------------------------------------------------------
+/// This IR indicates that the basic block is part of a multiretcall IR
+///
+
+class RetPadInst : public Instruction {
+protected:
+  // Note: Instruction needs to be a friend here to call cloneImpl.
+  friend class Instruction;
+
+  RetPadInst *cloneImpl() const;
+
+public:
+  explicit RetPadInst(LLVMContext &C, Instruction *InsertBefore = nullptr);
+  explicit RetPadInst(LLVMContext &C, BasicBlock *InsertAtEnd);
+
+  // allocate space for exactly zero operands
+  void *operator new(size_t s) {
+    return User::operator new(s, 0);
+  }
+
+  // Methods for support type inquiry through isa, cast, and dyn_cast:
+  static bool classof(const Instruction *I) {
+    return I->getOpcode() == Instruction::RetPad;
+  }
+  static bool classof(const Value *V) {
+    return isa<Instruction>(V) && classof(cast<Instruction>(V));
+  }
+
+private:
+  
+};
+
+//===----------------------------------------------------------------------===//
 //                                 TruncInst Class
 //===----------------------------------------------------------------------===//
 

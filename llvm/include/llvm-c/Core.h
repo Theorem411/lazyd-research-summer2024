@@ -149,6 +149,7 @@ typedef enum {
   LLVMReattach       = 70,
   LLVMSync           = 71,
   LLVMMultiRetCall   = 72,
+  LLVMRetPad   = 73,
 } LLVMOpcode;
 
 typedef enum {

@@ -2641,6 +2641,11 @@ bool IRTranslator::translateMultiRetCall(const User &U,
   // FIXME: Implement this.
   return false;
 }
+bool IRTranslator::translateRetPad(const User &U,
+				   MachineIRBuilder &MIRBuilder) {
+  // FIXME: Implement this.
+  return false;
+}
 
 bool IRTranslator::translateLandingPad(const User &U,
                                        MachineIRBuilder &MIRBuilder) {

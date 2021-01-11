@@ -1438,6 +1438,20 @@ UnreachableInst::UnreachableInst(LLVMContext &Context, BasicBlock *InsertAtEnd)
                   0, InsertAtEnd) {}
 
 //===----------------------------------------------------------------------===//
+//                      RetPadInst Implementation
+//===----------------------------------------------------------------------===//
+
+RetPadInst::RetPadInst(LLVMContext &Context, 
+                                 Instruction *InsertBefore)
+  : Instruction(Type::getVoidTy(Context), Instruction::RetPad,
+                   nullptr, 0, InsertBefore) {
+}
+RetPadInst::RetPadInst(LLVMContext &Context, BasicBlock *InsertAtEnd)
+  : Instruction(Type::getVoidTy(Context), Instruction::RetPad,
+                   nullptr, 0, InsertAtEnd) {
+} 
+
+//===----------------------------------------------------------------------===//
 //                        DetachInst Implementation
 //===----------------------------------------------------------------------===//
 
@@ -5190,6 +5204,11 @@ UnreachableInst *UnreachableInst::cloneImpl() const {
 
 FreezeInst *FreezeInst::cloneImpl() const {
   return new FreezeInst(getOperand(0));
+}
+
+RetPadInst *RetPadInst::cloneImpl() const {
+  LLVMContext &Context = getContext();
+  return new RetPadInst(Context);
 }
 
 DetachInst *DetachInst::cloneImpl() const {

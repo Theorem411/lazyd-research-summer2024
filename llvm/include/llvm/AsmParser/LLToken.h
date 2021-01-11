@@ -371,6 +371,7 @@ enum Kind {
   kw_cleanuppad,
   kw_callbr,
   kw_multiretcall,
+  kw_retpad,
   kw_alloca,
   kw_load,
   kw_store,

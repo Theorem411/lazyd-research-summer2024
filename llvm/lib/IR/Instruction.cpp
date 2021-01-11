@@ -354,6 +354,7 @@ const char *Instruction::getOpcodeName(unsigned OpCode) {
   case Invoke: return "invoke";
   case Resume: return "resume";
   case Unreachable: return "unreachable";
+  case RetPad: return "retpad";
   case CleanupRet: return "cleanupret";
   case CatchRet: return "catchret";
   case CatchPad: return "catchpad";

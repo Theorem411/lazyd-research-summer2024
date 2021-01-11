@@ -632,6 +632,7 @@ public:
     case Instruction::Call:
     case Instruction::Invoke:
     case Instruction::MultiRetCall: 
+    case Instruction::RetPad: 
       return true;
     }
   }

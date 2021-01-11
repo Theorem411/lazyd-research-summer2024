@@ -280,6 +280,7 @@ private:
   bool translateCallBr(const User &U, MachineIRBuilder &MIRBuilder);
   // FIXME: Implement this
   bool translateMultiRetCall(const User &U, MachineIRBuilder &MIRBuilder);
+  bool translateRetPad(const User &U, MachineIRBuilder &MIRBuilder);
 
   bool translateLandingPad(const User &U, MachineIRBuilder &MIRBuilder);
 

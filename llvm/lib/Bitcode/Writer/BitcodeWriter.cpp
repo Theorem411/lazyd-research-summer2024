@@ -123,7 +123,8 @@ enum {
   FUNCTION_INST_RET_VOID_ABBREV,
   FUNCTION_INST_RET_VAL_ABBREV,
   FUNCTION_INST_UNREACHABLE_ABBREV,
-  FUNCTION_INST_GEP_ABBREV,
+  FUNCTION_INST_RETPAD_ABBREV,
+  FUNCTION_INST_GEP_ABBREV
 };
 
 /// Abstract class to manage the bitcode writing, subclassed for each bitcode
@@ -3041,6 +3042,10 @@ void ModuleBitcodeWriter::writeInstruction(const Instruction &I,
     Code = bitc::FUNC_CODE_INST_UNREACHABLE;
     AbbrevToUse = FUNCTION_INST_UNREACHABLE_ABBREV;
     break;
+  case Instruction::RetPad:
+    Code = bitc::FUNC_CODE_INST_RETPAD;
+    AbbrevToUse = FUNCTION_INST_RETPAD_ABBREV;
+    break;
   case Instruction::Detach:
     {
       Code = bitc::FUNC_CODE_INST_DETACH;
@@ -3654,6 +3659,13 @@ void ModuleBitcodeWriter::writeBlockInfo() {
     Abbv->Add(BitCodeAbbrevOp(bitc::FUNC_CODE_INST_UNREACHABLE));
     if (Stream.EmitBlockInfoAbbrev(bitc::FUNCTION_BLOCK_ID, Abbv) !=
         FUNCTION_INST_UNREACHABLE_ABBREV)
+      llvm_unreachable("Unexpected abbrev ordering!");
+  }
+  { // INST_RETPAD abbrev for FUNCTION_BLOCK.
+    auto Abbv = std::make_shared<BitCodeAbbrev>();
+    Abbv->Add(BitCodeAbbrevOp(bitc::FUNC_CODE_INST_RETPAD));
+    if (Stream.EmitBlockInfoAbbrev(bitc::FUNCTION_BLOCK_ID, Abbv) !=
+        FUNCTION_INST_RETPAD_ABBREV)
       llvm_unreachable("Unexpected abbrev ordering!");
   }
   {

@@ -4940,6 +4940,10 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
       I = new UnreachableInst(Context);
       InstructionList.push_back(I);
       break;
+    case bitc::FUNC_CODE_INST_RETPAD: // RETPAD
+      I = new RetPadInst(Context);
+      InstructionList.push_back(I);
+      break;
     case bitc::FUNC_CODE_INST_DETACH: { // DETACH: [bb#, bb#, [bb#,] val]
       if (Record.size() != 3 && Record.size() != 4)
         return error("Invalid record");
