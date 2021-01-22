@@ -1886,6 +1886,8 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     }
   } else if (FrameSize) {
     uint64_t stacklet_size_log2 = MF.getTarget().Options.ULIStackletOverflowCheckSize;
+    
+    // Fail during: llc -start-after=dead-mi-elimination fib.clone.mir -O3 -o fib.clone.s
     //if(false) {
     if (stacklet_size_log2 && !MF.getFunction().hasFnAttribute(Attribute::NoStackletCheck)) {
       // Add a stacklet overflow check, detecting if the adjusted stack pointer
@@ -1914,7 +1916,12 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
       //   newrsp = (newrsp ^ rsp) >> alignment
       //   jz MBB
       // OverflowMBB:
-      //   call __stacklet_overflow
+      //   callee_reg = &&.L_cont;   
+      //   call __allocate_stacklet 
+      //   call MBB   
+      //   call __deallocate_stacklet
+      //.L_cont:
+      //   retq
       // MBB:
       //   # emitted by regular emitSPUpdate()
       //   rbp = rsp
@@ -1938,7 +1945,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
       // 2 * 8 bytes: needed to store pushq %rip of callee and in case we need
       //              to pushq %rip again to call the overflow handler
       // 0x20: frame size of overflow handler
-      uint64_t FrameSizeAndSlop = FrameSize + 2 * 8 + 0x20;
+      uint64_t FrameSizeAndSlop = FrameSize + 2 * 8 + 0x90;
 
       // Assert that the frame size for the sub is not too large
       assert(FrameSizeAndSlop <= stacklet_size);
@@ -1956,9 +1963,38 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
 
       BuildMI(CheckMBB, DL, TII.get(X86::JE_1)).addMBB(&MBB);
 
+      // Overflow
+      // Add label before the actual prologue
+      MCSymbol *LabelCall = MF.getLabel();
+      MCSymbol *LabelRet = MF.getLabel();
+
+      // Store the potential return address of __allocate_stacklet
+      BuildMI(OverflowMBB, DL, TII.get(X86::MOV64ri), NewRSP)
+        .addSym(LabelRet);
+
+      // Allocate stacklet
       BuildMI(OverflowMBB, DL, TII.get(X86::CALL64pcrel32))
         // TODO: hardcoded
-        .addExternalSymbol("__stacklet_overflow");
+        .addExternalSymbol("__allocate_stacklet");
+
+      // Call the main function (LabelCall)
+      BuildMI(OverflowMBB, DL, TII.get(X86::CALL64pcrel32))
+	.addSym(LabelCall);
+      
+      // Deallocate stacklet (it will jump back to __allocate_stacklet and then return to LabelRet)
+      BuildMI(OverflowMBB, DL, TII.get(X86::CALL64pcrel32))
+        // TODO: hardcoded
+        .addExternalSymbol("__deallocate_stacklet");
+
+      BuildMI(OverflowMBB, DL, TII.get(TargetOpcode::EH_LABEL)).
+	addSym(LabelRet);
+
+      // Return to caller
+      const unsigned RetOpc = Is64Bit ? X86::RETQ : X86::RETL;
+      BuildMI(OverflowMBB, DL, TII.get(RetOpc));
+
+      BuildMI(OverflowMBB, DL, TII.get(TargetOpcode::EH_LABEL)).
+	addSym(LabelCall);
 
       CheckMBB->addSuccessor(&MBB);
       CheckMBB->addSuccessor(OverflowMBB);
