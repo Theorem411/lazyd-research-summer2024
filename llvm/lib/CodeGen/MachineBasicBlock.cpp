@@ -607,7 +607,7 @@ MachineBasicBlock::addLiveIn(MCRegister PhysReg, const TargetRegisterClass *RC) 
   assert(getParent() && "MBB must be inserted in function");
   assert(Register::isPhysicalRegister(PhysReg) && "Expected physreg");
   assert(RC && "Register class is required");
-  assert((isEHPad() || this == &getParent()->front()) &&
+  assert((isEHPad() || isMultiRetCallIndirectTarget() || this == &getParent()->front()) &&
          "Only the entry block and landing pads can have physreg live ins");
 
   bool LiveIn = isLiveIn(PhysReg);
@@ -665,6 +665,7 @@ void MachineBasicBlock::updateTerminator(
       if (isLayoutSuccessor(TBB))
         TII->removeBranch(*this);
     } else {
+#if 1
       // The block has an unconditional fallthrough, or the end of the block is
       // unreachable.
 
@@ -673,16 +674,32 @@ void MachineBasicBlock::updateTerminator(
       // and assuming that if the passed in block is in the succesor list and
       // not an EHPad, it must be the intended target.
       if (!PreviousLayoutSuccessor || !isSuccessor(PreviousLayoutSuccessor) ||
-          PreviousLayoutSuccessor->isEHPad())
-        return;
+          PreviousLayoutSuccessor->isEHPad() || PreviousLayoutSuccessor->isMultiRetCallIndirectTarget())
+	return;
+#else
+      // TODO: Is this needed? 
+      // The block has an unconditional fallthrough. If its successor is not its
+      // layout successor, insert a branch. First we have to locate the only
+      // non-landing-pad successor, as that is the fallthrough block.
+      for (succ_iterator SI = succ_begin(), SE = succ_end(); SI != SE; ++SI) {
+        if ((*SI)->isEHPad() || (*SI)->isMultiRetCallIndirectTarget())
+          continue;
+        assert(!TBB && "Found more than one non-landing-pad successor!");
+	TBB = *SI;
+      }
 
+      // If there is no non-landing-pad successor, the block has no fall-through
+      // edges to be concerned with.
+      if (!TBB)
+        return;
+#endif
       // If the unconditional successor block is not the current layout
       // successor, insert a branch to jump to it.
       if (!isLayoutSuccessor(PreviousLayoutSuccessor))
         TII->insertBranch(*this, PreviousLayoutSuccessor, nullptr, Cond, DL);
     }
-    return;
-  }
+      return;
+    }
 
   if (FBB) {
     // The block has a non-fallthrough conditional branch. If one of its
@@ -700,10 +717,39 @@ void MachineBasicBlock::updateTerminator(
     return;
   }
 
+#if 1
   // We now know we're going to fallthrough to PreviousLayoutSuccessor.
   assert(PreviousLayoutSuccessor);
   assert(!PreviousLayoutSuccessor->isEHPad());
   assert(isSuccessor(PreviousLayoutSuccessor));
+#else
+  // Is this needed?
+  // Walk through the successors and find the successor which is not a landing
+  // pad and is not the conditional branch destination (in TBB) as the
+  // fallthrough successor.
+  MachineBasicBlock *FallthroughBB = nullptr;
+  for (succ_iterator SI = succ_begin(), SE = succ_end(); SI != SE; ++SI) {
+    if ((*SI)->isEHPad() || *SI == TBB || (*SI)->isMultiRetCallIndirectTarget())
+      continue;
+    assert(!FallthroughBB && "Found more than one fallthrough successor.");
+    FallthroughBB = *SI;
+  }
+
+  if (!FallthroughBB) {
+    if (canFallThrough()) {
+      // We fallthrough to the same basic block as the conditional jump targets.
+      // Remove the conditional jump, leaving unconditional fallthrough.
+      // FIXME: This does not seem like a reasonable pattern to support, but it
+      // has been seen in the wild coming out of degenerate ARM test cases.
+      TII->removeBranch(*this);
+
+      // Finally update the unconditional successor to be reached via a branch if
+      // it would not be reached by fallthrough.
+      if (!isLayoutSuccessor(TBB))
+        TII->insertBranch(*this, TBB, nullptr, Cond, DL);
+      return;
+    }
+#endif
 
   if (PreviousLayoutSuccessor == TBB) {
     // We had a fallthrough to the same basic block as the conditional jump
@@ -1252,6 +1298,10 @@ bool MachineBasicBlock::canSplitCriticalEdge(
   // Don't do it in this generic function.
   if (Succ->isInlineAsmBrIndirectTarget())
     return false;
+  // Splitting the critical edge to a multiretcall's indirect block isn't advised.
+  // Don't do it in this generic function.
+  if (Succ->isMultiRetCallIndirectTarget())
+    return false;
 
   const MachineFunction *MF = getParent();
   // Performance might be harmed on HW that implements branching using exec mask
@@ -1365,6 +1415,63 @@ void MachineBasicBlock::replacePhiUsesWith(MachineBasicBlock *Old,
         MO.setMBB(New);
     }
 }
+/// Various pieces of code can cause excess edges in the CFG to be inserted.  If
+/// we have proven that MBB can only branch to DestA and DestB, remove any other
+/// MBB successors from the CFG.  DestA and DestB can be null.
+///
+/// Besides DestA and DestB, retain other edges leading to LandingPads
+/// (currently there can be only one; we don't check or require that here).
+/// Note it is possible that DestA and/or DestB are LandingPads.
+bool MachineBasicBlock::CorrectExtraCFGEdges(MachineBasicBlock *DestA,
+                                             MachineBasicBlock *DestB,
+                                             bool IsCond) {
+  // The values of DestA and DestB frequently come from a call to the
+  // 'TargetInstrInfo::AnalyzeBranch' method. We take our meaning of the initial
+  // values from there.
+  //
+  // 1. If both DestA and DestB are null, then the block ends with no branches
+  //    (it falls through to its successor).
+  // 2. If DestA is set, DestB is null, and IsCond is false, then the block ends
+  //    with only an unconditional branch.
+  // 3. If DestA is set, DestB is null, and IsCond is true, then the block ends
+  //    with a conditional branch that falls through to a successor (DestB).
+  // 4. If DestA and DestB is set and IsCond is true, then the block ends with a
+  //    conditional branch followed by an unconditional branch. DestA is the
+  //    'true' destination and DestB is the 'false' destination.
+
+  bool Changed = false;
+
+  MachineBasicBlock *FallThru = getNextNode();
+
+  if (!DestA && !DestB) {
+    // Block falls through to successor.
+    DestA = FallThru;
+    DestB = FallThru;
+  } else if (DestA && !DestB) {
+    if (IsCond)
+      // Block ends in conditional jump that falls through to successor.
+      DestB = FallThru;
+  } else {
+    assert(DestA && DestB && IsCond &&
+           "CFG in a bad state. Cannot correct CFG edges");
+  }
+
+  // Remove superfluous edges. I.e., those which aren't destinations of this
+  // basic block, duplicate edges, or landing pads.
+  SmallPtrSet<const MachineBasicBlock*, 8> SeenMBBs;
+  MachineBasicBlock::succ_iterator SI = succ_begin();
+  while (SI != succ_end()) {
+    const MachineBasicBlock *MBB = *SI;
+    if (!SeenMBBs.insert(MBB).second ||
+        (MBB != DestA && MBB != DestB && !MBB->isEHPad() && !MBB->isMultiRetCallIndirectTarget() )) {
+      // This is a superfluous edge, remove it.
+      SI = removeSuccessor(SI);
+      Changed = true;
+    } else {
+      ++SI;
+    }
+}
+
 
 /// Find the next valid DebugLoc starting at MBBI, skipping any DBG_VALUE
 /// instructions.  Return UnknownLoc if there is none.

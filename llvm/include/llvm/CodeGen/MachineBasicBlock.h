@@ -175,6 +175,9 @@ private:
   /// Indicate that this basic block is the entry block of a cleanup funclet.
   bool IsCleanupFuncletEntry = false;
 
+  /// Indicate that this basic block is the indirect dest of an multiretcall
+  bool IsMultiRetCallIndirectTarget = false;
+
   /// With basic block sections, this stores the Section ID of the basic block.
   MBBSectionID SectionID{0};
 
@@ -604,6 +607,7 @@ public:
   /// Indicates if this is the entry block of a cleanup funclet.
   void setIsCleanupFuncletEntry(bool V = true) { IsCleanupFuncletEntry = V; }
 
+<<<<<<< HEAD
   /// Returns true if this block begins any section.
   bool isBeginSection() const { return IsBeginSection; }
 
@@ -642,6 +646,16 @@ public:
   /// Indicates if this is the indirect dest of an INLINEASM_BR.
   void setIsInlineAsmBrIndirectTarget(bool V = true) {
     IsInlineAsmBrIndirectTarget = V;
+  }
+
+  /// Return true if this is the indirect dest of an multiretcall
+  bool isMultiRetCallIndirectTarget() const{
+    return IsMultiRetCallIndirectTarget;
+  }
+
+  /// Indicates if this is the indirect dest of an multiretcall
+  void setIsMultiRetCallIndirectTarget(bool V = true) {
+    IsMultiRetCallIndirectTarget = V;
   }
 
   /// Returns true if it is legal to hoist instructions into this block.
