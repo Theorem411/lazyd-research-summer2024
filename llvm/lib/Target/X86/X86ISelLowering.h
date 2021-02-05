@@ -1847,8 +1847,16 @@ namespace llvm {
                          const SmallVectorImpl<ISD::InputArg> &Ins,
                          const SDLoc &dl, SelectionDAG &DAG,
                          SmallVectorImpl<SDValue> &InVals) const override;
+   
     SDValue LowerCall(CallLoweringInfo &CLI,
                       SmallVectorImpl<SDValue> &InVals) const override;
+
+    SDValue LowerMultiRetCallPrologue(CallLoweringInfo &CLI,
+                      SmallVectorImpl<SDValue> &InVals) const override;
+
+    SDValue LowerMultiRetCallEpilogue(CallLoweringInfo &CLI,
+                      SmallVectorImpl<SDValue> &InVals) const override;
+
 
     SDValue LowerReturn(SDValue Chain, CallingConv::ID CallConv, bool isVarArg,
                         const SmallVectorImpl<ISD::OutputArg> &Outs,

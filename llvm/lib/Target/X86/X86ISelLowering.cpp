@@ -4295,7 +4295,6 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   if (!IsSibcall && !IsMustTail)
     Chain = DAG.getCALLSEQ_START(Chain, NumBytesToPush,
                                  NumBytes - NumBytesToPush, dl);
-
   SDValue RetAddrFrIdx;
   // Load return address for tail calls.
   if (isTailCall && FPDiff)
@@ -4728,6 +4727,1105 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   // return.
   return LowerCallResult(Chain, InFlag, CallConv, isVarArg, Ins, dl, DAG,
                          InVals, RegMask);
+}
+
+SDValue
+X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &CLI,
+                             SmallVectorImpl<SDValue> &InVals) const {
+  SelectionDAG &DAG                     = CLI.DAG;
+  SDLoc &dl                             = CLI.DL;
+  SmallVectorImpl<ISD::OutputArg> &Outs = CLI.Outs;
+  SmallVectorImpl<SDValue> &OutVals     = CLI.OutVals;
+  SmallVectorImpl<ISD::InputArg> &Ins   = CLI.Ins;
+  SDValue Chain                         = CLI.Chain;
+  SDValue Callee                        = CLI.Callee;
+  CallingConv::ID CallConv              = CLI.CallConv;
+  bool &isTailCall                      = CLI.IsTailCall;
+  bool isVarArg                         = CLI.IsVarArg;
+
+  MachineFunction &MF = DAG.getMachineFunction();
+  bool Is64Bit        = Subtarget.is64Bit();
+  bool IsWin64        = Subtarget.isCallingConvWin64(CallConv);
+  StructReturnType SR = callIsStructReturn(Outs, Subtarget.isTargetMCU());
+  bool IsSibcall      = false;
+  X86MachineFunctionInfo *X86Info = MF.getInfo<X86MachineFunctionInfo>();
+  auto Attr = MF.getFunction().getFnAttribute("disable-tail-calls");
+  const auto *CI = dyn_cast_or_null<CallInst>(CLI.CS.getInstruction());
+  const Function *Fn = CI ? CI->getCalledFunction() : nullptr;
+  bool HasNCSR = (CI && CI->hasFnAttr("no_caller_saved_registers")) ||
+                 (Fn && Fn->hasFnAttribute("no_caller_saved_registers")) ||
+                 (Fn && Fn->hasFnAttribute("user_level_interrupt"));
+
+  if (CallConv == CallingConv::X86_INTR)
+    report_fatal_error("X86 interrupts may not be called directly");
+  else if (CallConv == CallingConv::X86_ULI)
+    report_fatal_error("X86 user-level interrupts may not be called directly");
+  if (Attr.getValueAsString() == "true")
+    isTailCall = false;
+
+  if (Subtarget.isPICStyleGOT() &&
+      !MF.getTarget().Options.GuaranteedTailCallOpt) {
+    // If we are using a GOT, disable tail calls to external symbols with
+    // default visibility. Tail calling such a symbol requires using a GOT
+    // relocation, which forces early binding of the symbol. This breaks code
+    // that require lazy function symbol resolution. Using musttail or
+    // GuaranteedTailCallOpt will override this.
+    GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee);
+    if (!G || (!G->getGlobal()->hasLocalLinkage() &&
+               G->getGlobal()->hasDefaultVisibility()))
+      isTailCall = false;
+  }
+
+  bool IsMustTail = CLI.CS && CLI.CS.isMustTailCall();
+  if (IsMustTail) {
+    // Force this to be a tail call.  The verifier rules are enough to ensure
+    // that we can lower this successfully without moving the return address
+    // around.
+    isTailCall = true;
+  } else if (isTailCall) {
+    // Check if it's really possible to do a tail call.
+    isTailCall = IsEligibleForTailCallOptimization(Callee, CallConv,
+                    isVarArg, SR != NotStructReturn,
+                    MF.getFunction().hasStructRetAttr(), CLI.RetTy,
+                    Outs, OutVals, Ins, DAG);
+
+    // Sibcalls are automatically detected tailcalls which do not require
+    // ABI changes.
+    if (!MF.getTarget().Options.GuaranteedTailCallOpt && isTailCall)
+      IsSibcall = true;
+
+    if (isTailCall)
+      ++NumTailCalls;
+  }
+
+  assert(!(isVarArg && canGuaranteeTCO(CallConv)) &&
+         "Var args not supported with calling convention fastcc, ghc or hipe");
+
+  // Analyze operands of the call, assigning locations to each operand.
+  SmallVector<CCValAssign, 16> ArgLocs;
+  CCState CCInfo(CallConv, isVarArg, MF, ArgLocs, *DAG.getContext());
+
+  // Allocate shadow area for Win64.
+  if (IsWin64)
+    CCInfo.AllocateStack(32, 8);
+
+  CCInfo.AnalyzeArguments(Outs, CC_X86);
+
+  // In vectorcall calling convention a second pass is required for the HVA
+  // types.
+  if (CallingConv::X86_VectorCall == CallConv) {
+    CCInfo.AnalyzeArgumentsSecondPass(Outs, CC_X86);
+  }
+
+  // Get a count of how many bytes are to be pushed on the stack.
+  unsigned NumBytes = CCInfo.getAlignedCallFrameSize();
+  if (IsSibcall)
+    // This is a sibcall. The memory operands are available in caller's
+    // own caller's stack.
+    NumBytes = 0;
+  else if (MF.getTarget().Options.GuaranteedTailCallOpt &&
+           canGuaranteeTCO(CallConv))
+    NumBytes = GetAlignedArgumentStackSize(NumBytes, DAG);
+
+  int FPDiff = 0;
+  if (isTailCall && !IsSibcall && !IsMustTail) {
+    // Lower arguments at fp - stackoffset + fpdiff.
+    unsigned NumBytesCallerPushed = X86Info->getBytesToPopOnReturn();
+
+    FPDiff = NumBytesCallerPushed - NumBytes;
+
+    // Set the delta of movement of the returnaddr stackslot.
+    // But only set if delta is greater than previous delta.
+    if (FPDiff < X86Info->getTCReturnAddrDelta())
+      X86Info->setTCReturnAddrDelta(FPDiff);
+  }
+
+  unsigned NumBytesToPush = NumBytes;
+  unsigned NumBytesToPop = NumBytes;
+
+  // If we have an inalloca argument, all stack space has already been allocated
+  // for us and be right at the top of the stack.  We don't support multiple
+  // arguments passed in memory when using inalloca.
+  if (!Outs.empty() && Outs.back().Flags.isInAlloca()) {
+    NumBytesToPush = 0;
+    if (!ArgLocs.back().isMemLoc())
+      report_fatal_error("cannot use inalloca attribute on a register "
+                         "parameter");
+    if (ArgLocs.back().getLocMemOffset() != 0)
+      report_fatal_error("any parameter with the inalloca attribute must be "
+                         "the only memory argument");
+  }
+
+  if (!IsSibcall) {
+    Chain = DAG.getCALLSEQ_START(Chain, NumBytesToPush,
+                                 NumBytes - NumBytesToPush, dl);
+  }
+
+  SDValue RetAddrFrIdx;
+  // Load return address for tail calls.
+  if (isTailCall && FPDiff)
+    Chain = EmitTailCallLoadRetAddr(DAG, RetAddrFrIdx, Chain, isTailCall,
+                                    Is64Bit, FPDiff, dl);
+
+  SmallVector<std::pair<unsigned, SDValue>, 8> RegsToPass;
+  SmallVector<SDValue, 8> MemOpChains;
+  SDValue StackPtr;
+
+  // The next loop assumes that the locations are in the same order of the
+  // input arguments.
+  assert(isSortedByValueNo(ArgLocs) &&
+         "Argument Location list must be sorted before lowering");
+
+  // Walk the register/memloc assignments, inserting copies/loads.  In the case
+  // of tail call optimization arguments are handle later.
+  const X86RegisterInfo *RegInfo = Subtarget.getRegisterInfo();
+  for (unsigned I = 0, OutIndex = 0, E = ArgLocs.size(); I != E;
+       ++I, ++OutIndex) {
+    assert(OutIndex < Outs.size() && "Invalid Out index");
+    // Skip inalloca arguments, they have already been written.
+    ISD::ArgFlagsTy Flags = Outs[OutIndex].Flags;
+    if (Flags.isInAlloca())
+      continue;
+
+    CCValAssign &VA = ArgLocs[I];
+    EVT RegVT = VA.getLocVT();
+    SDValue Arg = OutVals[OutIndex];
+    bool isByVal = Flags.isByVal();
+
+    // Promote the value if needed.
+    switch (VA.getLocInfo()) {
+    default: llvm_unreachable("Unknown loc info!");
+    case CCValAssign::Full: break;
+    case CCValAssign::SExt:
+      Arg = DAG.getNode(ISD::SIGN_EXTEND, dl, RegVT, Arg);
+      break;
+    case CCValAssign::ZExt:
+      Arg = DAG.getNode(ISD::ZERO_EXTEND, dl, RegVT, Arg);
+      break;
+    case CCValAssign::AExt:
+      if (Arg.getValueType().isVector() &&
+          Arg.getValueType().getVectorElementType() == MVT::i1)
+        Arg = lowerMasksToReg(Arg, RegVT, dl, DAG);
+      else if (RegVT.is128BitVector()) {
+        // Special case: passing MMX values in XMM registers.
+        Arg = DAG.getBitcast(MVT::i64, Arg);
+        Arg = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, MVT::v2i64, Arg);
+        Arg = getMOVL(DAG, dl, MVT::v2i64, DAG.getUNDEF(MVT::v2i64), Arg);
+      } else
+        Arg = DAG.getNode(ISD::ANY_EXTEND, dl, RegVT, Arg);
+      break;
+    case CCValAssign::BCvt:
+      Arg = DAG.getBitcast(RegVT, Arg);
+      break;
+    case CCValAssign::Indirect: {
+      // Store the argument.
+      SDValue SpillSlot = DAG.CreateStackTemporary(VA.getValVT());
+      int FI = cast<FrameIndexSDNode>(SpillSlot)->getIndex();
+      Chain = DAG.getStore(
+          Chain, dl, Arg, SpillSlot,
+          MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FI));
+      Arg = SpillSlot;
+      break;
+    }
+    }
+
+    if (VA.needsCustom()) {
+      assert(VA.getValVT() == MVT::v64i1 &&
+             "Currently the only custom case is when we split v64i1 to 2 regs");
+      // Split v64i1 value into two registers
+      Passv64i1ArgInRegs(dl, DAG, Chain, Arg, RegsToPass, VA, ArgLocs[++I],
+                         Subtarget);
+    } else if (VA.isRegLoc()) {
+      RegsToPass.push_back(std::make_pair(VA.getLocReg(), Arg));
+      if (isVarArg && IsWin64) {
+        // Win64 ABI requires argument XMM reg to be copied to the corresponding
+        // shadow reg if callee is a varargs function.
+        unsigned ShadowReg = 0;
+        switch (VA.getLocReg()) {
+        case X86::XMM0: ShadowReg = X86::RCX; break;
+        case X86::XMM1: ShadowReg = X86::RDX; break;
+        case X86::XMM2: ShadowReg = X86::R8; break;
+        case X86::XMM3: ShadowReg = X86::R9; break;
+        }
+        if (ShadowReg)
+          RegsToPass.push_back(std::make_pair(ShadowReg, Arg));
+      }
+    } else if (!IsSibcall && (!isTailCall || isByVal)) {
+      assert(VA.isMemLoc());
+      if (!StackPtr.getNode())
+        StackPtr = DAG.getCopyFromReg(Chain, dl, RegInfo->getStackRegister(),
+                                      getPointerTy(DAG.getDataLayout()));
+      MemOpChains.push_back(LowerMemOpCallTo(Chain, StackPtr, Arg,
+                                             dl, DAG, VA, Flags));
+    }
+  }
+
+  if (!MemOpChains.empty())
+    Chain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, MemOpChains);
+
+  if (Subtarget.isPICStyleGOT()) {
+    // ELF / PIC requires GOT in the EBX register before function calls via PLT
+    // GOT pointer.
+    if (!isTailCall) {
+      RegsToPass.push_back(std::make_pair(
+          unsigned(X86::EBX), DAG.getNode(X86ISD::GlobalBaseReg, SDLoc(),
+                                          getPointerTy(DAG.getDataLayout()))));
+    } else {
+      // If we are tail calling and generating PIC/GOT style code load the
+      // address of the callee into ECX. The value in ecx is used as target of
+      // the tail jump. This is done to circumvent the ebx/callee-saved problem
+      // for tail calls on PIC/GOT architectures. Normally we would just put the
+      // address of GOT into ebx and then call target@PLT. But for tail calls
+      // ebx would be restored (since ebx is callee saved) before jumping to the
+      // target@PLT.
+
+      // Note: The actual moving to ECX is done further down.
+      GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee);
+      if (G && !G->getGlobal()->hasLocalLinkage() &&
+          G->getGlobal()->hasDefaultVisibility())
+        Callee = LowerGlobalAddress(Callee, DAG);
+      else if (isa<ExternalSymbolSDNode>(Callee))
+        Callee = LowerExternalSymbol(Callee, DAG);
+    }
+  }
+
+  if (Is64Bit && isVarArg && !IsWin64 && !IsMustTail) {
+    // From AMD64 ABI document:
+    // For calls that may call functions that use varargs or stdargs
+    // (prototype-less calls or calls to functions containing ellipsis (...) in
+    // the declaration) %al is used as hidden argument to specify the number
+    // of SSE registers used. The contents of %al do not need to match exactly
+    // the number of registers, but must be an ubound on the number of SSE
+    // registers used and is in the range 0 - 8 inclusive.
+
+    // Count the number of XMM registers allocated.
+    static const MCPhysReg XMMArgRegs[] = {
+      X86::XMM0, X86::XMM1, X86::XMM2, X86::XMM3,
+      X86::XMM4, X86::XMM5, X86::XMM6, X86::XMM7
+    };
+    unsigned NumXMMRegs = CCInfo.getFirstUnallocated(XMMArgRegs);
+    assert((Subtarget.hasSSE1() || !NumXMMRegs)
+           && "SSE registers cannot be used when SSE is disabled");
+
+    RegsToPass.push_back(std::make_pair(unsigned(X86::AL),
+                                        DAG.getConstant(NumXMMRegs, dl,
+                                                        MVT::i8)));
+  }
+
+  if (isVarArg && IsMustTail) {
+    const auto &Forwards = X86Info->getForwardedMustTailRegParms();
+    for (const auto &F : Forwards) {
+      SDValue Val = DAG.getCopyFromReg(Chain, dl, F.VReg, F.VT);
+      RegsToPass.push_back(std::make_pair(unsigned(F.PReg), Val));
+    }
+  }
+
+  // For tail calls lower the arguments to the 'real' stack slots.  Sibcalls
+  // don't need this because the eligibility check rejects calls that require
+  // shuffling arguments passed in memory.
+  if (!IsSibcall && isTailCall) {
+    // Force all the incoming stack arguments to be loaded from the stack
+    // before any new outgoing arguments are stored to the stack, because the
+    // outgoing stack slots may alias the incoming argument stack slots, and
+    // the alias isn't otherwise explicit. This is slightly more conservative
+    // than necessary, because it means that each store effectively depends
+    // on every argument instead of just those arguments it would clobber.
+    SDValue ArgChain = DAG.getStackArgumentTokenFactor(Chain);
+
+    SmallVector<SDValue, 8> MemOpChains2;
+    SDValue FIN;
+    int FI = 0;
+    for (unsigned I = 0, OutsIndex = 0, E = ArgLocs.size(); I != E;
+         ++I, ++OutsIndex) {
+      CCValAssign &VA = ArgLocs[I];
+
+      if (VA.isRegLoc()) {
+        if (VA.needsCustom()) {
+          assert((CallConv == CallingConv::X86_RegCall) &&
+                 "Expecting custom case only in regcall calling convention");
+          // This means that we are in special case where one argument was
+          // passed through two register locations - Skip the next location
+          ++I;
+        }
+
+        continue;
+      }
+
+      assert(VA.isMemLoc());
+      SDValue Arg = OutVals[OutsIndex];
+      ISD::ArgFlagsTy Flags = Outs[OutsIndex].Flags;
+      // Skip inalloca arguments.  They don't require any work.
+      if (Flags.isInAlloca())
+        continue;
+      // Create frame index.
+      int32_t Offset = VA.getLocMemOffset()+FPDiff;
+      uint32_t OpSize = (VA.getLocVT().getSizeInBits()+7)/8;
+      FI = MF.getFrameInfo().CreateFixedObject(OpSize, Offset, true);
+      FIN = DAG.getFrameIndex(FI, getPointerTy(DAG.getDataLayout()));
+
+      if (Flags.isByVal()) {
+        // Copy relative to framepointer.
+        SDValue Source = DAG.getIntPtrConstant(VA.getLocMemOffset(), dl);
+        if (!StackPtr.getNode())
+          StackPtr = DAG.getCopyFromReg(Chain, dl, RegInfo->getStackRegister(),
+                                        getPointerTy(DAG.getDataLayout()));
+        Source = DAG.getNode(ISD::ADD, dl, getPointerTy(DAG.getDataLayout()),
+                             StackPtr, Source);
+
+        MemOpChains2.push_back(CreateCopyOfByValArgument(Source, FIN,
+                                                         ArgChain,
+                                                         Flags, DAG, dl));
+      } else {
+        // Store relative to framepointer.
+        MemOpChains2.push_back(DAG.getStore(
+            ArgChain, dl, Arg, FIN,
+            MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FI)));
+      }
+    }
+
+    if (!MemOpChains2.empty())
+      Chain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, MemOpChains2);
+
+    // Store the return address to the appropriate stack slot.
+    Chain = EmitTailCallStoreRetAddr(DAG, MF, Chain, RetAddrFrIdx,
+                                     getPointerTy(DAG.getDataLayout()),
+                                     RegInfo->getSlotSize(), FPDiff, dl);
+  }
+
+  // Build a sequence of copy-to-reg nodes chained together with token chain
+  // and flag operands which copy the outgoing args into registers.
+  SDValue InFlag;
+  for (unsigned i = 0, e = RegsToPass.size(); i != e; ++i) {
+    Chain = DAG.getCopyToReg(Chain, dl, RegsToPass[i].first,
+                             RegsToPass[i].second, InFlag);
+    InFlag = Chain.getValue(1);
+  }
+
+  if (DAG.getTarget().getCodeModel() == CodeModel::Large) {
+    assert(Is64Bit && "Large code model is only legal in 64-bit mode.");
+    // In the 64-bit large code model, we have to make all calls
+    // through a register, since the call instruction's 32-bit
+    // pc-relative offset may not be large enough to hold the whole
+    // address.
+  } else if (Callee->getOpcode() == ISD::GlobalAddress) {
+    // If the callee is a GlobalAddress node (quite common, every direct call
+    // is) turn it into a TargetGlobalAddress node so that legalize doesn't hack
+    // it.
+    GlobalAddressSDNode* G = cast<GlobalAddressSDNode>(Callee);
+
+    // We should use extra load for direct calls to dllimported functions in
+    // non-JIT mode.
+    const GlobalValue *GV = G->getGlobal();
+    if (!GV->hasDLLImportStorageClass()) {
+      unsigned char OpFlags = Subtarget.classifyGlobalFunctionReference(GV);
+
+      Callee = DAG.getTargetGlobalAddress(
+          GV, dl, getPointerTy(DAG.getDataLayout()), G->getOffset(), OpFlags);
+
+      if (OpFlags == X86II::MO_GOTPCREL) {
+        // Add a wrapper.
+        Callee = DAG.getNode(X86ISD::WrapperRIP, dl,
+          getPointerTy(DAG.getDataLayout()), Callee);
+        // Add extra indirection
+        Callee = DAG.getLoad(
+            getPointerTy(DAG.getDataLayout()), dl, DAG.getEntryNode(), Callee,
+            MachinePointerInfo::getGOT(DAG.getMachineFunction()));
+      }
+    }
+  } else if (ExternalSymbolSDNode *S = dyn_cast<ExternalSymbolSDNode>(Callee)) {
+    const Module *Mod = DAG.getMachineFunction().getFunction().getParent();
+    unsigned char OpFlags =
+        Subtarget.classifyGlobalFunctionReference(nullptr, *Mod);
+
+    Callee = DAG.getTargetExternalSymbol(
+        S->getSymbol(), getPointerTy(DAG.getDataLayout()), OpFlags);
+  } else if (Subtarget.isTarget64BitILP32() &&
+             Callee->getValueType(0) == MVT::i32) {
+    // Zero-extend the 32-bit Callee address into a 64-bit according to x32 ABI
+    Callee = DAG.getNode(ISD::ZERO_EXTEND, dl, MVT::i64, Callee);
+  }
+
+  // Returns a chain & a flag for retval copy to use.
+  SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
+  SmallVector<SDValue, 8> Ops;
+
+  if (!IsSibcall && isTailCall) {
+    Chain = DAG.getCALLSEQ_END(Chain,
+                               DAG.getIntPtrConstant(NumBytesToPop, dl, true),
+                               DAG.getIntPtrConstant(0, dl, true), InFlag, dl);
+    InFlag = Chain.getValue(1);
+  }
+
+  Ops.push_back(Chain);
+  Ops.push_back(Callee);
+
+  if (isTailCall)
+    Ops.push_back(DAG.getConstant(FPDiff, dl, MVT::i32));
+
+  // Add argument registers to the end of the list so that they are known live
+  // into the call.
+  for (unsigned i = 0, e = RegsToPass.size(); i != e; ++i)
+    Ops.push_back(DAG.getRegister(RegsToPass[i].first,
+                                  RegsToPass[i].second.getValueType()));
+
+  // Add a register mask operand representing the call-preserved registers.
+  // If HasNCSR is asserted (attribute NoCallerSavedRegisters exists) then we
+  // set X86_INTR calling convention because it has the same CSR mask
+  // (same preserved registers).
+  const uint32_t *Mask = RegInfo->getCallPreservedMask(
+      MF, HasNCSR ? (CallingConv::ID)CallingConv::X86_INTR : CallConv);
+  assert(Mask && "Missing call preserved mask for calling convention");
+
+  // If this is an invoke in a 32-bit function using a funclet-based
+  // personality, assume the function clobbers all registers. If an exception
+  // is thrown, the runtime will not restore CSRs.
+  // FIXME: Model this more precisely so that we can register allocate across
+  // the normal edge and spill and fill across the exceptional edge.
+  if (!Is64Bit && CLI.CS && CLI.CS.isInvoke()) {
+    const Function &CallerFn = MF.getFunction();
+    EHPersonality Pers =
+        CallerFn.hasPersonalityFn()
+            ? classifyEHPersonality(CallerFn.getPersonalityFn())
+            : EHPersonality::Unknown;
+    if (isFuncletEHPersonality(Pers))
+      Mask = RegInfo->getNoPreservedMask();
+  }
+  
+  // Define a new register mask from the existing mask.
+  uint32_t *RegMask = nullptr;
+
+  // In some calling conventions we need to remove the used physical registers
+  // from the reg mask.
+  if (CallConv == CallingConv::X86_RegCall || HasNCSR) {
+    const TargetRegisterInfo *TRI = Subtarget.getRegisterInfo();
+
+    // Allocate a new Reg Mask and copy Mask.
+    RegMask = MF.allocateRegisterMask(TRI->getNumRegs());
+    unsigned RegMaskSize = (TRI->getNumRegs() + 31) / 32;
+    memcpy(RegMask, Mask, sizeof(uint32_t) * RegMaskSize);
+
+    // Make sure all sub registers of the argument registers are reset
+    // in the RegMask.
+    for (auto const &RegPair : RegsToPass)
+      for (MCSubRegIterator SubRegs(RegPair.first, TRI, /*IncludeSelf=*/true);
+           SubRegs.isValid(); ++SubRegs)
+        RegMask[*SubRegs / 32] &= ~(1u << (*SubRegs % 32));
+
+    // Create the RegMask Operand according to our updated mask.
+    Ops.push_back(DAG.getRegisterMask(RegMask));
+  } else {
+    // Create the RegMask Operand according to the static mask.
+    Ops.push_back(DAG.getRegisterMask(Mask));
+  }
+
+  if (InFlag.getNode())
+    Ops.push_back(InFlag);
+
+  if (isTailCall) {
+    // We used to do:
+    //// If this is the first return lowered for this function, add the regs
+    //// to the liveout set for the function.
+    // This isn't right, although it's probably harmless on x86; liveouts
+    // should be computed from returns not tail calls.  Consider a void
+    // function making a tail call to a function returning int.
+    MF.getFrameInfo().setHasTailCall();
+    return DAG.getNode(X86ISD::TC_RETURN, dl, NodeTys, Ops);
+  }
+  
+  Chain = DAG.getNode(X86ISD::CALL, dl, NodeTys, Ops);
+  InFlag = Chain.getValue(1);
+  
+  //Chain.dump();
+  //InFlag.dump();
+
+#if 0
+  // Create the CALLSEQ_END node.
+  unsigned NumBytesForCalleeToPop;
+  if (X86::isCalleePop(CallConv, Is64Bit, isVarArg,
+                       DAG.getTarget().Options.GuaranteedTailCallOpt))
+    NumBytesForCalleeToPop = NumBytes;    // Callee pops everything
+  else if (!Is64Bit && !canGuaranteeTCO(CallConv) &&
+           !Subtarget.getTargetTriple().isOSMSVCRT() &&
+           SR == StackStructReturn)
+    // If this is a call to a struct-return function, the callee
+    // pops the hidden struct pointer, so we have to push it back.
+    // This is common for Darwin/X86, Linux & Mingw32 targets.
+    // For MSVC Win32 targets, the caller pops the hidden struct pointer.
+    NumBytesForCalleeToPop = 4;
+  else
+    NumBytesForCalleeToPop = 0;  // Callee pops nothing.
+
+  if (CLI.DoesNotReturn && !getTargetMachine().Options.TrapUnreachable) {
+    // No need to reset the stack after the call if the call doesn't return. To
+    // make the MI verify, we'll pretend the callee does it for us.
+    NumBytesForCalleeToPop = NumBytes;
+  }
+#endif
+
+  // TODO: How Add to the call fcn implicit-def %rsp, implicit-def %ssp with needing to add callseq_end 
+#if 0
+  // Returns a flag for retval copy to use.
+  if (!IsSibcall) {
+    Chain = DAG.getCALLSEQ_END(Chain,
+                               DAG.getIntPtrConstant(NumBytesToPop, dl, true),
+                               DAG.getIntPtrConstant(NumBytesForCalleeToPop, dl,
+                                                     true),
+                               InFlag, dl);
+    InFlag = Chain.getValue(1);
+  }
+#endif
+
+#if 0
+  return LowerCallResult(Chain, InFlag, CallConv, isVarArg, Ins, dl, DAG,
+		  InVals, RegMask);  
+#endif
+
+  // TODO: How to add implicit-def %eax without needing to create an SDNODE
+  // LowerCallResult : 
+  const TargetRegisterInfo *TRI = Subtarget.getRegisterInfo();
+  // Assign locations to each value returned by this call.
+  SmallVector<CCValAssign, 16> RVLocs;
+  CCState CCInfo2(CallConv, isVarArg, DAG.getMachineFunction(), RVLocs,
+                 *DAG.getContext());
+  CCInfo2.AnalyzeCallResult(Ins, RetCC_X86);
+
+  // Copy all of the result registers out of their specified physreg.
+  for (unsigned I = 0, InsIndex = 0, E = RVLocs.size(); I != E;
+       ++I, ++InsIndex) {
+    CCValAssign &VA = RVLocs[I];
+    EVT CopyVT = VA.getLocVT();
+
+    // In some calling conventions we need to remove the used registers
+    // from the register mask.
+    if (RegMask) {
+      for (MCSubRegIterator SubRegs(VA.getLocReg(), TRI, /*IncludeSelf=*/true);
+           SubRegs.isValid(); ++SubRegs)
+        RegMask[*SubRegs / 32] &= ~(1u << (*SubRegs % 32));
+    }
+
+    // If this is x86-64, and we disabled SSE, we can't return FP values
+    if ((CopyVT == MVT::f32 || CopyVT == MVT::f64 || CopyVT == MVT::f128) &&
+        ((Is64Bit || Ins[InsIndex].Flags.isInReg()) && !Subtarget.hasSSE1())) {
+      errorUnsupported(DAG, dl, "SSE register return with SSE disabled");
+      VA.convertToReg(X86::FP0); // Set reg to FP0, avoid hitting asserts.
+    }
+
+    // If we prefer to use the value in xmm registers, copy it out as f80 and
+    // use a truncate to move it from fp stack reg to xmm reg.
+    bool RoundAfterCopy = false;
+    if ((VA.getLocReg() == X86::FP0 || VA.getLocReg() == X86::FP1) &&
+        isScalarFPTypeInSSEReg(VA.getValVT())) {
+      if (!Subtarget.hasX87())
+        report_fatal_error("X87 register return with X87 disabled");
+      CopyVT = MVT::f80;
+      RoundAfterCopy = (CopyVT != VA.getLocVT());
+    }
+
+    SDValue Val;
+    if (VA.needsCustom()) {
+      assert(VA.getValVT() == MVT::v64i1 &&
+             "Currently the only custom case is when we split v64i1 to 2 regs");
+      Val =
+	getv64i1Argument(VA, RVLocs[++I], Chain, DAG, dl, Subtarget, &InFlag);
+    } else {
+      
+      // TODO: How to remove this, how to tell that eax is defined in call fcn? 
+      Chain = DAG.getCopyFromReg(Chain, dl, VA.getLocReg(), CopyVT, InFlag)
+      .getValue(1);
+      Val = Chain.getValue(0);
+      InFlag = Chain.getValue(2);
+    }
+
+    if (RoundAfterCopy)
+      Val = DAG.getNode(ISD::FP_ROUND, dl, VA.getValVT(), Val,
+                        // This truncation won't change the value.
+                        DAG.getIntPtrConstant(1, dl));
+
+    if (VA.isExtInLoc() && (VA.getValVT().getScalarType() == MVT::i1)) {
+      if (VA.getValVT().isVector() &&
+          ((VA.getLocVT() == MVT::i64) || (VA.getLocVT() == MVT::i32) ||
+           (VA.getLocVT() == MVT::i16) || (VA.getLocVT() == MVT::i8))) {
+        // promoting a mask type (v*i1) into a register of type i64/i32/i16/i8
+        Val = lowerRegToMasks(Val, VA.getValVT(), VA.getLocVT(), dl, DAG);
+      } else
+        Val = DAG.getNode(ISD::TRUNCATE, dl, VA.getValVT(), Val);
+    }
+
+    InVals.push_back(Val);
+  }
+
+  return Chain;
+
+}
+
+SDValue
+X86TargetLowering::LowerMultiRetCallEpilogue(TargetLowering::CallLoweringInfo &CLI,
+                             SmallVectorImpl<SDValue> &InVals) const {
+  SelectionDAG &DAG                     = CLI.DAG;
+  SDLoc &dl                             = CLI.DL;
+  SmallVectorImpl<ISD::OutputArg> &Outs = CLI.Outs;
+  SmallVectorImpl<SDValue> &OutVals     = CLI.OutVals;
+  SmallVectorImpl<ISD::InputArg> &Ins   = CLI.Ins;
+  SDValue Chain                         = CLI.Chain;
+  SDValue Callee                        = CLI.Callee;
+  CallingConv::ID CallConv              = CLI.CallConv;
+  bool &isTailCall                      = CLI.IsTailCall;
+  bool isVarArg                         = CLI.IsVarArg;
+
+  MachineFunction &MF = DAG.getMachineFunction();
+  bool Is64Bit        = Subtarget.is64Bit();
+  bool IsWin64        = Subtarget.isCallingConvWin64(CallConv);
+  StructReturnType SR = callIsStructReturn(Outs, Subtarget.isTargetMCU());
+  bool IsSibcall      = false;
+  X86MachineFunctionInfo *X86Info = MF.getInfo<X86MachineFunctionInfo>();
+  auto Attr = MF.getFunction().getFnAttribute("disable-tail-calls");
+  const auto *CI = dyn_cast_or_null<CallInst>(CLI.CS.getInstruction());
+  const Function *Fn = CI ? CI->getCalledFunction() : nullptr;
+  bool HasNCSR = (CI && CI->hasFnAttr("no_caller_saved_registers")) ||
+                 (Fn && Fn->hasFnAttribute("no_caller_saved_registers")) ||
+                 (Fn && Fn->hasFnAttribute("user_level_interrupt"));
+
+  if (CallConv == CallingConv::X86_INTR)
+    report_fatal_error("X86 interrupts may not be called directly");
+  else if (CallConv == CallingConv::X86_ULI)
+    report_fatal_error("X86 user-level interrupts may not be called directly");
+  if (Attr.getValueAsString() == "true")
+    isTailCall = false;
+
+  if (Subtarget.isPICStyleGOT() &&
+      !MF.getTarget().Options.GuaranteedTailCallOpt) {
+    // If we are using a GOT, disable tail calls to external symbols with
+    // default visibility. Tail calling such a symbol requires using a GOT
+    // relocation, which forces early binding of the symbol. This breaks code
+    // that require lazy function symbol resolution. Using musttail or
+    // GuaranteedTailCallOpt will override this.
+    GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee);
+    if (!G || (!G->getGlobal()->hasLocalLinkage() &&
+               G->getGlobal()->hasDefaultVisibility()))
+      isTailCall = false;
+  }
+
+  bool IsMustTail = CLI.CS && CLI.CS.isMustTailCall();
+  if (IsMustTail) {
+    // Force this to be a tail call.  The verifier rules are enough to ensure
+    // that we can lower this successfully without moving the return address
+    // around.
+    isTailCall = true;
+  } else if (isTailCall) {
+    // Check if it's really possible to do a tail call.
+    isTailCall = IsEligibleForTailCallOptimization(Callee, CallConv,
+                    isVarArg, SR != NotStructReturn,
+                    MF.getFunction().hasStructRetAttr(), CLI.RetTy,
+                    Outs, OutVals, Ins, DAG);
+
+    // Sibcalls are automatically detected tailcalls which do not require
+    // ABI changes.
+    if (!MF.getTarget().Options.GuaranteedTailCallOpt && isTailCall)
+      IsSibcall = true;
+
+    if (isTailCall)
+      ++NumTailCalls;
+  }
+
+  assert(!(isVarArg && canGuaranteeTCO(CallConv)) &&
+         "Var args not supported with calling convention fastcc, ghc or hipe");
+
+  // Analyze operands of the call, assigning locations to each operand.
+  SmallVector<CCValAssign, 16> ArgLocs;
+  CCState CCInfo(CallConv, isVarArg, MF, ArgLocs, *DAG.getContext());
+
+  // Allocate shadow area for Win64.
+  if (IsWin64)
+    CCInfo.AllocateStack(32, 8);
+
+  CCInfo.AnalyzeArguments(Outs, CC_X86);
+
+  // In vectorcall calling convention a second pass is required for the HVA
+  // types.
+  if (CallingConv::X86_VectorCall == CallConv) {
+    CCInfo.AnalyzeArgumentsSecondPass(Outs, CC_X86);
+  }
+
+  // Get a count of how many bytes are to be pushed on the stack.
+  unsigned NumBytes = CCInfo.getAlignedCallFrameSize();
+  if (IsSibcall)
+    // This is a sibcall. The memory operands are available in caller's
+    // own caller's stack.
+    NumBytes = 0;
+  else if (MF.getTarget().Options.GuaranteedTailCallOpt &&
+           canGuaranteeTCO(CallConv))
+    NumBytes = GetAlignedArgumentStackSize(NumBytes, DAG);
+
+  int FPDiff = 0;
+  if (isTailCall && !IsSibcall && !IsMustTail) {
+    // Lower arguments at fp - stackoffset + fpdiff.
+    unsigned NumBytesCallerPushed = X86Info->getBytesToPopOnReturn();
+
+    FPDiff = NumBytesCallerPushed - NumBytes;
+
+    // Set the delta of movement of the returnaddr stackslot.
+    // But only set if delta is greater than previous delta.
+    if (FPDiff < X86Info->getTCReturnAddrDelta())
+      X86Info->setTCReturnAddrDelta(FPDiff);
+  }
+
+  unsigned NumBytesToPush = NumBytes;
+  unsigned NumBytesToPop = NumBytes;
+
+  // If we have an inalloca argument, all stack space has already been allocated
+  // for us and be right at the top of the stack.  We don't support multiple
+  // arguments passed in memory when using inalloca.
+  if (!Outs.empty() && Outs.back().Flags.isInAlloca()) {
+    NumBytesToPush = 0;
+    if (!ArgLocs.back().isMemLoc())
+      report_fatal_error("cannot use inalloca attribute on a register "
+                         "parameter");
+    if (ArgLocs.back().getLocMemOffset() != 0)
+      report_fatal_error("any parameter with the inalloca attribute must be "
+                         "the only memory argument");
+  }
+
+#if 0
+  if (!IsSibcall) {
+    Chain = DAG.getCALLSEQ_START(Chain, NumBytesToPush,
+                                 NumBytes - NumBytesToPush, dl);
+  }
+#endif
+
+  SDValue RetAddrFrIdx;
+#if 0
+  // Load return address for tail calls.
+  if (isTailCall && FPDiff)
+    Chain = EmitTailCallLoadRetAddr(DAG, RetAddrFrIdx, Chain, isTailCall,
+                                    Is64Bit, FPDiff, dl);
+#endif
+
+  SmallVector<std::pair<unsigned, SDValue>, 8> RegsToPass;
+  SmallVector<SDValue, 8> MemOpChains;
+  SDValue StackPtr;
+
+  // The next loop assumes that the locations are in the same order of the
+  // input arguments.
+  assert(isSortedByValueNo(ArgLocs) &&
+         "Argument Location list must be sorted before lowering");
+
+  // Walk the register/memloc assignments, inserting copies/loads.  In the case
+  // of tail call optimization arguments are handle later.
+  const X86RegisterInfo *RegInfo = Subtarget.getRegisterInfo();
+#if 0
+  for (unsigned I = 0, OutIndex = 0, E = ArgLocs.size(); I != E;
+       ++I, ++OutIndex) {
+    assert(OutIndex < Outs.size() && "Invalid Out index");
+    // Skip inalloca arguments, they have already been written.
+    ISD::ArgFlagsTy Flags = Outs[OutIndex].Flags;
+    if (Flags.isInAlloca())
+      continue;
+
+    CCValAssign &VA = ArgLocs[I];
+    EVT RegVT = VA.getLocVT();
+    SDValue Arg = OutVals[OutIndex];
+    bool isByVal = Flags.isByVal();
+
+    // Promote the value if needed.
+    switch (VA.getLocInfo()) {
+    default: llvm_unreachable("Unknown loc info!");
+    case CCValAssign::Full: break;
+    case CCValAssign::SExt:
+      Arg = DAG.getNode(ISD::SIGN_EXTEND, dl, RegVT, Arg);
+      break;
+    case CCValAssign::ZExt:
+      Arg = DAG.getNode(ISD::ZERO_EXTEND, dl, RegVT, Arg);
+      break;
+    case CCValAssign::AExt:
+      if (Arg.getValueType().isVector() &&
+          Arg.getValueType().getVectorElementType() == MVT::i1)
+        Arg = lowerMasksToReg(Arg, RegVT, dl, DAG);
+      else if (RegVT.is128BitVector()) {
+        // Special case: passing MMX values in XMM registers.
+        Arg = DAG.getBitcast(MVT::i64, Arg);
+        Arg = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, MVT::v2i64, Arg);
+        Arg = getMOVL(DAG, dl, MVT::v2i64, DAG.getUNDEF(MVT::v2i64), Arg);
+      } else
+        Arg = DAG.getNode(ISD::ANY_EXTEND, dl, RegVT, Arg);
+      break;
+    case CCValAssign::BCvt:
+      Arg = DAG.getBitcast(RegVT, Arg);
+      break;
+    case CCValAssign::Indirect: {
+      // Store the argument.
+      SDValue SpillSlot = DAG.CreateStackTemporary(VA.getValVT());
+      int FI = cast<FrameIndexSDNode>(SpillSlot)->getIndex();
+      Chain = DAG.getStore(
+          Chain, dl, Arg, SpillSlot,
+          MachinePointerInfo::getFixedStack(DAG.getMachineFunction(), FI));
+      Arg = SpillSlot;
+      break;
+    }
+    }
+
+    if (VA.needsCustom()) {
+      assert(VA.getValVT() == MVT::v64i1 &&
+             "Currently the only custom case is when we split v64i1 to 2 regs");
+      // Split v64i1 value into two registers
+      Passv64i1ArgInRegs(dl, DAG, Chain, Arg, RegsToPass, VA, ArgLocs[++I],
+                         Subtarget);
+    } else if (VA.isRegLoc()) {
+      RegsToPass.push_back(std::make_pair(VA.getLocReg(), Arg));
+      if (isVarArg && IsWin64) {
+        // Win64 ABI requires argument XMM reg to be copied to the corresponding
+        // shadow reg if callee is a varargs function.
+        unsigned ShadowReg = 0;
+        switch (VA.getLocReg()) {
+        case X86::XMM0: ShadowReg = X86::RCX; break;
+        case X86::XMM1: ShadowReg = X86::RDX; break;
+        case X86::XMM2: ShadowReg = X86::R8; break;
+        case X86::XMM3: ShadowReg = X86::R9; break;
+        }
+        if (ShadowReg)
+          RegsToPass.push_back(std::make_pair(ShadowReg, Arg));
+      }
+    } else if (!IsSibcall && (!isTailCall || isByVal)) {
+      assert(VA.isMemLoc());
+      if (!StackPtr.getNode())
+        StackPtr = DAG.getCopyFromReg(Chain, dl, RegInfo->getStackRegister(),
+                                      getPointerTy(DAG.getDataLayout()));
+      MemOpChains.push_back(LowerMemOpCallTo(Chain, StackPtr, Arg,
+                                             dl, DAG, VA, Flags));
+    }
+  }
+
+#endif
+
+#if 1
+
+  if (!MemOpChains.empty())
+    Chain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, MemOpChains);
+
+#endif
+
+  if (Subtarget.isPICStyleGOT()) {
+    // ELF / PIC requires GOT in the EBX register before function calls via PLT
+    // GOT pointer.
+    if (!isTailCall) {
+      RegsToPass.push_back(std::make_pair(
+          unsigned(X86::EBX), DAG.getNode(X86ISD::GlobalBaseReg, SDLoc(),
+                                          getPointerTy(DAG.getDataLayout()))));
+    } else {
+      // If we are tail calling and generating PIC/GOT style code load the
+      // address of the callee into ECX. The value in ecx is used as target of
+      // the tail jump. This is done to circumvent the ebx/callee-saved problem
+      // for tail calls on PIC/GOT architectures. Normally we would just put the
+      // address of GOT into ebx and then call target@PLT. But for tail calls
+      // ebx would be restored (since ebx is callee saved) before jumping to the
+      // target@PLT.
+
+      // Note: The actual moving to ECX is done further down.
+      GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee);
+      if (G && !G->getGlobal()->hasLocalLinkage() &&
+          G->getGlobal()->hasDefaultVisibility())
+        Callee = LowerGlobalAddress(Callee, DAG);
+      else if (isa<ExternalSymbolSDNode>(Callee))
+        Callee = LowerExternalSymbol(Callee, DAG);
+    }
+  }
+
+  if (Is64Bit && isVarArg && !IsWin64 && !IsMustTail) {
+    // From AMD64 ABI document:
+    // For calls that may call functions that use varargs or stdargs
+    // (prototype-less calls or calls to functions containing ellipsis (...) in
+    // the declaration) %al is used as hidden argument to specify the number
+    // of SSE registers used. The contents of %al do not need to match exactly
+    // the number of registers, but must be an ubound on the number of SSE
+    // registers used and is in the range 0 - 8 inclusive.
+
+    // Count the number of XMM registers allocated.
+    static const MCPhysReg XMMArgRegs[] = {
+      X86::XMM0, X86::XMM1, X86::XMM2, X86::XMM3,
+      X86::XMM4, X86::XMM5, X86::XMM6, X86::XMM7
+    };
+    unsigned NumXMMRegs = CCInfo.getFirstUnallocated(XMMArgRegs);
+    assert((Subtarget.hasSSE1() || !NumXMMRegs)
+           && "SSE registers cannot be used when SSE is disabled");
+
+    RegsToPass.push_back(std::make_pair(unsigned(X86::AL),
+                                        DAG.getConstant(NumXMMRegs, dl,
+                                                        MVT::i8)));
+  }
+
+#if 0
+  if (isVarArg && IsMustTail) {
+    const auto &Forwards = X86Info->getForwardedMustTailRegParms();
+    for (const auto &F : Forwards) {
+      SDValue Val = DAG.getCopyFromReg(Chain, dl, F.VReg, F.VT);
+      RegsToPass.push_back(std::make_pair(unsigned(F.PReg), Val));
+    }
+  }
+#endif
+  
+  // Build a sequence of copy-to-reg nodes chained together with token chain
+  // and flag operands which copy the outgoing args into registers.
+  SDValue InFlag;
+#if 0
+  for (unsigned i = 0, e = RegsToPass.size(); i != e; ++i) {
+    Chain = DAG.getCopyToReg(Chain, dl, RegsToPass[i].first,
+                             RegsToPass[i].second, InFlag);
+    InFlag = Chain.getValue(1);
+  }
+#endif
+
+  if (DAG.getTarget().getCodeModel() == CodeModel::Large) {
+    assert(Is64Bit && "Large code model is only legal in 64-bit mode.");
+    // In the 64-bit large code model, we have to make all calls
+    // through a register, since the call instruction's 32-bit
+    // pc-relative offset may not be large enough to hold the whole
+    // address.
+  } else if (Callee->getOpcode() == ISD::GlobalAddress) {
+    // If the callee is a GlobalAddress node (quite common, every direct call
+    // is) turn it into a TargetGlobalAddress node so that legalize doesn't hack
+    // it.
+    GlobalAddressSDNode* G = cast<GlobalAddressSDNode>(Callee);
+
+    // We should use extra load for direct calls to dllimported functions in
+    // non-JIT mode.
+    const GlobalValue *GV = G->getGlobal();
+    if (!GV->hasDLLImportStorageClass()) {
+      unsigned char OpFlags = Subtarget.classifyGlobalFunctionReference(GV);
+
+      Callee = DAG.getTargetGlobalAddress(
+          GV, dl, getPointerTy(DAG.getDataLayout()), G->getOffset(), OpFlags);
+
+      if (OpFlags == X86II::MO_GOTPCREL) {
+        // Add a wrapper.
+        Callee = DAG.getNode(X86ISD::WrapperRIP, dl,
+          getPointerTy(DAG.getDataLayout()), Callee);
+        // Add extra indirection
+        Callee = DAG.getLoad(
+            getPointerTy(DAG.getDataLayout()), dl, DAG.getEntryNode(), Callee,
+            MachinePointerInfo::getGOT(DAG.getMachineFunction()));
+      }
+    }
+  } else if (ExternalSymbolSDNode *S = dyn_cast<ExternalSymbolSDNode>(Callee)) {
+    const Module *Mod = DAG.getMachineFunction().getFunction().getParent();
+    unsigned char OpFlags =
+        Subtarget.classifyGlobalFunctionReference(nullptr, *Mod);
+
+    Callee = DAG.getTargetExternalSymbol(
+        S->getSymbol(), getPointerTy(DAG.getDataLayout()), OpFlags);
+  } else if (Subtarget.isTarget64BitILP32() &&
+             Callee->getValueType(0) == MVT::i32) {
+    // Zero-extend the 32-bit Callee address into a 64-bit according to x32 ABI
+    Callee = DAG.getNode(ISD::ZERO_EXTEND, dl, MVT::i64, Callee);
+  }
+
+  // Returns a chain & a flag for retval copy to use.
+  SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
+  SmallVector<SDValue, 8> Ops;
+
+  Ops.push_back(Chain);
+  Ops.push_back(Callee);
+
+  if (isTailCall)
+    Ops.push_back(DAG.getConstant(FPDiff, dl, MVT::i32));
+
+  // Add argument registers to the end of the list so that they are known live
+  // into the call.
+  for (unsigned i = 0, e = RegsToPass.size(); i != e; ++i)
+    Ops.push_back(DAG.getRegister(RegsToPass[i].first,
+                                  RegsToPass[i].second.getValueType()));
+
+  // Add a register mask operand representing the call-preserved registers.
+  // If HasNCSR is asserted (attribute NoCallerSavedRegisters exists) then we
+  // set X86_INTR calling convention because it has the same CSR mask
+  // (same preserved registers).
+  const uint32_t *Mask = RegInfo->getCallPreservedMask(
+      MF, HasNCSR ? (CallingConv::ID)CallingConv::X86_INTR : CallConv);
+  assert(Mask && "Missing call preserved mask for calling convention");
+
+  // If this is an invoke in a 32-bit function using a funclet-based
+  // personality, assume the function clobbers all registers. If an exception
+  // is thrown, the runtime will not restore CSRs.
+  // FIXME: Model this more precisely so that we can register allocate across
+  // the normal edge and spill and fill across the exceptional edge.
+  if (!Is64Bit && CLI.CS && CLI.CS.isInvoke()) {
+    const Function &CallerFn = MF.getFunction();
+    EHPersonality Pers =
+        CallerFn.hasPersonalityFn()
+            ? classifyEHPersonality(CallerFn.getPersonalityFn())
+            : EHPersonality::Unknown;
+    if (isFuncletEHPersonality(Pers))
+      Mask = RegInfo->getNoPreservedMask();
+  }
+
+
+  // Define a new register mask from the existing mask.
+  uint32_t *RegMask = nullptr;
+
+  // In some calling conventions we need to remove the used physical registers
+  // from the reg mask.
+  if (CallConv == CallingConv::X86_RegCall || HasNCSR) {
+    const TargetRegisterInfo *TRI = Subtarget.getRegisterInfo();
+
+    // Allocate a new Reg Mask and copy Mask.
+    RegMask = MF.allocateRegisterMask(TRI->getNumRegs());
+    unsigned RegMaskSize = (TRI->getNumRegs() + 31) / 32;
+    memcpy(RegMask, Mask, sizeof(uint32_t) * RegMaskSize);
+
+    // Make sure all sub registers of the argument registers are reset
+    // in the RegMask.
+    for (auto const &RegPair : RegsToPass)
+      for (MCSubRegIterator SubRegs(RegPair.first, TRI, /*IncludeSelf=*/true);
+           SubRegs.isValid(); ++SubRegs)
+        RegMask[*SubRegs / 32] &= ~(1u << (*SubRegs % 32));
+
+    // Create the RegMask Operand according to our updated mask.
+    Ops.push_back(DAG.getRegisterMask(RegMask));
+  } else {
+    // Create the RegMask Operand according to the static mask.
+    Ops.push_back(DAG.getRegisterMask(Mask));
+  }
+
+#if 1
+  if (InFlag.getNode())
+    Ops.push_back(InFlag);
+#endif
+
+  // Create the CALLSEQ_END node.
+  unsigned NumBytesForCalleeToPop;
+  if (X86::isCalleePop(CallConv, Is64Bit, isVarArg,
+                       DAG.getTarget().Options.GuaranteedTailCallOpt))
+    NumBytesForCalleeToPop = NumBytes;    // Callee pops everything
+  else if (!Is64Bit && !canGuaranteeTCO(CallConv) &&
+           !Subtarget.getTargetTriple().isOSMSVCRT() &&
+           SR == StackStructReturn)
+    // If this is a call to a struct-return function, the callee
+    // pops the hidden struct pointer, so we have to push it back.
+    // This is common for Darwin/X86, Linux & Mingw32 targets.
+    // For MSVC Win32 targets, the caller pops the hidden struct pointer.
+    NumBytesForCalleeToPop = 4;
+  else
+    NumBytesForCalleeToPop = 0;  // Callee pops nothing.
+
+  if (CLI.DoesNotReturn && !getTargetMachine().Options.TrapUnreachable) {
+    // No need to reset the stack after the call if the call doesn't return. To
+    // make the MI verify, we'll pretend the callee does it for us.
+    NumBytesForCalleeToPop = NumBytes;
+  }
+
+  // Returns a flag for retval copy to use.
+  if (!IsSibcall) {
+    Chain = DAG.getCALLSEQ_END(Chain,
+                               DAG.getIntPtrConstant(NumBytesToPop, dl, true),
+                               DAG.getIntPtrConstant(NumBytesForCalleeToPop, dl,
+                                                     true),
+                               InFlag, dl);
+    InFlag = Chain.getValue(1);
+  }
+
+  // Handle result values, copying them out of physregs into vregs that we
+  // return.
+  return LowerCallResult(Chain, InFlag, CallConv, isVarArg, Ins, dl, DAG,
+                         InVals, RegMask);
+        
 }
 
 //===----------------------------------------------------------------------===//
