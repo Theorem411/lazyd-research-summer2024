@@ -4683,6 +4683,8 @@ void Verifier::visitInstruction(Instruction &I) {
       };
 
       // Check to make sure that the "address of" an intrinsic function is never
+#if 1
+      // TODO: CP convert multiretcall to CBI
       // taken. Ignore cases where the address of the intrinsic function is used
       // as the argument of operand bundle "clang.arc.attachedcall" as those
       // cases are handled in verifyAttachedCallBundle.
@@ -4690,6 +4692,13 @@ void Verifier::visitInstruction(Instruction &I) {
               (CBI && &CBI->getCalledOperandUse() == &I.getOperandUse(i)) ||
               IsAttachedCallOperand(F, CBI, i)),
              "Cannot take the address of an intrinsic!", &I);
+#else
+      // taken.
+      Assert(
+          !F->isIntrinsic() ||
+	     i == (isa<CallInst>(I) ? e - 1 : isa<InvokeInst>(I) ? e - 3 : isa<MultiRetCallInst>(I)? e - 1 : 0),
+          "Cannot take the address of an intrinsic!", &I);
+#endif
       Assert(
           !F->isIntrinsic() || isa<CallInst>(I) ||
               F->getIntrinsicID() == Intrinsic::donothing ||

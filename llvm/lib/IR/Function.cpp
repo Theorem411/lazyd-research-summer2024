@@ -1764,6 +1764,8 @@ bool Function::hasAddressTaken(const User **PutOffender,
     const User *FU = U.getUser();
     if (isa<BlockAddress>(FU))
       continue;
+#if 1
+    //TODO: CP convert multiretcall to CBI
 
     if (IgnoreCallbackUses) {
       AbstractCallSite ACS(&U);
@@ -1798,6 +1800,9 @@ bool Function::hasAddressTaken(const User **PutOffender,
             }))
           continue;
       }
+#else
+    if (!isa<CallInst>(FU) && !isa<InvokeInst>(FU) && !isa<MultiRetCallInst>(FU)) {
+#endif
       if (PutOffender)
         *PutOffender = FU;
       return true;
