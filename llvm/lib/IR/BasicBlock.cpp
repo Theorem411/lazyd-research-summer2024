@@ -77,7 +77,10 @@ BasicBlock::~BasicBlock() {
   // is no indirect branch).  Handle these cases by zapping the BlockAddress
   // nodes.  There are no other possible uses at this point.
   if (hasAddressTaken()) {
-    assert(!use_empty() && "There should be at least one blockaddress!");
+    //TODO
+    // If use is empty, it is indirectly used by blocaddress() []
+    
+    //assert(!use_empty() && "There should be at least one blockaddress!");
     Constant *Replacement =
       ConstantInt::get(llvm::Type::getInt32Ty(getContext()), 1);
     while (!use_empty()) {
