@@ -67,8 +67,9 @@ class GCResultInst;
 class GCStatepointInst;
 class IndirectBrInst;
 class InvokeInst;
-class MultiRetCallInst;
 class LandingPadInst;
+class MultiRetCallInst;
+class RetPadInst;
 class LLVMContext;
 class LoadInst;
 class MachineBasicBlock;
@@ -361,6 +362,14 @@ public:
   void LowerCallTo(const CallBase &CB, SDValue Callee, bool IsTailCall,
                    bool IsMustTailCall, const BasicBlock *EHPadBB = nullptr);
 
+  void LowerMultiRetCallPrologueTo(ImmutableCallSite CS, SDValue Callee, bool IsTailCall,
+                   const BasicBlock *EHPadBB = nullptr);
+
+  void LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDValue Callee, bool IsTailCall,
+                   const BasicBlock *EHPadBB = nullptr);
+
+
+
   // Lower range metadata from 0 to N to assert zext to an integer of nearest
   // floor power of two.
   SDValue lowerRangeToAssertZExt(SelectionDAG &DAG, const Instruction &I,
@@ -373,6 +382,14 @@ public:
 
   std::pair<SDValue, SDValue>
   lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
+                 const BasicBlock *EHPadBB = nullptr);
+
+  std::pair<SDValue, SDValue>
+  lowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &CLI,
+                 const BasicBlock *EHPadBB = nullptr);
+
+  std::pair<SDValue, SDValue>
+  lowerMultiRetCallEpilogue(TargetLowering::CallLoweringInfo &CLI,
                  const BasicBlock *EHPadBB = nullptr);
 
   /// When an MBB was split during scheduling, update the
@@ -538,6 +555,7 @@ private:
   void visitExtractValue(const User &I);
   void visitInsertValue(const User &I);
   void visitLandingPad(const LandingPadInst &LP);
+  void visitRetPad(const RetPadInst &I);
 
   void visitGetElementPtr(const User &I);
   void visitSelect(const User &I);

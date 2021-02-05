@@ -3041,52 +3041,27 @@ void SelectionDAGBuilder::visitMultiRetCall(const MultiRetCallInst &I) {
   const Value *Callee(I.getCalledValue());
   const Function *Fn = dyn_cast<Function>(Callee);
   if (isa<InlineAsm>(Callee)) {
-    assert(0 && "Stop here first\n");
-#if 0
-    visitInlineAsm(&I);
-#endif
+    assert(0 && "MultiRetCall does not lower InlineAsm\n");
   } else if (Fn && Fn->isIntrinsic()) {
-    assert(0 && "Stop here first\n");
-#if 0
-    outs() << "Name of the fcn that causes issue: " <<Fn->getName() <<"\n"; 
 
     switch (Fn->getIntrinsicID()) {
     default:
       llvm_unreachable("Cannot invoke this intrinsic");
     case Intrinsic::donothing:
+      // Can be used for a potential jump without having to call a function
       // Ignore invokes to @llvm.donothing: jump directly to the next BB.
-      break;
-    case Intrinsic::experimental_patchpoint_void:
-    case Intrinsic::experimental_patchpoint_i64:
-      visitPatchpoint(&I, nullptr);
-      break;
-    case Intrinsic::experimental_gc_statepoint:
-      LowerStatepoint(ImmutableStatepoint(&I), nullptr);
-      break;
+      break;    
     }
-#endif
+
   } else if (I.countOperandBundlesOfType(LLVMContext::OB_deopt)) {
-    assert(0 && "Stop here first\n");
-#if 0
-    outs() << "Name of the fcn that causes issue: " <<Fn->getName() <<"\n"; 
-    // Currently we do not lower any intrinsic calls with deopt operand bundles.
-    // Eventually we will support lowering the @llvm.experimental.deoptimize
-    // intrinsic, and right now there are no plans to support other intrinsics
-    // with deopt state.
-    LowerCallSiteWithDeoptBundle(&I, getValue(Callee), nullptr);
-#endif
+    assert(0 && "MultiRetCall does not lower OB_deopt\n");
   } else {
     // Need one for multi return call 
-    LowerCallTo(&I, getValue(Callee), false, nullptr);
+    LowerMultiRetCallPrologueTo(&I, getValue(Callee), false, nullptr);
   }
 
-  // If the value of the invoke is used outside of its defining block, make it
-  // available as a virtual register.
-  // We already took care of the exported value for the statepoint instruction
-  // during call to the LowerStatepoint.
-  if (!isStatepoint(I)) {
-    CopyToExportRegsIfNeeded(&I);
-  }
+  // Prevent from MachineVerifier issue
+  //Return->setIsMultiRetCallIndirectTarget();
 
   // Update successor info.
   addSuccessorWithProb(MultiRetCallMBB, Return, BranchProbability::getOne());
@@ -3094,24 +3069,75 @@ void SelectionDAGBuilder::visitMultiRetCall(const MultiRetCallInst &I) {
     MachineBasicBlock *Target = FuncInfo.MBBMap[I.getIndirectDest(i)];
     addSuccessorWithProb(MultiRetCallMBB, Target, BranchProbability::getZero());
     
-    // FIXME : setIsInlineAsmBrIndirectTarget: Implement this
-    /*
-      void setIsInlineAsmBrIndirectTarget(bool V = true) {
-	IsInlineAsmBrIndirectTarget = V;
-      }
-    */
-    //Target->setIsInlineAsmBrIndirectTarget();
+    Target->setIsMultiRetCallIndirectTarget();
   }
   MultiRetCallMBB->normalizeSuccProbs();
- 
+
   // Drop into normal successor.
   DAG.setRoot(DAG.getNode(ISD::BR, getCurSDLoc(),
                           MVT::Other, getControlRoot(),
                           DAG.getBasicBlock(Return)));
 }
 
-/////////////
+void SelectionDAGBuilder::visitRetPad(const RetPadInst &I) {  
+  const BasicBlock* bb = I.getParent();
+  const BasicBlock* predBB = bb->getSinglePredecessor();
+  assert(predBB && "Must have a single predecessor");
+    
+  const MultiRetCallInst * MRCI = dyn_cast<MultiRetCallInst>(predBB->getTerminator());
+  assert(MRCI && "RetPad predecessor must terminate with MultiRetCallInst");
 
+  const auto MRCI2 = I.getMultiRetCallOperand();
+  assert(MRCI == MRCI2 && "The parent's terminator should be the same with the operand of the retpad");
+
+  const Value *Callee(MRCI->getCalledValue());
+  
+  // Create DAG for the remaining of the function call
+  LowerMultiRetCallEpilogueTo(MRCI, getValue(Callee), false, nullptr);
+
+  // Perform the copy of rax/eax to other register. Used for epilogue
+  // If the value of the invoke is used outside of its defining block, make it
+  // available as a virtual register.
+  // We already took care of the exported value for the statepoint instruction
+  // during call to the LowerStatepoint.
+  if (!isStatepoint(I)) {
+    // TODO: MultiRetcall will store the return result of the function call in the function call successors. 
+    // This will break the Machine SSA since in each successor, the same register will be updated.
+    // Temporary hack? Keeping MachineSSA sane    
+    
+    outs() << "---------------------------------Start visitRetPad-------------------------\n";
+
+    //if(true)
+    //CopyToExportRegsIfNeeded(MRCI);
+  
+#if 1
+    if (!MRCI->getType()->isEmptyTy()) {
+      DenseMap<const Value *, unsigned>::iterator VMI = FuncInfo.ValueMap.find(MRCI);
+      if (VMI != FuncInfo.ValueMap.end()) {
+	assert(!MRCI->use_empty() && "Unused value assigned virtual registers!");
+	outs() << "Value of reg: " << VMI->second << "\n" ;
+	//FuncInfo.Reg2Replace.insert(VMI->second);
+      }
+      
+      // Add live register (for function that returns value is stored in rax, this make rax live in this basic block) 
+      SDValue Op = getNonRegisterValue(MRCI);  
+      FuncInfo.MBB->addLiveIn(cast<RegisterSDNode>(Op.getOperand(1))->getReg());
+
+      SDValue Res = DAG.getCopyFromReg(DAG.getEntryNode(), getCurSDLoc(), cast<RegisterSDNode>(Op.getOperand(1))->getReg(), MVT::i32);
+      setValue(&I, Res);    
+    }
+#endif
+
+    outs() << "---------------------------------End visitRetPad-------------------------\n";
+  }
+
+  // Copy the register that stores the result to a new register represented by retpad
+  // Need to set value the instruction tothre result of lowering the epilogue of MultiRetCall
+  
+
+}
+
+/////////////
 void SelectionDAGBuilder::visitResume(const ResumeInst &RI) {
   llvm_unreachable("SelectionDAGBuilder shouldn't visit resume instructions!");
 }
@@ -7804,6 +7830,26 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
   return Result;
 }
 
+std::pair<SDValue, SDValue>
+SelectionDAGBuilder::lowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &CLI,
+                                    const BasicBlock *EHPadBB) {
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  std::pair<SDValue, SDValue> Result = TLI.LowerMultiRetCallPrologueTo(CLI);
+  
+  DAG.setRoot(Result.second);
+  return Result;
+}
+
+std::pair<SDValue, SDValue>
+SelectionDAGBuilder::lowerMultiRetCallEpilogue(TargetLowering::CallLoweringInfo &CLI,
+                                    const BasicBlock *EHPadBB) {
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  std::pair<SDValue, SDValue> Result = TLI.LowerMultiRetCallEpilogueTo(CLI);
+
+  DAG.setRoot(Result.second);
+  return Result;
+}
+
 void SelectionDAGBuilder::LowerCallTo(const CallBase &CB, SDValue Callee,
                                       bool isTailCall,
                                       bool isMustTailCall,
@@ -7895,6 +7941,7 @@ void SelectionDAGBuilder::LowerCallTo(const CallBase &CB, SDValue Callee,
       .setConvergent(CB.isConvergent())
       .setIsPreallocated(
           CB.countOperandBundlesOfType(LLVMContext::OB_preallocated) != 0);
+
   std::pair<SDValue, SDValue> Result = lowerInvokable(CLI, EHPadBB);
 
   if (Result.first.getNode()) {
@@ -7911,6 +7958,178 @@ void SelectionDAGBuilder::LowerCallTo(const CallBase &CB, SDValue Callee,
     Register VReg =
         SwiftError.getOrCreateVRegDefAt(&CB, FuncInfo.MBB, SwiftErrorVal);
     SDValue CopyNode = CLI.DAG.getCopyToReg(Result.second, CLI.DL, VReg, Src);
+    DAG.setRoot(CopyNode);
+  }
+}
+
+void SelectionDAGBuilder::LowerMultiRetCallPrologueTo(ImmutableCallSite CS, SDValue Callee,
+                                      bool isTailCall,
+                                      const BasicBlock *EHPadBB) {
+  auto &DL = DAG.getDataLayout();
+  FunctionType *FTy = CS.getFunctionType();
+  Type *RetTy = CS.getType();
+
+  TargetLowering::ArgListTy Args;
+  Args.reserve(CS.arg_size());
+
+  const Value *SwiftErrorVal = nullptr;
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+
+  // We can't tail call inside a function with a swifterror argument. Lowering
+  // does not support this yet. It would have to move into the swifterror
+  // register before the call.
+  auto *Caller = CS.getInstruction()->getParent()->getParent();
+  if (TLI.supportSwiftError() &&
+      Caller->getAttributes().hasAttrSomewhere(Attribute::SwiftError))
+    isTailCall = false;
+
+  for (ImmutableCallSite::arg_iterator i = CS.arg_begin(), e = CS.arg_end();
+       i != e; ++i) {
+    TargetLowering::ArgListEntry Entry;
+    const Value *V = *i;
+
+    // Skip empty types
+    if (V->getType()->isEmptyTy())
+      continue;
+
+    SDValue ArgNode = getValue(V);
+    Entry.Node = ArgNode; Entry.Ty = V->getType();
+
+    Entry.setAttributes(&CS, i - CS.arg_begin());
+
+    // Use swifterror virtual register as input to the call.
+    if (Entry.IsSwiftError && TLI.supportSwiftError()) {
+      SwiftErrorVal = V;
+      // We find the virtual register for the actual swifterror argument.
+      // Instead of using the Value, we use the virtual register instead.
+      Entry.Node = DAG.getRegister(FuncInfo
+                                       .getOrCreateSwiftErrorVRegUseAt(
+                                           CS.getInstruction(), FuncInfo.MBB, V)
+                                       .first,
+                                   EVT(TLI.getPointerTy(DL)));
+    }
+
+    Args.push_back(Entry);
+
+    // If we have an explicit sret argument that is an Instruction, (i.e., it
+    // might point to function-local memory), we can't meaningfully tail-call.
+    if (Entry.IsSRet && isa<Instruction>(V))
+      isTailCall = false;
+  }
+
+  // Check if target-independent constraints permit a tail call here.
+  // Target-dependent constraints are checked within TLI->LowerCallTo.
+  if (isTailCall && !isInTailCallPosition(CS, DAG.getTarget()))
+    isTailCall = false;
+
+  // Disable tail calls if there is an swifterror argument. Targets have not
+  // been updated to support tail calls.
+  if (TLI.supportSwiftError() && SwiftErrorVal)
+    isTailCall = false;
+
+  TargetLowering::CallLoweringInfo CLI(DAG);
+  CLI.setDebugLoc(getCurSDLoc())
+      .setChain(getRoot())
+      .setCallee(RetTy, FTy, Callee, std::move(Args), CS)
+      .setTailCall(isTailCall)
+      .setConvergent(CS.isConvergent());
+ 
+  lowerMultiRetCallPrologue(CLI, EHPadBB);
+}
+
+void SelectionDAGBuilder::LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDValue Callee,
+                                      bool isTailCall,
+                                      const BasicBlock *EHPadBB) {
+  auto &DL = DAG.getDataLayout();
+  FunctionType *FTy = CS.getFunctionType();
+  Type *RetTy = CS.getType();
+
+  TargetLowering::ArgListTy Args;
+  Args.reserve(CS.arg_size());
+
+  const Value *SwiftErrorVal = nullptr;
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+
+  // We can't tail call inside a function with a swifterror argument. Lowering
+  // does not support this yet. It would have to move into the swifterror
+  // register before the call.
+  auto *Caller = CS.getInstruction()->getParent()->getParent();
+  if (TLI.supportSwiftError() &&
+      Caller->getAttributes().hasAttrSomewhere(Attribute::SwiftError))
+    isTailCall = false;
+
+  for (ImmutableCallSite::arg_iterator i = CS.arg_begin(), e = CS.arg_end();
+       i != e; ++i) {
+    TargetLowering::ArgListEntry Entry;
+    const Value *V = *i;
+
+    // Skip empty types
+    if (V->getType()->isEmptyTy())
+      continue;
+
+    SDValue ArgNode = getValue(V);
+    Entry.Node = ArgNode; Entry.Ty = V->getType();
+
+    Entry.setAttributes(&CS, i - CS.arg_begin());
+
+    // Use swifterror virtual register as input to the call.
+    if (Entry.IsSwiftError && TLI.supportSwiftError()) {
+      SwiftErrorVal = V;
+      // We find the virtual register for the actual swifterror argument.
+      // Instead of using the Value, we use the virtual register instead.
+      Entry.Node = DAG.getRegister(FuncInfo
+                                       .getOrCreateSwiftErrorVRegUseAt(
+                                           CS.getInstruction(), FuncInfo.MBB, V)
+                                       .first,
+                                   EVT(TLI.getPointerTy(DL)));
+    }
+
+    Args.push_back(Entry);
+
+    // If we have an explicit sret argument that is an Instruction, (i.e., it
+    // might point to function-local memory), we can't meaningfully tail-call.
+    if (Entry.IsSRet && isa<Instruction>(V))
+      isTailCall = false;
+  }
+
+  // Check if target-independent constraints permit a tail call here.
+  // Target-dependent constraints are checked within TLI->LowerCallTo.
+  if (isTailCall && !isInTailCallPosition(CS, DAG.getTarget()))
+    isTailCall = false;
+
+  // Disable tail calls if there is an swifterror argument. Targets have not
+  // been updated to support tail calls.
+  if (TLI.supportSwiftError() && SwiftErrorVal)
+    isTailCall = false;
+
+  TargetLowering::CallLoweringInfo CLI(DAG);
+  CLI.setDebugLoc(getCurSDLoc())
+      .setChain(getRoot())
+      .setCallee(RetTy, FTy, Callee, std::move(Args), CS)
+      .setTailCall(isTailCall)
+      .setConvergent(CS.isConvergent());
+ 
+  std::pair<SDValue, SDValue> Result = lowerMultiRetCallEpilogue(CLI, EHPadBB);
+
+  if (Result.first.getNode()) {
+    const Instruction *Inst = CS.getInstruction();
+    Result.first = lowerRangeToAssertZExt(DAG, *Inst, Result.first);
+    setValue(Inst, Result.first);
+  }
+
+  // The last element of CLI.InVals has the SDValue for swifterror return.
+  // Here we copy it to a virtual register and update SwiftErrorMap for
+  // book-keeping.
+  if (SwiftErrorVal && TLI.supportSwiftError()) {
+    // Get the last element of InVals.
+    SDValue Src = CLI.InVals.back();
+    unsigned VReg; bool CreatedVReg;
+    std::tie(VReg, CreatedVReg) =
+        FuncInfo.getOrCreateSwiftErrorVRegDefAt(CS.getInstruction());
+    SDValue CopyNode = CLI.DAG.getCopyToReg(Result.second, CLI.DL, VReg, Src);
+    // We update the virtual register for the actual swifterror argument.
+    if (CreatedVReg)
+      FuncInfo.setCurrentSwiftErrorVReg(FuncInfo.MBB, SwiftErrorVal, VReg);
     DAG.setRoot(CopyNode);
   }
 }
@@ -10141,6 +10360,594 @@ TargetLowering::LowerCallTo(TargetLowering::CallLoweringInfo &CLI) const {
                                 CLI.DAG.getVTList(RetTys), ReturnValues);
   return std::make_pair(Res, CLI.Chain);
 }
+
+std::pair<SDValue, SDValue>
+TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CLI) const {
+  // Handle the incoming return values from the call.
+  CLI.Ins.clear();
+  Type *OrigRetTy = CLI.RetTy;
+  SmallVector<EVT, 4> RetTys;
+  SmallVector<uint64_t, 4> Offsets;
+  auto &DL = CLI.DAG.getDataLayout();
+  ComputeValueVTs(*this, DL, CLI.RetTy, RetTys, &Offsets);
+
+  if (CLI.IsPostTypeLegalization) {
+    // If we are lowering a libcall after legalization, split the return type.
+    SmallVector<EVT, 4> OldRetTys = std::move(RetTys);
+    SmallVector<uint64_t, 4> OldOffsets = std::move(Offsets);
+    for (size_t i = 0, e = OldRetTys.size(); i != e; ++i) {
+      EVT RetVT = OldRetTys[i];
+      uint64_t Offset = OldOffsets[i];
+      MVT RegisterVT = getRegisterType(CLI.RetTy->getContext(), RetVT);
+      unsigned NumRegs = getNumRegisters(CLI.RetTy->getContext(), RetVT);
+      unsigned RegisterVTByteSZ = RegisterVT.getSizeInBits() / 8;
+      RetTys.append(NumRegs, RegisterVT);
+      for (unsigned j = 0; j != NumRegs; ++j)
+        Offsets.push_back(Offset + j * RegisterVTByteSZ);
+    }
+  }
+
+  SmallVector<ISD::OutputArg, 4> Outs;
+  GetReturnInfo(CLI.RetTy, getReturnAttrs(CLI), Outs, *this, DL);
+
+  bool CanLowerReturn =
+      this->CanLowerReturn(CLI.CallConv, CLI.DAG.getMachineFunction(),
+                           CLI.IsVarArg, Outs, CLI.RetTy->getContext());
+
+  SDValue DemoteStackSlot;
+  int DemoteStackIdx = -100;
+  if (!CanLowerReturn) {
+    // FIXME: equivalent assert?
+    // assert(!CS.hasInAllocaArgument() &&
+    //        "sret demotion is incompatible with inalloca");
+    uint64_t TySize = DL.getTypeAllocSize(CLI.RetTy);
+    unsigned Align = DL.getPrefTypeAlignment(CLI.RetTy);
+    MachineFunction &MF = CLI.DAG.getMachineFunction();
+    DemoteStackIdx = MF.getFrameInfo().CreateStackObject(TySize, Align, false);
+    Type *StackSlotPtrType = PointerType::getUnqual(CLI.RetTy);
+
+    DemoteStackSlot = CLI.DAG.getFrameIndex(DemoteStackIdx, getFrameIndexTy(DL));
+    ArgListEntry Entry;
+    Entry.Node = DemoteStackSlot;
+    Entry.Ty = StackSlotPtrType;
+    Entry.IsSExt = false;
+    Entry.IsZExt = false;
+    Entry.IsInReg = false;
+    Entry.IsSRet = true;
+    Entry.IsNest = false;
+    Entry.IsByVal = false;
+    Entry.IsReturned = false;
+    Entry.IsSwiftSelf = false;
+    Entry.IsSwiftError = false;
+    Entry.Alignment = Align;
+    CLI.getArgs().insert(CLI.getArgs().begin(), Entry);
+    CLI.NumFixedArgs += 1;
+    CLI.RetTy = Type::getVoidTy(CLI.RetTy->getContext());
+
+    // sret demotion isn't compatible with tail-calls, since the sret argument
+    // points into the callers stack frame.
+    CLI.IsTailCall = false;
+  } else {
+    for (unsigned I = 0, E = RetTys.size(); I != E; ++I) {
+      EVT VT = RetTys[I];
+      MVT RegisterVT =
+          getRegisterTypeForCallingConv(CLI.RetTy->getContext(), VT);
+      unsigned NumRegs =
+          getNumRegistersForCallingConv(CLI.RetTy->getContext(), VT);
+      for (unsigned i = 0; i != NumRegs; ++i) {
+        ISD::InputArg MyFlags;
+        MyFlags.VT = RegisterVT;
+        MyFlags.ArgVT = VT;
+        MyFlags.Used = CLI.IsReturnValueUsed;
+        if (CLI.RetSExt)
+          MyFlags.Flags.setSExt();
+        if (CLI.RetZExt)
+          MyFlags.Flags.setZExt();
+        if (CLI.IsInReg)
+          MyFlags.Flags.setInReg();
+        CLI.Ins.push_back(MyFlags);
+      }
+    }
+  }
+
+  // We push in swifterror return as the last element of CLI.Ins.
+  ArgListTy &Args = CLI.getArgs();
+  if (supportSwiftError()) {
+    for (unsigned i = 0, e = Args.size(); i != e; ++i) {
+      if (Args[i].IsSwiftError) {
+        ISD::InputArg MyFlags;
+        MyFlags.VT = getPointerTy(DL);
+        MyFlags.ArgVT = EVT(getPointerTy(DL));
+        MyFlags.Flags.setSwiftError();
+        CLI.Ins.push_back(MyFlags);
+      }
+    }
+  }
+
+
+  // Handle all of the outgoing arguments.
+  CLI.Outs.clear();
+  CLI.OutVals.clear();
+  for (unsigned i = 0, e = Args.size(); i != e; ++i) {
+    SmallVector<EVT, 4> ValueVTs;
+    ComputeValueVTs(*this, DL, Args[i].Ty, ValueVTs);
+    // FIXME: Split arguments if CLI.IsPostTypeLegalization
+    Type *FinalType = Args[i].Ty;
+    if (Args[i].IsByVal)
+      FinalType = cast<PointerType>(Args[i].Ty)->getElementType();
+    bool NeedsRegBlock = functionArgumentNeedsConsecutiveRegisters(
+        FinalType, CLI.CallConv, CLI.IsVarArg);
+    for (unsigned Value = 0, NumValues = ValueVTs.size(); Value != NumValues;
+         ++Value) {
+      EVT VT = ValueVTs[Value];
+      Type *ArgTy = VT.getTypeForEVT(CLI.RetTy->getContext());
+      SDValue Op = SDValue(Args[i].Node.getNode(),
+                           Args[i].Node.getResNo() + Value);
+      ISD::ArgFlagsTy Flags;
+
+      // Certain targets (such as MIPS), may have a different ABI alignment
+      // for a type depending on the context. Give the target a chance to
+      // specify the alignment it wants.
+      unsigned OriginalAlignment = getABIAlignmentForCallingConv(ArgTy, DL);
+
+      if (Args[i].IsZExt)
+        Flags.setZExt();
+      if (Args[i].IsSExt)
+        Flags.setSExt();
+      if (Args[i].IsInReg) {
+        // If we are using vectorcall calling convention, a structure that is
+        // passed InReg - is surely an HVA
+        if (CLI.CallConv == CallingConv::X86_VectorCall &&
+            isa<StructType>(FinalType)) {
+          // The first value of a structure is marked
+          if (0 == Value)
+            Flags.setHvaStart();
+          Flags.setHva();
+        }
+        // Set InReg Flag
+        Flags.setInReg();
+      }
+      if (Args[i].IsSRet)
+        Flags.setSRet();
+      if (Args[i].IsSwiftSelf)
+        Flags.setSwiftSelf();
+      if (Args[i].IsSwiftError)
+        Flags.setSwiftError();
+      if (Args[i].IsByVal)
+        Flags.setByVal();
+      if (Args[i].IsInAlloca) {
+        Flags.setInAlloca();
+        // Set the byval flag for CCAssignFn callbacks that don't know about
+        // inalloca.  This way we can know how many bytes we should've allocated
+        // and how many bytes a callee cleanup function will pop.  If we port
+        // inalloca to more targets, we'll have to add custom inalloca handling
+        // in the various CC lowering callbacks.
+        Flags.setByVal();
+      }
+      if (Args[i].IsByVal || Args[i].IsInAlloca) {
+        PointerType *Ty = cast<PointerType>(Args[i].Ty);
+        Type *ElementTy = Ty->getElementType();
+        Flags.setByValSize(DL.getTypeAllocSize(ElementTy));
+        // For ByVal, alignment should come from FE.  BE will guess if this
+        // info is not there but there are cases it cannot get right.
+        unsigned FrameAlign;
+        if (Args[i].Alignment)
+          FrameAlign = Args[i].Alignment;
+        else
+          FrameAlign = getByValTypeAlignment(ElementTy, DL);
+        Flags.setByValAlign(FrameAlign);
+      }
+      if (Args[i].IsNest)
+        Flags.setNest();
+      if (NeedsRegBlock)
+        Flags.setInConsecutiveRegs();
+      Flags.setOrigAlign(OriginalAlignment);
+
+      MVT PartVT = getRegisterTypeForCallingConv(CLI.RetTy->getContext(), VT);
+      unsigned NumParts =
+          getNumRegistersForCallingConv(CLI.RetTy->getContext(), VT);
+      SmallVector<SDValue, 4> Parts(NumParts);
+      ISD::NodeType ExtendKind = ISD::ANY_EXTEND;
+
+      if (Args[i].IsSExt)
+        ExtendKind = ISD::SIGN_EXTEND;
+      else if (Args[i].IsZExt)
+        ExtendKind = ISD::ZERO_EXTEND;
+
+      // Conservatively only handle 'returned' on non-vectors for now
+      if (Args[i].IsReturned && !Op.getValueType().isVector()) {
+        assert(CLI.RetTy == Args[i].Ty && RetTys.size() == NumValues &&
+               "unexpected use of 'returned'");
+        // Before passing 'returned' to the target lowering code, ensure that
+        // either the register MVT and the actual EVT are the same size or that
+        // the return value and argument are extended in the same way; in these
+        // cases it's safe to pass the argument register value unchanged as the
+        // return register value (although it's at the target's option whether
+        // to do so)
+        // TODO: allow code generation to take advantage of partially preserved
+        // registers rather than clobbering the entire register when the
+        // parameter extension method is not compatible with the return
+        // extension method
+        if ((NumParts * PartVT.getSizeInBits() == VT.getSizeInBits()) ||
+            (ExtendKind != ISD::ANY_EXTEND && CLI.RetSExt == Args[i].IsSExt &&
+             CLI.RetZExt == Args[i].IsZExt))
+          Flags.setReturned();
+      }
+
+      getCopyToParts(CLI.DAG, CLI.DL, Op, &Parts[0], NumParts, PartVT,
+                     CLI.CS.getInstruction(), ExtendKind, true);
+
+      for (unsigned j = 0; j != NumParts; ++j) {
+        // if it isn't first piece, alignment must be 1
+        ISD::OutputArg MyFlags(Flags, Parts[j].getValueType(), VT,
+                               i < CLI.NumFixedArgs,
+                               i, j*Parts[j].getValueType().getStoreSize());
+        if (NumParts > 1 && j == 0)
+          MyFlags.Flags.setSplit();
+        else if (j != 0) {
+          MyFlags.Flags.setOrigAlign(1);
+          if (j == NumParts - 1)
+            MyFlags.Flags.setSplitEnd();
+        }
+
+        CLI.Outs.push_back(MyFlags);
+        CLI.OutVals.push_back(Parts[j]);
+      }
+
+      if (NeedsRegBlock && Value == NumValues - 1)
+        CLI.Outs[CLI.Outs.size() - 1].Flags.setInConsecutiveRegsLast();
+    }
+  }
+
+  SmallVector<SDValue, 4> InVals;
+  CLI.Chain = LowerMultiRetCallPrologue(CLI, InVals);
+
+  // Update CLI.InVals to use outside of this function.
+  CLI.InVals = InVals;
+
+  return std::make_pair(SDValue(), CLI.Chain);
+}
+
+std::pair<SDValue, SDValue>
+TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CLI) const {
+  // May not be an efficient implementation since it is repeaing what LowerMultiRetCallPrologueTo
+
+  // Handle the incoming return values from the call.
+  CLI.Ins.clear();
+  Type *OrigRetTy = CLI.RetTy;
+  SmallVector<EVT, 4> RetTys;
+  SmallVector<uint64_t, 4> Offsets;
+  auto &DL = CLI.DAG.getDataLayout();
+  ComputeValueVTs(*this, DL, CLI.RetTy, RetTys, &Offsets);
+
+  if (CLI.IsPostTypeLegalization) {
+    // If we are lowering a libcall after legalization, split the return type.
+    SmallVector<EVT, 4> OldRetTys = std::move(RetTys);
+    SmallVector<uint64_t, 4> OldOffsets = std::move(Offsets);
+    for (size_t i = 0, e = OldRetTys.size(); i != e; ++i) {
+      EVT RetVT = OldRetTys[i];
+      uint64_t Offset = OldOffsets[i];
+      MVT RegisterVT = getRegisterType(CLI.RetTy->getContext(), RetVT);
+      unsigned NumRegs = getNumRegisters(CLI.RetTy->getContext(), RetVT);
+      unsigned RegisterVTByteSZ = RegisterVT.getSizeInBits() / 8;
+      RetTys.append(NumRegs, RegisterVT);
+      for (unsigned j = 0; j != NumRegs; ++j)
+        Offsets.push_back(Offset + j * RegisterVTByteSZ);
+    }
+  }
+
+  SmallVector<ISD::OutputArg, 4> Outs;
+  GetReturnInfo(CLI.RetTy, getReturnAttrs(CLI), Outs, *this, DL);
+
+  bool CanLowerReturn =
+      this->CanLowerReturn(CLI.CallConv, CLI.DAG.getMachineFunction(),
+                           CLI.IsVarArg, Outs, CLI.RetTy->getContext());
+
+  SDValue DemoteStackSlot;
+  int DemoteStackIdx = -100;
+  if (!CanLowerReturn) {
+    // FIXME: equivalent assert?
+    // assert(!CS.hasInAllocaArgument() &&
+    //        "sret demotion is incompatible with inalloca");
+    uint64_t TySize = DL.getTypeAllocSize(CLI.RetTy);
+    unsigned Align = DL.getPrefTypeAlignment(CLI.RetTy);
+    MachineFunction &MF = CLI.DAG.getMachineFunction();
+    DemoteStackIdx = MF.getFrameInfo().CreateStackObject(TySize, Align, false);
+    Type *StackSlotPtrType = PointerType::getUnqual(CLI.RetTy);
+
+    DemoteStackSlot = CLI.DAG.getFrameIndex(DemoteStackIdx, getFrameIndexTy(DL));
+    ArgListEntry Entry;
+    Entry.Node = DemoteStackSlot;
+    Entry.Ty = StackSlotPtrType;
+    Entry.IsSExt = false;
+    Entry.IsZExt = false;
+    Entry.IsInReg = false;
+    Entry.IsSRet = true;
+    Entry.IsNest = false;
+    Entry.IsByVal = false;
+    Entry.IsReturned = false;
+    Entry.IsSwiftSelf = false;
+    Entry.IsSwiftError = false;
+    Entry.Alignment = Align;
+    CLI.getArgs().insert(CLI.getArgs().begin(), Entry);
+    CLI.NumFixedArgs += 1;
+    CLI.RetTy = Type::getVoidTy(CLI.RetTy->getContext());
+
+    // sret demotion isn't compatible with tail-calls, since the sret argument
+    // points into the callers stack frame.
+    CLI.IsTailCall = false;
+  } else {
+    for (unsigned I = 0, E = RetTys.size(); I != E; ++I) {
+      EVT VT = RetTys[I];
+      MVT RegisterVT =
+          getRegisterTypeForCallingConv(CLI.RetTy->getContext(), VT);
+      unsigned NumRegs =
+          getNumRegistersForCallingConv(CLI.RetTy->getContext(), VT);
+      for (unsigned i = 0; i != NumRegs; ++i) {
+        ISD::InputArg MyFlags;
+        MyFlags.VT = RegisterVT;
+        MyFlags.ArgVT = VT;
+        MyFlags.Used = CLI.IsReturnValueUsed;
+        if (CLI.RetSExt)
+          MyFlags.Flags.setSExt();
+        if (CLI.RetZExt)
+          MyFlags.Flags.setZExt();
+        if (CLI.IsInReg)
+          MyFlags.Flags.setInReg();
+        CLI.Ins.push_back(MyFlags);
+      }
+    }
+  }
+
+  // We push in swifterror return as the last element of CLI.Ins.
+  ArgListTy &Args = CLI.getArgs();
+  if (supportSwiftError()) {
+    for (unsigned i = 0, e = Args.size(); i != e; ++i) {
+      if (Args[i].IsSwiftError) {
+        ISD::InputArg MyFlags;
+        MyFlags.VT = getPointerTy(DL);
+        MyFlags.ArgVT = EVT(getPointerTy(DL));
+        MyFlags.Flags.setSwiftError();
+        CLI.Ins.push_back(MyFlags);
+      }
+    }
+  }
+
+
+  // Handle all of the outgoing arguments.
+  CLI.Outs.clear();
+  CLI.OutVals.clear();
+  for (unsigned i = 0, e = Args.size(); i != e; ++i) {
+    SmallVector<EVT, 4> ValueVTs;
+    ComputeValueVTs(*this, DL, Args[i].Ty, ValueVTs);
+    // FIXME: Split arguments if CLI.IsPostTypeLegalization
+    Type *FinalType = Args[i].Ty;
+    if (Args[i].IsByVal)
+      FinalType = cast<PointerType>(Args[i].Ty)->getElementType();
+    bool NeedsRegBlock = functionArgumentNeedsConsecutiveRegisters(
+        FinalType, CLI.CallConv, CLI.IsVarArg);
+    for (unsigned Value = 0, NumValues = ValueVTs.size(); Value != NumValues;
+         ++Value) {
+      EVT VT = ValueVTs[Value];
+      Type *ArgTy = VT.getTypeForEVT(CLI.RetTy->getContext());
+      SDValue Op = SDValue(Args[i].Node.getNode(),
+                           Args[i].Node.getResNo() + Value);
+      ISD::ArgFlagsTy Flags;
+
+      // Certain targets (such as MIPS), may have a different ABI alignment
+      // for a type depending on the context. Give the target a chance to
+      // specify the alignment it wants.
+      unsigned OriginalAlignment = getABIAlignmentForCallingConv(ArgTy, DL);
+
+      if (Args[i].IsZExt)
+        Flags.setZExt();
+      if (Args[i].IsSExt)
+        Flags.setSExt();
+      if (Args[i].IsInReg) {
+        // If we are using vectorcall calling convention, a structure that is
+        // passed InReg - is surely an HVA
+        if (CLI.CallConv == CallingConv::X86_VectorCall &&
+            isa<StructType>(FinalType)) {
+          // The first value of a structure is marked
+          if (0 == Value)
+            Flags.setHvaStart();
+          Flags.setHva();
+        }
+        // Set InReg Flag
+        Flags.setInReg();
+      }
+      if (Args[i].IsSRet)
+        Flags.setSRet();
+      if (Args[i].IsSwiftSelf)
+        Flags.setSwiftSelf();
+      if (Args[i].IsSwiftError)
+        Flags.setSwiftError();
+      if (Args[i].IsByVal)
+        Flags.setByVal();
+      if (Args[i].IsInAlloca) {
+        Flags.setInAlloca();
+        // Set the byval flag for CCAssignFn callbacks that don't know about
+        // inalloca.  This way we can know how many bytes we should've allocated
+        // and how many bytes a callee cleanup function will pop.  If we port
+        // inalloca to more targets, we'll have to add custom inalloca handling
+        // in the various CC lowering callbacks.
+        Flags.setByVal();
+      }
+      if (Args[i].IsByVal || Args[i].IsInAlloca) {
+        PointerType *Ty = cast<PointerType>(Args[i].Ty);
+        Type *ElementTy = Ty->getElementType();
+        Flags.setByValSize(DL.getTypeAllocSize(ElementTy));
+        // For ByVal, alignment should come from FE.  BE will guess if this
+        // info is not there but there are cases it cannot get right.
+        unsigned FrameAlign;
+        if (Args[i].Alignment)
+          FrameAlign = Args[i].Alignment;
+        else
+          FrameAlign = getByValTypeAlignment(ElementTy, DL);
+        Flags.setByValAlign(FrameAlign);
+      }
+      if (Args[i].IsNest)
+        Flags.setNest();
+      if (NeedsRegBlock)
+        Flags.setInConsecutiveRegs();
+      Flags.setOrigAlign(OriginalAlignment);
+
+      MVT PartVT = getRegisterTypeForCallingConv(CLI.RetTy->getContext(), VT);
+      unsigned NumParts =
+          getNumRegistersForCallingConv(CLI.RetTy->getContext(), VT);
+      SmallVector<SDValue, 4> Parts(NumParts);
+      ISD::NodeType ExtendKind = ISD::ANY_EXTEND;
+
+      if (Args[i].IsSExt)
+        ExtendKind = ISD::SIGN_EXTEND;
+      else if (Args[i].IsZExt)
+        ExtendKind = ISD::ZERO_EXTEND;
+
+      // Conservatively only handle 'returned' on non-vectors for now
+      if (Args[i].IsReturned && !Op.getValueType().isVector()) {
+        assert(CLI.RetTy == Args[i].Ty && RetTys.size() == NumValues &&
+               "unexpected use of 'returned'");
+        // Before passing 'returned' to the target lowering code, ensure that
+        // either the register MVT and the actual EVT are the same size or that
+        // the return value and argument are extended in the same way; in these
+        // cases it's safe to pass the argument register value unchanged as the
+        // return register value (although it's at the target's option whether
+        // to do so)
+        // TODO: allow code generation to take advantage of partially preserved
+        // registers rather than clobbering the entire register when the
+        // parameter extension method is not compatible with the return
+        // extension method
+        if ((NumParts * PartVT.getSizeInBits() == VT.getSizeInBits()) ||
+            (ExtendKind != ISD::ANY_EXTEND && CLI.RetSExt == Args[i].IsSExt &&
+             CLI.RetZExt == Args[i].IsZExt))
+          Flags.setReturned();
+      }
+
+      getCopyToParts(CLI.DAG, CLI.DL, Op, &Parts[0], NumParts, PartVT,
+                     CLI.CS.getInstruction(), ExtendKind, true);
+
+      for (unsigned j = 0; j != NumParts; ++j) {
+        // if it isn't first piece, alignment must be 1
+        ISD::OutputArg MyFlags(Flags, Parts[j].getValueType(), VT,
+                               i < CLI.NumFixedArgs,
+                               i, j*Parts[j].getValueType().getStoreSize());
+        if (NumParts > 1 && j == 0)
+          MyFlags.Flags.setSplit();
+        else if (j != 0) {
+          MyFlags.Flags.setOrigAlign(1);
+          if (j == NumParts - 1)
+            MyFlags.Flags.setSplitEnd();
+        }
+
+        CLI.Outs.push_back(MyFlags);
+        CLI.OutVals.push_back(Parts[j]);
+      }
+
+      if (NeedsRegBlock && Value == NumValues - 1)
+        CLI.Outs[CLI.Outs.size() - 1].Flags.setInConsecutiveRegsLast();
+    }
+  }
+
+  SmallVector<SDValue, 4> InVals;
+  CLI.Chain = LowerMultiRetCallEpilogue(CLI, InVals);
+
+  // Update CLI.InVals to use outside of this function.
+  CLI.InVals = InVals;
+
+  // Verify that the target's LowerCall behaved as expected.
+  assert(CLI.Chain.getNode() && CLI.Chain.getValueType() == MVT::Other &&
+         "LowerCall didn't return a valid chain!");
+  assert((!CLI.IsTailCall || InVals.empty()) &&
+         "LowerCall emitted a return value for a tail call!");
+  assert((CLI.IsTailCall || InVals.size() == CLI.Ins.size()) &&
+         "LowerCall didn't emit the correct number of values!");
+
+  // For a tail call, the return value is merely live-out and there aren't
+  // any nodes in the DAG representing it. Return a special value to
+  // indicate that a tail call has been emitted and no more Instructions
+  // should be processed in the current block.
+  if (CLI.IsTailCall) {
+    CLI.DAG.setRoot(CLI.Chain);
+    return std::make_pair(SDValue(), SDValue());
+  }
+
+#ifndef NDEBUG
+  for (unsigned i = 0, e = CLI.Ins.size(); i != e; ++i) {
+    assert(InVals[i].getNode() && "LowerCall emitted a null value!");
+    assert(EVT(CLI.Ins[i].VT) == InVals[i].getValueType() &&
+           "LowerCall emitted a value with the wrong type!");
+  }
+#endif
+
+  SmallVector<SDValue, 4> ReturnValues;
+  if (!CanLowerReturn) {
+    // The instruction result is the result of loading from the
+    // hidden sret parameter.
+    SmallVector<EVT, 1> PVTs;
+    Type *PtrRetTy = OrigRetTy->getPointerTo(DL.getAllocaAddrSpace());
+
+    ComputeValueVTs(*this, DL, PtrRetTy, PVTs);
+    assert(PVTs.size() == 1 && "Pointers should fit in one register");
+    EVT PtrVT = PVTs[0];
+
+    unsigned NumValues = RetTys.size();
+    ReturnValues.resize(NumValues);
+    SmallVector<SDValue, 4> Chains(NumValues);
+
+    // An aggregate return value cannot wrap around the address space, so
+    // offsets to its parts don't wrap either.
+    SDNodeFlags Flags;
+    Flags.setNoUnsignedWrap(true);
+
+    for (unsigned i = 0; i < NumValues; ++i) {
+      SDValue Add = CLI.DAG.getNode(ISD::ADD, CLI.DL, PtrVT, DemoteStackSlot,
+                                    CLI.DAG.getConstant(Offsets[i], CLI.DL,
+                                                        PtrVT), Flags);
+      SDValue L = CLI.DAG.getLoad(
+          RetTys[i], CLI.DL, CLI.Chain, Add,
+          MachinePointerInfo::getFixedStack(CLI.DAG.getMachineFunction(),
+                                            DemoteStackIdx, Offsets[i]),
+          /* Alignment = */ 1);
+      ReturnValues[i] = L;
+      Chains[i] = L.getValue(1);
+    }
+
+    CLI.Chain = CLI.DAG.getNode(ISD::TokenFactor, CLI.DL, MVT::Other, Chains);
+  } else {
+    // Collect the legal value parts into potentially illegal values
+    // that correspond to the original function's return values.
+    Optional<ISD::NodeType> AssertOp;
+    if (CLI.RetSExt)
+      AssertOp = ISD::AssertSext;
+    else if (CLI.RetZExt)
+      AssertOp = ISD::AssertZext;
+    unsigned CurReg = 0;
+    for (unsigned I = 0, E = RetTys.size(); I != E; ++I) {
+      EVT VT = RetTys[I];
+      MVT RegisterVT =
+          getRegisterTypeForCallingConv(CLI.RetTy->getContext(), VT);
+      unsigned NumRegs =
+          getNumRegistersForCallingConv(CLI.RetTy->getContext(), VT);
+
+      ReturnValues.push_back(getCopyFromParts(CLI.DAG, CLI.DL, &InVals[CurReg],
+                                              NumRegs, RegisterVT, VT, nullptr,
+                                              AssertOp, true));
+      CurReg += NumRegs;
+    }
+
+    // For a function returning void, there is no return value. We can't create
+    // such a node, so we just return a null return value in that case. In
+    // that case, nothing will actually look at the value.
+    if (ReturnValues.empty())
+      return std::make_pair(SDValue(), CLI.Chain);
+  }
+
+  SDValue Res = CLI.DAG.getNode(ISD::MERGE_VALUES, CLI.DL,
+                                CLI.DAG.getVTList(RetTys), ReturnValues);
+
+  return std::make_pair(Res, CLI.Chain);
+}
+
 
 /// Places new result values for the node in Results (their number
 /// and types must exactly match those of the original return values of

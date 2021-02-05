@@ -4074,6 +4074,14 @@ public:
   /// outgoing token chain. It calls LowerCall to do the actual lowering.
   std::pair<SDValue, SDValue> LowerCallTo(CallLoweringInfo &CLI) const;
 
+  /// Still in experiment
+  /// This function lowers an abstract call to a function into an actual call without its epilogue
+  std::pair<SDValue, SDValue> LowerMultiRetCallPrologueTo(CallLoweringInfo &CLI) const;
+  
+  /// Still in experiment
+  /// This function lowers an abstract call to a function into an actual call but only its epilogue
+  std::pair<SDValue, SDValue> LowerMultiRetCallEpilogueTo(CallLoweringInfo &CLI) const;
+
   /// This hook must be implemented to lower calls into the specified
   /// DAG. The outgoing arguments to the call are described by the Outs array,
   /// and the values to be returned by the call are described by the Ins
@@ -4084,6 +4092,19 @@ public:
               SmallVectorImpl<SDValue> &/*InVals*/) const {
     llvm_unreachable("Not Implemented");
   }
+
+  virtual SDValue
+    LowerMultiRetCallPrologue(CallLoweringInfo &/*CLI*/,
+              SmallVectorImpl<SDValue> &/*InVals*/) const {
+    llvm_unreachable("Not Implemented");
+  }
+
+  virtual SDValue
+    LowerMultiRetCallEpilogue(CallLoweringInfo &/*CLI*/,
+              SmallVectorImpl<SDValue> &/*InVals*/) const {
+    llvm_unreachable("Not Implemented");
+  }
+
 
   /// Target-specific cleanup for formal ByVal parameters.
   virtual void HandleByVal(CCState *, unsigned &, Align) const {}
