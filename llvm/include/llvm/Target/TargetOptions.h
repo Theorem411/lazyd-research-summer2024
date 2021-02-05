@@ -143,7 +143,13 @@ namespace llvm {
           ValueTrackingVariableLocations(false), ForceDwarfFrameSection(false),
           XRayOmitFunctionIndex(false), DebugStrictDwarf(false),
           Hotpatch(false),
-          FPDenormalMode(DenormalMode::IEEE, DenormalMode::IEEE) {}
+          FPDenormalMode(DenormalMode::IEEE, DenormalMode::IEEE),
+          ULIStackletOverflowCheckSize(0) {}
+          
+    /// PrintMachineCode - This flag is enabled when the -print-machineinstrs
+    /// option is specified on the command line, and should enable debugging
+    /// output from the code generator.
+    unsigned PrintMachineCode : 1;
 
     /// DisableFramePointerElim - This returns true if frame pointer elimination
     /// optimization should be disabled for the given machine function.
