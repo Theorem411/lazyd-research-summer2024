@@ -174,6 +174,8 @@ public:
     case Instruction::Call:
     case Instruction::Invoke:
       return visitCallBase(cast<CallBase>(I), ChangedValues, SS);
+    case Instruction::MultiRetCall:
+      return visitCallSite(cast<MultiRetCallInst>(&I), ChangedValues, SS);
     case Instruction::Load:
       return visitLoad(*cast<LoadInst>(&I), ChangedValues, SS);
     case Instruction::Ret:
