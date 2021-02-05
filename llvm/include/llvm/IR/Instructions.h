@@ -5626,21 +5626,23 @@ DEFINE_TRANSPARENT_OPERAND_ACCESSORS(SyncInst, Value)
 /// This IR indicates that the basic block is part of a multiretcall IR
 ///
 
-class RetPadInst : public Instruction {
+class RetPadInst : public UnaryInstruction {
+  void AssertOK();
+
 protected:
   // Note: Instruction needs to be a friend here to call cloneImpl.
   friend class Instruction;
-
   RetPadInst *cloneImpl() const;
 
 public:
-  explicit RetPadInst(LLVMContext &C, Instruction *InsertBefore = nullptr);
-  explicit RetPadInst(LLVMContext &C, BasicBlock *InsertAtEnd);
-
-  // allocate space for exactly zero operands
-  void *operator new(size_t s) {
-    return User::operator new(s, 0);
-  }
+  RetPadInst(Value *MultiRetCallVal, const Twine &NameStr, Instruction *InsertBefore = nullptr);
+  RetPadInst(Type *Ty, Value *MultiRetCallVal, const Twine &NameStr, Instruction *InsertBefore = nullptr);
+  RetPadInst(Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd);
+  RetPadInst(Type *Ty, Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd);
+    
+  Value* getMultiRetCallOperand() { return getOperand(0); }
+  const Value* getMultiRetCallOperand() const { return getOperand(0); }
+  Type* getMultiRetCallOperandType() const { return getMultiRetCallOperand()->getType(); }
 
   // Methods for support type inquiry through isa, cast, and dyn_cast:
   static bool classof(const Instruction *I) {
@@ -5650,8 +5652,7 @@ public:
     return isa<Instruction>(V) && classof(cast<Instruction>(V));
   }
 
-private:
-  
+private:  
 };
 
 //===----------------------------------------------------------------------===//

@@ -3267,6 +3267,7 @@ bool LLParser::parseValID(ValID &ID, PerFunctionState *PFS, Type *ExpectedTy) {
 
   case lltok::kw_blockaddress: {
     // ValID ::= 'blockaddress' '(' @foo ',' %bar ')'
+    // ::= 'blockaddress' '(' @foo ',' %bar ')' 'successor' 'i32 n'
     Lex.Lex();
 
     ValID Fn, Label;
@@ -3356,9 +3357,32 @@ bool LLParser::parseValID(ValID &ID, PerFunctionState *PFS, Type *ExpectedTy) {
         return error(Label.Loc, "referenced value is not a basic block");
     }
 
+#if 1
+    // Get additional information     
+    if(!ParseToken(lltok::kw_successor, "")) {
+      Value *V;
+      if (ParseTypeAndValue(V, PFS))
+	return true;
+	
+      if(!isa<ConstantInt>(V))
+	return true;
+
+      unsigned successor = (unsigned) ( ((ConstantInt*)V)->getSExtValue() );
+
+      ID.ConstantVal = BlockAddress::get(BB, successor);
+      ID.Kind = ValID::t_Constant;
+      return false;
+      
+    } else {
+      ID.ConstantVal = BlockAddress::get(F, BB);
+      ID.Kind = ValID::t_Constant;
+      return false;
+    } 
+#else    
     ID.ConstantVal = BlockAddress::get(F, BB);
     ID.Kind = ValID::t_Constant;
     return false;
+#endif
   }
 
   case lltok::kw_dso_local_equivalent: {
@@ -6132,7 +6156,7 @@ int LLParser::parseInstruction(Instruction *&Inst, BasicBlock *BB,
   case lltok::kw_landingpad:
     return parseLandingPad(Inst, PFS);
   case lltok::kw_retpad:         
-    Inst = new RetPadInst(Context); return false;
+    return ParseRetPad(Inst, PFS);
   case lltok::kw_freeze:
     return parseFreeze(Inst, PFS);
   // Call.
@@ -7276,6 +7300,7 @@ bool LLParser::parseLandingPad(Instruction *&Inst, PerFunctionState &PFS) {
   return false;
 }
 
+
 /// parseFreeze
 ///   ::= 'freeze' Type Value
 bool LLParser::parseFreeze(Instruction *&Inst, PerFunctionState &PFS) {
@@ -7286,6 +7311,26 @@ bool LLParser::parseFreeze(Instruction *&Inst, PerFunctionState &PFS) {
 
   Inst = new FreezeInst(Op);
   return false;
+}
+
+/// ParseRetPad
+///   ::= 'retpad' TypeAndValue 
+int LLParser::ParseRetPad(Instruction *&Inst, PerFunctionState &PFS) {
+  Value *Val; LocTy Loc;
+  Type *Ty;
+
+  LocTy ExplicitTypeLoc = Lex.getLoc();
+  if (ParseType(Ty) ||
+      ParseToken(lltok::comma, "expected comma after retpad's type") ||
+      ParseTypeAndValue(Val, Loc, PFS) )
+    return true;
+
+  if (Ty != Val->getType())
+    return Error(ExplicitTypeLoc,
+                 "explicit pointee type doesn't match operand's pointee type");
+
+  Inst = new RetPadInst(Ty, Val, "");
+  return InstNormal;
 }
 
 /// parseCall

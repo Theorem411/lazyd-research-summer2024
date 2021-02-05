@@ -4940,10 +4940,19 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
       I = new UnreachableInst(Context);
       InstructionList.push_back(I);
       break;
-    case bitc::FUNC_CODE_INST_RETPAD: // RETPAD
-      I = new RetPadInst(Context);
+    case bitc::FUNC_CODE_INST_RETPAD: { // RETPAD: [opty, op]      
+      unsigned OpNum = 0;
+      Value *Op;
+      if (getValueTypePair(Record, OpNum, NextValueNo, Op) ||
+	  (2 != Record.size()) )	  
+	// TODO : Check if the record is correct
+        return error("Invalid record");
+
+      Type *Ty = Op->getType();      
+      I = new RetPadInst(Ty, Op, "");
       InstructionList.push_back(I);
       break;
+    }
     case bitc::FUNC_CODE_INST_DETACH: { // DETACH: [bb#, bb#, [bb#,] val]
       if (Record.size() != 3 && Record.size() != 4)
         return error("Invalid record");

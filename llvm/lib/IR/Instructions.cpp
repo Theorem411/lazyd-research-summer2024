@@ -60,7 +60,7 @@ User::op_iterator CallSite::getCallee() const {
 
   return isCall()
     ? cast<CallInst>(II)->op_end() - 1 // Skip Callee
-    : isMultiRetCall() ? cast<InvokeInst>(II)->op_end() - 1
+    : isMultiRetCall() ? cast<MultiRetCallInst>(II)->op_end() - 1
                        : cast<InvokeInst>(II)->op_end() - 3; // Skip BB, BB, Callee
 }
 #endif
@@ -1441,15 +1441,28 @@ UnreachableInst::UnreachableInst(LLVMContext &Context, BasicBlock *InsertAtEnd)
 //                      RetPadInst Implementation
 //===----------------------------------------------------------------------===//
 
-RetPadInst::RetPadInst(LLVMContext &Context, 
-                                 Instruction *InsertBefore)
-  : Instruction(Type::getVoidTy(Context), Instruction::RetPad,
-                   nullptr, 0, InsertBefore) {
+void RetPadInst::AssertOK() {
+  // TODO: Create an invariant here
 }
-RetPadInst::RetPadInst(LLVMContext &Context, BasicBlock *InsertAtEnd)
-  : Instruction(Type::getVoidTy(Context), Instruction::RetPad,
-                   nullptr, 0, InsertAtEnd) {
+
+RetPadInst::RetPadInst(Value *MultiRetCallVal, const Twine &NameStr, Instruction *InsertBefore)
+  : RetPadInst(MultiRetCallVal->getType(), MultiRetCallVal, NameStr, InsertBefore) {}
+
+RetPadInst::RetPadInst(Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd)
+  : RetPadInst(MultiRetCallVal->getType(), MultiRetCallVal, NameStr, InsertAtEnd) {} 
+
+RetPadInst::RetPadInst(Type *Ty, Value *MultiRetCallVal, const Twine &NameStr, Instruction *InsertBefore) 
+  : UnaryInstruction(Ty, Instruction::RetPad, MultiRetCallVal, InsertBefore) {
+  AssertOK();
+  setName(NameStr);
+}
+RetPadInst::RetPadInst(Type *Ty, Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd) 
+  : UnaryInstruction(Ty, Instruction::RetPad, MultiRetCallVal, InsertAtEnd) {
+  AssertOK();
+  setName(NameStr);  
 } 
+
+
 
 //===----------------------------------------------------------------------===//
 //                        DetachInst Implementation
@@ -5207,8 +5220,7 @@ FreezeInst *FreezeInst::cloneImpl() const {
 }
 
 RetPadInst *RetPadInst::cloneImpl() const {
-  LLVMContext &Context = getContext();
-  return new RetPadInst(Context);
+  return new RetPadInst(getOperand(0), Twine());
 }
 
 DetachInst *DetachInst::cloneImpl() const {

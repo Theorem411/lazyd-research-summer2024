@@ -3044,7 +3044,9 @@ void ModuleBitcodeWriter::writeInstruction(const Instruction &I,
     break;
   case Instruction::RetPad:
     Code = bitc::FUNC_CODE_INST_RETPAD;
-    AbbrevToUse = FUNCTION_INST_RETPAD_ABBREV;
+    if (!pushValueAndType(I.getOperand(0), InstID, Vals)) 
+      AbbrevToUse = FUNCTION_INST_RETPAD_ABBREV;    
+    Vals.push_back(VE.getTypeID(I.getType()));
     break;
   case Instruction::Detach:
     {
@@ -3664,6 +3666,9 @@ void ModuleBitcodeWriter::writeBlockInfo() {
   { // INST_RETPAD abbrev for FUNCTION_BLOCK.
     auto Abbv = std::make_shared<BitCodeAbbrev>();
     Abbv->Add(BitCodeAbbrevOp(bitc::FUNC_CODE_INST_RETPAD));
+    Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // Ptr
+    Abbv->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed,    // dest ty
+                              VE.computeBitsRequiredForTypeIndicies()));
     if (Stream.EmitBlockInfoAbbrev(bitc::FUNCTION_BLOCK_ID, Abbv) !=
         FUNCTION_INST_RETPAD_ABBREV)
       llvm_unreachable("Unexpected abbrev ordering!");

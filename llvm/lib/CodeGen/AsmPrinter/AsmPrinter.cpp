@@ -2615,7 +2615,7 @@ const MCExpr *AsmPrinter::lowerConstant(const Constant *CV) {
   if (const GlobalValue *GV = dyn_cast<GlobalValue>(CV))
     return MCSymbolRefExpr::create(getSymbol(GV), Ctx);
 
-  if (const BlockAddress *BA = dyn_cast<BlockAddress>(CV))
+  if (const BlockAddress *BA = dyn_cast<BlockAddress>(CV)) 
     return MCSymbolRefExpr::create(GetBlockAddressSymbol(BA), Ctx);
 
   if (const auto *Equiv = dyn_cast<DSOLocalEquivalent>(CV))
@@ -3251,7 +3251,15 @@ MCSymbol *AsmPrinter::createTempSymbol(const Twine &Name) const {
 }
 
 MCSymbol *AsmPrinter::GetBlockAddressSymbol(const BlockAddress *BA) const {
+  
+#if 1
+  BasicBlock* bb = BA->getBasicBlockorSuccessor();
+  // getBasicBlock may return successor of basic block?
+  return MMI->getAddrLabelSymbol(bb);
+#else  
   return MMI->getAddrLabelSymbol(BA->getBasicBlock());
+#endif
+
 }
 
 MCSymbol *AsmPrinter::GetBlockAddressSymbol(const BasicBlock *BB) const {

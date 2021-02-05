@@ -526,7 +526,7 @@ enum FunctionCodes {
   FUNC_CODE_INST_UNREACHABLE = 15, // UNREACHABLE
 
   FUNC_CODE_INST_PHI = 16, // PHI:        [ty, val0,bb0, ...]
-  FUNC_CODE_INST_RETPAD = 17, // RETPAD
+  FUNC_CODE_INST_RETPAD = 17, // RETPAD: [opty, op]
   // 18 is unused.
   FUNC_CODE_INST_ALLOCA = 19, // ALLOCA:     [instty, opty, op, align]
   FUNC_CODE_INST_LOAD = 20,   // LOAD:       [opty, op, align, vol]
