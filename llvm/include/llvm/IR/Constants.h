@@ -29,6 +29,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/OperandTraits.h"
 #include "llvm/IR/User.h"
 #include "llvm/IR/Value.h"
@@ -849,8 +850,19 @@ class BlockAddress final : public Constant {
   friend class Constant;
 
   BlockAddress(Function *F, BasicBlock *BB);
+  BlockAddress(Function *F, BasicBlock *BB, unsigned successor);
+  
+  // Define blockaddress operand
+#define BLOCKADDRESS_OP 2
 
+#if 0
   void *operator new(size_t S) { return User::operator new(S, 2); }
+#else
+  // 0. Function
+  // 1. Basic block
+  // 2. SubClassData: SSSS SSSS SSSS SSS E. E=0 -> return block address E=1 -> return successor of block address. Value form from S = which successor 
+  void *operator new(size_t s) { return User::operator new(s, BLOCKADDRESS_OP); }
+#endif
 
   void destroyConstantImpl();
   Value *handleOperandChangeImpl(Value *From, Value *To);
@@ -865,6 +877,10 @@ public:
   /// block must be embedded into a function.
   static BlockAddress *get(BasicBlock *BB);
 
+  /// Return a Blockaddress corresponding to the terminator instruction. The basic 
+  /// block must be embedded into a function.
+  static BlockAddress *get(BasicBlock *BB, unsigned successor);
+
   /// Lookup an existing \c BlockAddress constant for the given BasicBlock.
   ///
   /// \returns 0 if \c !BB->hasAddressTaken(), otherwise the \c BlockAddress.
@@ -876,16 +892,57 @@ public:
   Function *getFunction() const { return (Function *)Op<0>().get(); }
   BasicBlock *getBasicBlock() const { return (BasicBlock *)Op<1>().get(); }
 
+#if 1
+  unsigned isReturnSuccessor() const { return getSubclassDataFromValue() & 0x1; }
+  unsigned getIndexOfSucc() const { 
+    return (getSubclassDataFromValue() >> 0x1) & 0xFFFF;
+  }
+
+  void setIndexOfSucc(unsigned succ) {
+    setValueSubclassData((succ << 0x1) | 0x1);
+  }
+  void setReturnSuccessor(unsigned v) {
+    assert((v == 0x0 || v == 0x1) && "Value of v can be either zero or one");
+    setValueSubclassData( (v&0x1) | getSubclassDataFromValue());
+  }
+
+  BasicBlock *getBasicBlockorSuccessor() const { 
+    BasicBlock* bb = getBasicBlock();
+    if(isReturnSuccessor()) {
+      unsigned successor = getIndexOfSucc();
+      TerminatorInst* ti = bb->getTerminator();         
+      auto bbSucc = (ti)->getSuccessor(successor);
+      // TODO: Check if this required
+      //bbSucc->AdjustBlockAddressRefCount(1);      
+      return bbSucc;      
+    } else  {
+      return bb;
+    }  
+  }
+#endif
+
   /// Methods for support type inquiry through isa, cast, and dyn_cast:
   static bool classof(const Value *V) {
     return V->getValueID() == BlockAddressVal;
   }
+
+private:
+  // Shadow Value::setValueSubclassData with a private forwarding method so that
+  // subclasses cannot accidentally use it.
+  void setValueSubclassData(unsigned short D) {
+    Value::setValueSubclassData(D);
+  }
+
 };
 
 template <>
+#if 0
 struct OperandTraits<BlockAddress>
     : public FixedNumOperandTraits<BlockAddress, 2> {};
-
+#else
+struct OperandTraits<BlockAddress> 
+    : public FixedNumOperandTraits<BlockAddress, BLOCKADDRESS_OP> {};
+#endif
 DEFINE_TRANSPARENT_OPERAND_ACCESSORS(BlockAddress, Value)
 
 /// Wrapper for a function that represents a value that

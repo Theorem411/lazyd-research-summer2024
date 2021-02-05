@@ -1823,13 +1823,52 @@ BlockAddress *BlockAddress::get(Function *F, BasicBlock *BB) {
   return BA;
 }
 
+BlockAddress *BlockAddress::BlockAddress::get(BasicBlock *BB, unsigned successor) {
+  Function *F = BB->getParent();
+  BlockAddress *&BA = 
+    F->getContext().pImpl->BlockAddresses[std::make_pair(F, BB)];
+  if(!BA) {
+    BA = new BlockAddress(F, BB, successor);
+  }
+
+#if 1
+  else {    
+    BA->setIndexOfSucc(successor);
+    auto ti = BB->getTerminator();
+    ti->getSuccessor(successor)->AdjustBlockAddressRefCount(1);
+  }
+#endif
+
+  return BA;
+}
+
 BlockAddress::BlockAddress(Function *F, BasicBlock *BB)
-    : Constant(Type::getInt8PtrTy(F->getContext(), F->getAddressSpace()),
-               Value::BlockAddressVal, &Op<0>(), 2) {
+    : Constant(Type::getInt8PtrTy(F->getContext()), F->getAddressSpace()),
+               Value::BlockAddressVal, &Op<0>(), BLOCKADDRESS_OP) {
+
   setOperand(0, F);
   setOperand(1, BB);
+#if 1
+  this->setReturnSuccessor(0);
+#endif  
   BB->AdjustBlockAddressRefCount(1);
 }
+
+BlockAddress::BlockAddress(Function *F, BasicBlock *BB, unsigned successor)
+: Constant(Type::getInt8PtrTy(F->getContext()), Value::BlockAddressVal,
+           &Op<0>(), BLOCKADDRESS_OP) {
+  setOperand(0, F);
+  setOperand(1, BB);
+#if 1
+  this->setReturnSuccessor(1);
+  this->setIndexOfSucc(successor);
+#endif
+  BB->AdjustBlockAddressRefCount(1);
+  
+  auto ti = BB->getTerminator();
+  ti->getSuccessor(successor)->AdjustBlockAddressRefCount(1);
+}
+
 
 BlockAddress *BlockAddress::lookup(const BasicBlock *BB) {
   if (!BB->hasAddressTaken())
@@ -1848,6 +1887,17 @@ void BlockAddress::destroyConstantImpl() {
   getFunction()->getType()->getContext().pImpl
     ->BlockAddresses.erase(std::make_pair(getFunction(), getBasicBlock()));
   getBasicBlock()->AdjustBlockAddressRefCount(-1);
+
+#if 1
+  unsigned successor = getIndexOfSucc();
+  BasicBlock* bb = getBasicBlock();
+  TerminatorInst* ti = bb->getTerminator();
+  
+  if(successor) {
+    //auto bbSucc = (ti)->getSuccessor(successor);
+    //bbSucc->AdjustBlockAddressRefCount(-1);      
+  }
+#endif
 }
 
 Value *BlockAddress::handleOperandChangeImpl(Value *From, Value *To) {
@@ -1855,6 +1905,9 @@ Value *BlockAddress::handleOperandChangeImpl(Value *From, Value *To) {
   // case, we have to remove the map entry.
   Function *NewF = getFunction();
   BasicBlock *NewBB = getBasicBlock();
+#if 1
+  unsigned newIndex = getIndexOfSucc();
+#endif  
 
   if (From == NewF)
     NewF = cast<Function>(To->stripPointerCasts());
@@ -1879,6 +1932,11 @@ Value *BlockAddress::handleOperandChangeImpl(Value *From, Value *To) {
   NewBA = this;
   setOperand(0, NewF);
   setOperand(1, NewBB);
+#if 1
+  this->setReturnSuccessor(isReturnSuccessor());
+  this->setIndexOfSucc(newIndex);
+#endif  
+
   getBasicBlock()->AdjustBlockAddressRefCount(1);
 
   // If we just want to keep the existing value, then return null.

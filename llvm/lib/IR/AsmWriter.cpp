@@ -1440,6 +1440,16 @@ static void WriteConstantInternal(raw_ostream &Out, const Constant *CV,
     Out << ", ";
     WriteAsOperandInternal(Out, BA->getBasicBlock(), WriterCtx);
     Out << ")";
+
+    if(BA->isReturnSuccessor()) {
+      Out << " successor ";
+      unsigned succIndex = BA->getIndexOfSucc();      
+      Out << ' ';
+      TypePrinter.print(Type::getInt32Ty(BA->getBasicBlock()->getContext()), Out);
+      Out << ' ';
+      WriteAsOperandInternal(Out, ConstantInt::get(Type::getInt32Ty(BA->getBasicBlock()->getContext()), succIndex), &TypePrinter, Machine,  Context);
+    }
+
     return;
   }
 
@@ -4059,6 +4069,11 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
     writeOperand(I.getOperand(1), true);
     for (unsigned i : IVI->indices())
       Out << ", " << i;
+  } else if (const RetPadInst *RPI = dyn_cast<RetPadInst>(&I) ) {
+    Out << ' ';
+    TypePrinter.print(I.getType(), Out);
+    Out << ", ";
+    writeOperand(RPI->getOperand(0), true);
   } else if (const LandingPadInst *LPI = dyn_cast<LandingPadInst>(&I)) {
     Out << ' ';
     TypePrinter.print(I.getType(), Out);

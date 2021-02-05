@@ -390,6 +390,7 @@ enum Kind {
   kw_no_cfi,
 
   kw_freeze,
+  kw_successor,
 
   // Tapir types
   kw_detach,
