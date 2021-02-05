@@ -341,6 +341,11 @@ void SparseSolver<LatticeKey, LatticeVal, KeyInfo>::getFeasibleSuccessors(
     return;
   }
 
+  if (isa<MultiRetCallInst>(TI)) {
+    Succs.assign(Succs.size(), true);
+    return;
+  }
+
   SwitchInst &SI = cast<SwitchInst>(TI);
   LatticeVal SCValue;
   if (AggressiveUndef)
