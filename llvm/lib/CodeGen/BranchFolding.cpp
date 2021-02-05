@@ -236,7 +236,6 @@ bool BranchFolder::OptimizeFunction(MachineFunction &MF,
       JTI->RemoveJumpTable(i);
       MadeChange = true;
     }
-
   return MadeChange;
 }
 
@@ -1337,7 +1336,7 @@ ReoptimizeBlock:
   // explicitly.  Landing pads should not do this since the landing-pad table
   // points to this block.  Blocks with their addresses taken shouldn't be
   // optimized away.
-  if (IsEmptyBlock(MBB) && !MBB->isEHPad() && !MBB->hasAddressTaken() &&
+  if (IsEmptyBlock(MBB) && !MBB->isEHPad() && !MBB->hasAddressTaken() && !MBB->isMultiRetCallIndirectTarget() &&
       SameEHScope) {
     salvageDebugInfoFromEmptyBlock(TII, *MBB);
     // Dead block?  Leave for cleanup later.
@@ -1398,7 +1397,7 @@ ReoptimizeBlock:
     // analyzeBranch.
     if (PriorCond.empty() && !PriorTBB && MBB->pred_size() == 1 &&
         PrevBB.succ_size() == 1 &&
-        !MBB->hasAddressTaken() && !MBB->isEHPad()) {
+        !MBB->hasAddressTaken() && !MBB->isEHPad() && !MBB->isMultiRetCallIndirectTarget()) {
       LLVM_DEBUG(dbgs() << "\nMerging into block: " << PrevBB
                         << "From MBB: " << *MBB);
       // Remove redundant DBG_VALUEs first.
@@ -1456,7 +1455,7 @@ ReoptimizeBlock:
         TII->insertBranch(PrevBB, PriorFBB, nullptr, NewPriorCond, dl);
         MadeChange = true;
         ++NumBranchOpts;
-        goto ReoptimizeBlock;
+	goto ReoptimizeBlock;
       }
     }
 
@@ -1556,7 +1555,7 @@ ReoptimizeBlock:
         TII->insertBranch(*MBB, CurFBB, CurTBB, NewCond, dl);
         MadeChange = true;
         ++NumBranchOpts;
-        goto ReoptimizeBlock;
+	goto ReoptimizeBlock;
       }
     }
 
@@ -1564,7 +1563,7 @@ ReoptimizeBlock:
     // other blocks across it.
     if (CurTBB && CurCond.empty() && !CurFBB &&
         IsBranchOnlyBlock(MBB) && CurTBB != MBB &&
-        !MBB->hasAddressTaken() && !MBB->isEHPad()) {
+        !MBB->hasAddressTaken() && !MBB->isEHPad() && !MBB->isMultiRetCallIndirectTarget()) {
       DebugLoc dl = getBranchDebugLoc(*MBB);
       // This block may contain just an unconditional branch.  Because there can
       // be 'non-branch terminators' in the block, try removing the branch and
@@ -1659,7 +1658,7 @@ ReoptimizeBlock:
     // see if it has a fall-through into its successor.
     bool CurFallsThru = MBB->canFallThrough();
 
-    if (!MBB->isEHPad()) {
+    if (!MBB->isEHPad() && !MBB->isMultiRetCallIndirectTarget()) {
       // Check all the predecessors of this block.  If one of them has no fall
       // throughs, and analyzeBranch thinks it _could_ fallthrough to this
       // block, move this block right after it.
@@ -1708,7 +1707,7 @@ ReoptimizeBlock:
           // if the succ doesn't already have a block that can fall through into
           // it, we can arrange for the fallthrough to happen.
           if (SuccBB != MBB && &*SuccPrev != MBB &&
-              !SuccPrev->canFallThrough()) {
+              !SuccPrev->canFallThrough() && !SuccBB->isMultiRetCallIndirectTarget()) {
             MBB->moveBefore(SuccBB);
             MadeChange = true;
             goto ReoptimizeBlock;
@@ -1733,7 +1732,7 @@ ReoptimizeBlock:
       MachineBasicBlock *PrevTBB = nullptr, *PrevFBB = nullptr;
       SmallVector<MachineOperand, 4> PrevCond;
       if (FallThrough != MF.end() &&
-          !FallThrough->isEHPad() &&
+          !FallThrough->isEHPad() && !FallThrough->isMultiRetCallIndirectTarget() &&
           !TII->analyzeBranch(PrevBB, PrevTBB, PrevFBB, PrevCond, true) &&
           PrevBB.isSuccessor(&*FallThrough)) {
         MBB->moveAfter(&MF.back());
