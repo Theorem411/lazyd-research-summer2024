@@ -63,6 +63,12 @@ STATISTIC(NumSingleStore,   "Number of alloca's promoted with a single store");
 STATISTIC(NumDeadAlloca,    "Number of dead alloca's removed");
 STATISTIC(NumPHIInsert,     "Number of PHI nodes inserted");
 
+/// Option to allow result of detach inst converted into register 
+static cl::opt<bool> Mem2regAllowForkToRegister(
+    "mem2reg-allow-fork2reg", cl::init(false), cl::NotHidden,
+    cl::desc("Allow to stored fork result into register (default = off)"));
+
+
 bool llvm::isAllocaPromotable(const AllocaInst *AI) {
   // Only allow direct and non-volatile loads and stores...
   for (const User *U : AI->users()) {
@@ -640,6 +646,40 @@ void PromoteMem2Reg::run() {
     IDF.setDefiningBlocks(DefBlocks);
     SmallVector<BasicBlock *, 32> PHIBlocks;
     IDF.calculate(PHIBlocks);
+#if 0
+    // Determine which PHI nodes want to use a value from a detached
+    // predecessor.  Because register state is not preserved across a reattach,
+    // these alloca's cannot be promoted.
+    bool DetachedPred = false;
+    for (unsigned i = 0, e = PHIBlocks.size(); i != e && !DetachedPred; ++i) {
+      BasicBlock *BB = PHIBlocks[i];
+      for (pred_iterator PI = pred_begin(BB), E = pred_end(BB);
+           PI != E && !DetachedPred; ++PI) {
+        BasicBlock *P = *PI;
+        if (isa<ReattachInst>(P->getTerminator())) {
+          DEBUG(dbgs() << "Alloca " << *AI << " has use reattached from " <<
+                P->getName() << "\n");
+          //DetachedPred = true;
+	  DetachedPred = !Mem2regAllowForkToRegister;
+        }
+      }
+    }
+    if (DetachedPred) {
+      RemoveFromAllocasList(AllocaNum);
+      ++NumAllocaWithDetachedUses;
+      continue;
+    }
+
+    // Remember the dbg.declare intrinsic describing this alloca, if any.
+    if (!Info.DbgDeclares.empty())
+      AllocaDbgDeclares[AllocaNum] = Info.DbgDeclares;
+
+    // Keep the reverse mapping of the 'Allocas' array for the rename pass.
+    AllocaLookup[Allocas[AllocaNum]] = AllocaNum;
+
+    // At this point, we're committed to promoting the alloca using IDF's, and
+    // the standard SSA construction algorithm.
+#endif
     if (PHIBlocks.size() > 1)
       llvm::sort(PHIBlocks, [this](BasicBlock *A, BasicBlock *B) {
         return BBNumbers.find(A)->second < BBNumbers.find(B)->second;
@@ -888,7 +928,63 @@ void PromoteMem2Reg::ComputeLiveInBlocks(
   }
 }
 
-/// Queue a phi-node to be added to a basic-block for a specific Alloca.
+#if 0
+void PromoteMem2Reg::ComputeLiveInBlocks(
+    AllocaInst *AI, AllocaInfo &Info,
+    const SmallPtrSetImpl<BasicBlock *> &DefBlocks,
+    SmallPtrSetImpl<BasicBlock *> &LiveInBlocks) {
+  ExternComputeLiveInBlocks(AI, Info, DefBlocks, LiveInBlocks);
+}
+
+// \brief Augmentation is isAllocaPromotable to handle detach and reattach.
+//
+// TODO: Replace the implementation of this method to use an analysis of
+// parallel regions.
+bool llvm::isAllocaParallelPromotable(const AllocaInst *AIP,
+                                      DominatorTree &DT) {
+  AllocaInst* AI = const_cast<AllocaInst*>(AIP);
+  AllocaInfo Info;
+  LargeBlockInfo LBI;
+  ForwardIDFCalculator IDF(DT);
+
+  // Calculate the set of read and write-locations for each alloca.  This is
+  // analogous to finding the 'uses' and 'definitions' of each variable.
+  Info.AnalyzeAlloca(AI);
+
+  if (Info.OnlyUsedInOneBlock) return true;
+
+  // Unique the set of defining blocks for efficient lookup.
+  SmallPtrSet<BasicBlock *, 32> DefBlocks;
+  DefBlocks.insert(Info.DefiningBlocks.begin(), Info.DefiningBlocks.end());
+
+  // Determine which blocks the value is live in.  These are blocks which lead
+  // to uses.
+  SmallPtrSet<BasicBlock *, 32> LiveInBlocks;
+  ExternComputeLiveInBlocks(AI, Info, DefBlocks, LiveInBlocks);
+
+  // Determine which blocks need PHI nodes and see if we can optimize out some
+  // work by avoiding insertion of dead phi nodes.
+  IDF.setLiveInBlocks(LiveInBlocks);
+  IDF.setDefiningBlocks(DefBlocks);
+  SmallVector<BasicBlock *, 32> PHIBlocks;
+  IDF.calculate(PHIBlocks);
+
+  // Determine which PHI nodes want to use a value from a detached predecessor.
+  // Because register state is not preserved across a reattach, these alloca's
+  // cannot be promoted.
+  for (unsigned i = 0, e = PHIBlocks.size(); i != e; ++i) {
+    BasicBlock *BB = PHIBlocks[i];
+    for (pred_iterator PI = pred_begin(BB), E = pred_end(BB);
+         PI != E; ++PI) {
+      BasicBlock *P = *PI;
+      if (isa<ReattachInst>(P->getTerminator())) 
+        return Mem2regAllowForkToRegister;
+    }
+  }
+
+  return true;
+}
+#endif
 ///
 /// Returns true if there wasn't already a phi-node for that variable
 bool PromoteMem2Reg::QueuePhiNode(BasicBlock *BB, unsigned AllocaNo,

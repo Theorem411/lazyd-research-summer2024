@@ -39,6 +39,9 @@
 #include "llvm/CodeGen/GCMetadata.h"
 #include "llvm/CodeGen/ISDOpcodes.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
+
+#include "llvm/CodeGen/MachineSSAUpdater.h"
+
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -512,8 +515,82 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
     // This performs initialization so lowering for SplitCSR will be correct.
     TLI->initializeSplitCSR(EntryMBB);
 
-  
+  // CNP: Seems to convert IR->DAG->Machine IR
   SelectAllBasicBlocks(Fn);
+
+
+#if 0
+  // CNP: TODO: MultiRetcall will store the return result of the function call in the function call successors. 
+  // This will break the Machine SSA since in each successor, the same register will be updated.
+  // Example:
+  // Call Func 
+  // Succ: A B C
+  //
+  // A:
+  //   %3 = rax
+  // B:
+  //   %3 = rax
+  // C:
+  //   %3 = rax
+  // Need to create a machine pass to fix this so that we have  
+  // A:
+  //   %3 = rax
+  // B:
+  //   %4 = rax
+  // C:
+  //   %5 = rax
+  // May need to use MachineSSAUpdater
+
+  // CNP: An intial result of the Intruction selection pass?
+  // Store return value to fork storage in a different basic block
+  SmallVector<MachineInstr* , 8> inst2delete;
+  
+  for(auto &mbb: *MF) {
+    if(mbb.isMultiRetCallIndirectTarget()) {
+      for(auto& mii:  mbb) {	
+	if(mii.isCopy()) {	  
+	  auto reg0 = mii.getOperand(0).getReg();
+	  auto reg1 = mii.getOperand(1).getReg();
+	  if(FuncInfo->Reg2Replace.count(reg0)){	    
+	    //mii.dump();
+	    MachineSSAUpdater SSAUpdate(*MF);
+	    SSAUpdate.Initialize(reg1);
+	  
+	    SSAUpdate.AddAvailableValue(&mbb, reg1);
+	  
+	    // Rewrite uses that are outside of the original def's block.
+	    auto MRI = &MF->getRegInfo();
+	    MachineRegisterInfo::use_iterator UI = MRI->use_begin(reg0);
+	    while (UI != MRI->use_end()) {
+	      MachineOperand &UseMO = *UI;
+	      MachineInstr *UseMI = UseMO.getParent();
+	      ++UI;
+	      if (UseMI->isDebugValue()) {
+		// SSAUpdate can replace the use with an undef. That creates
+		// a debug instruction that is a kill.
+		// FIXME: Should it SSAUpdate job to delete debug instructions
+		// instead of replacing the use with undef?
+		UseMI->eraseFromParent();
+		continue;
+	      }
+	      if (UseMI->getParent() == &mbb && !UseMI->isPHI())
+		continue;
+	      
+	      //SSAUpdate.RewriteUse(UseMO);
+	    }
+	    inst2delete.push_back(&mii);
+	  }
+	}
+      } 
+    }
+  }
+
+  for(auto  mi:inst2delete) {
+    mi->eraseFromParent();
+  }
+#endif
+
+
 #if 1
   // Iterate the machine basic block to look for gotstolen handler basic block
   for(auto &mbb: *MF) {

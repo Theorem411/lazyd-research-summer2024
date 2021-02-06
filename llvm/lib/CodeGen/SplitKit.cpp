@@ -93,13 +93,74 @@ InsertPointAnalysis::computeLastInsertPoint(const LiveInterval &CurLI,
     // instructions in the block.
     if (ExceptionalSuccessors.empty())
       return LIP.first;
+
     for (const MachineInstr &MI : llvm::reverse(MBB)) {
+      // TODO: CNP, add multiretcall
       if ((EHPadSuccessor && MI.isCall()) ||
           MI.getOpcode() == TargetOpcode::INLINEASM_BR) {
         LIP.second = LIS.getInstructionIndex(MI);
+	break;
+      }
+    }
+
+    // TODO: CNP, do we need this?
+    // There may not be a call instruction (?) in which case we ignore LPad.
+    LIP.second = LIP.first;
+    for (MachineBasicBlock::const_iterator I = MBB.end(), E = MBB.begin();
+         I != E;) {
+      --I;
+      if (I->isCall()) {
+        //I->dump();
+	LIP.second = LIS.getInstructionIndex(*I);
         break;
       }
     }
+
+
+// Will not work, can not move across basic block, need a proper control flow
+#if 0
+    for (auto ehBB : EHPadSuccessors) {
+      auto originalBB = ehBB->getBasicBlock();
+      outs() << "Machine basic block: \n";
+      for (auto& ii : *originalBB) {
+	if ( isa<CallInst>(&ii) ) {
+	  auto call_inst = dyn_cast<CallInst>(&ii);
+	  auto fn = call_inst->getCalledFunction();
+	  if(fn && fn->getIntrinsicID() ==  Intrinsic::var_annotation) {
+#if 0
+
+	    LIP.second = LIS.getInstructionIndex( *(MBB.begin()) );
+	    break;
+#else
+	    for (auto &U : call_inst->operands()) {
+	      Value *v = U.get();
+	      BlockAddress* ba = dyn_cast<BlockAddress>(v);
+	      if(ba) {
+		auto bb = ba->getBasicBlock();
+		MachineBasicBlock* mbb = nullptr;
+		auto mf = ehBB->getParent();
+		for (auto &mbbRf : *mf) {
+		  if(mbbRf.getBasicBlock() == bb) {
+		    for (MachineBasicBlock::const_iterator I = mbbRf.end(), E = mbbRf.begin();
+			 I != E;) {
+		      --I;
+		      if (I->isCall()) {
+			outs() << "Machine Instr for cilk \n";
+			I->dump();
+			LIP.second = LIS.getInstructionIndex(*I);
+			break;
+		      }
+		    }
+		  }
+		}
+	      }
+	    }
+#endif
+	  }
+	}
+      }
+    }
+#endif
   }
 
   // If CurLI is live into a landing pad successor, move the last insert point
