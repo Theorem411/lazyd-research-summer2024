@@ -403,27 +403,6 @@ bool X86ExpandPseudo::ExpandMI(MachineBasicBlock &MBB,
     return true;
 
   }
-#if 0
-  case X86::POTENTIALJMP: {
-    // Delete instruction that comes after it
-    bool foundJmp = false;
-    SmallVector<MachineInstr*, 4> mi2delete;    
-    for (auto &mi : MBB) {
-      mi.dump();
-      if (mi.getOpcode() == X86::POTENTIALJMP) {
-	foundJmp = true;	
-      }
-      if(foundJmp)
-	mi2delete.push_back(&mi);
-    }
-    for(auto mi : mi2delete) {
-      mi->dump();
-      MBB.erase(mi);
-    }    
-    
-    return true;
-  }
-#endif    
   case X86::IRET: {
     // Adjust stack to erase error code
     int64_t StackAdj = MBBI->getOperand(0).getImm();
@@ -766,24 +745,6 @@ bool X86ExpandPseudo::ExpandMBB(MachineBasicBlock &MBB) {
     Modified |= ExpandMI(MBB, MBBI);
     MBBI = NMBBI;
   }
-#if 0
-  bool foundJmp = false;
-  SmallVector<MachineInstr*, 4> mi2delete;    
-  for (auto &mi : MBB) {
-    //mi.dump();
-    if (mi.getOpcode() == X86::POTENTIALJMP) {
-      foundJmp = true;	
-    }
-    if(foundJmp) {
-      mi2delete.push_back(&mi);
-    }
-  }
-  for(auto mi : mi2delete) {
-    //    mi->dump();
-    MBB.erase(mi);
-  }    
-#endif
-  
   return Modified;
 }
 

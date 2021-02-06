@@ -63,12 +63,6 @@ STATISTIC(NumSingleStore,   "Number of alloca's promoted with a single store");
 STATISTIC(NumDeadAlloca,    "Number of dead alloca's removed");
 STATISTIC(NumPHIInsert,     "Number of PHI nodes inserted");
 
-/// Option to allow result of detach inst converted into register 
-static cl::opt<bool> Mem2regAllowForkToRegister(
-    "mem2reg-allow-fork2reg", cl::init(false), cl::NotHidden,
-    cl::desc("Allow to stored fork result into register (default = off)"));
-
-
 bool llvm::isAllocaPromotable(const AllocaInst *AI) {
   // Only allow direct and non-volatile loads and stores...
   for (const User *U : AI->users()) {
@@ -659,8 +653,7 @@ void PromoteMem2Reg::run() {
         if (isa<ReattachInst>(P->getTerminator())) {
           DEBUG(dbgs() << "Alloca " << *AI << " has use reattached from " <<
                 P->getName() << "\n");
-          //DetachedPred = true;
-	  DetachedPred = !Mem2regAllowForkToRegister;
+          DetachedPred = true;
         }
       }
     }
@@ -978,7 +971,7 @@ bool llvm::isAllocaParallelPromotable(const AllocaInst *AIP,
          PI != E; ++PI) {
       BasicBlock *P = *PI;
       if (isa<ReattachInst>(P->getTerminator())) 
-        return Mem2regAllowForkToRegister;
+        return false;
     }
   }
 
