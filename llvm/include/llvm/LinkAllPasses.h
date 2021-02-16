@@ -59,6 +59,8 @@
 #include "llvm/Transforms/ULI/SendUli.h"
 #include "llvm/Transforms/ULI/HandleUli.h"
 #include "llvm/Transforms/ULI/HandleInlets.h"
+#include "llvm/Transforms/ULI/HandleUnwindPoll.h"
+#include "llvm/Transforms/Tapir.h"
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
 #include "llvm/Transforms/Utils/UnifyFunctionExitNodes.h"
 #include "llvm/Transforms/Vectorize.h"

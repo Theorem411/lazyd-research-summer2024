@@ -56,6 +56,7 @@
 #include "llvm/Transforms/Vectorize/VectorCombine.h"
 // CNP : Added to transform potential jump immediately after Tapir Runtime transformation 
 #include "llvm/Transforms/ULI/HandleInlets.h"
+#include "llvm/Transforms/ULI/HandleUnwindPoll.h"
 #include "llvm/Transforms/Tapir/LoweringUtils.h"
 using namespace llvm;
 
@@ -761,6 +762,8 @@ void PassManagerBuilder::populateModulePassManager(
     // Add passes to run just after Tapir lowering.
     addExtensionsToPM(EP_PostTapir, MPM);
 
+    MPM.add(createHandleUnwindPollPass());
+
     // FIXME: The BarrierNoopPass is a HACK! The inliner pass above implicitly
     // creates a CGSCC pass manager, but we don't want to add extensions into
     // that pass manager. To prevent this we insert a no-op module pass to reset
@@ -1218,6 +1221,8 @@ void PassManagerBuilder::populateModulePassManager(
 
   // Add passes to run just after Tapir lowering.
   addExtensionsToPM(EP_PostTapir, MPM);
+
+  MPM.add(createHandleUnwindPollPass());
 
   addExtensionsToPM(EP_OptimizerLast, MPM);
 

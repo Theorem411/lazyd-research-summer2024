@@ -471,6 +471,7 @@ void initializeULIPollingInsertionPass(PassRegistry&);
 void initializeSendUliPass(PassRegistry&);
 void initializeHandleUliPass(PassRegistry&);
 void initializeHandleInletsPass(PassRegistry&);
+void initializeHandleUnwindPollPass(PassRegistry&);
 void initializeUnifyFunctionExitNodesPass(PassRegistry&);
 void initializeUnpackMachineBundlesPass(PassRegistry&);
 void initializeUnreachableBlockElimLegacyPassPass(PassRegistry&);

@@ -4,6 +4,7 @@ add_llvm_library(LLVMUserLevelInterrupt
   SendUli.cpp
   HandleUli.cpp
   HandleInlets.cpp
+  HandleUnwindPoll.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/Transforms
