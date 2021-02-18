@@ -2171,6 +2171,9 @@ BUILTIN(__builtin_uli_potential_jump, "vv*", "")
 BUILTIN(__builtin_setup_rbp_from_rsp, "v", "")
 BUILTIN(__builtin_setup_rbp_from_sp_in_rbp, "v", "")
 BUILTIN(__builtin_uli_unwind_poll, "v", "")
+BUILTIN(__builtin_uli_save_context, "vv*v*", "")
+BUILTIN(__builtin_uli_save_context_nosp, "vv*v*", "")
+BUILTIN(__builtin_uli_restore_context, "vv*", "")
 
 // return from uli interrup
 BUILTIN(__builtin_uli_retq, "v", "")
