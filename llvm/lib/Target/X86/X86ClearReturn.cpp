@@ -84,45 +84,10 @@ namespace {
     DebugLoc DL;        
     unsigned StackPtr = TRI->getStackRegister();
 
-#if 1
-    MCSymbol *unwindLabel = nullptr;
-    // Add label at the end of call function and unwind path entry
-    SmallVector<MachineBasicBlock *, 10> SpawnMBBs;
-    for( auto mb = MF.begin(); mb != MF.end(); ++mb ) {
-      //for (MachineBasicBlock *SMBB : mb->successors()) {      
-      //if (SMBB->isSlowPathEntry()){
-      SpawnMBBs.push_back(&*mb);      
-      //}
-      //}
-      
-      // Add label to unwind path entry
-      if( mb->isUnwindPathEntry() ) {
-	MachineBasicBlock::iterator ii = mb->begin();
-	unwindLabel = MF.getLabel();             
-	BuildMI(*mb, ii, DL, TII.get(TargetOpcode::EH_LABEL)).addSym(unwindLabel);
-      }
-    }
-    
-    if(unwindLabel) {
-      // Add label at the end of call function
-      for (auto spawnMBB : SpawnMBBs) {
-	for (MachineBasicBlock::iterator I = spawnMBB->end(), E = spawnMBB->begin();  I != E;) {
-	  --I;
-	  if (I->isCall()) {
-	    MCSymbol *Label = MF.getLabel();             	  
-	    auto nextInst = I;
-	    BuildMI(*spawnMBB, ++nextInst, DL, TII.get(TargetOpcode::EH_LABEL)).addSym(Label);
-	    // Use to generate the prehash table in the elf binary
-	    MF.getContext().preHashTableEntry.push_back(std::make_pair(Label,unwindLabel));	    
-	  }
-	}
-      }
-    }
+    bool changed = false;
 
-
-
-#else         
     if ( Fn.hasFnAttribute(Attribute::Forkable) && M->getTapirTarget() == TapirTargetType::CAS ){
+      changed = true;
       for (auto mb = MF.begin(); mb != MF.end(); ++mb) {
 	for (auto inst = mb->begin(); inst != mb->end(); ++inst) {	  
 	  if (inst->getOpcode() == X86::RET || inst->getOpcode() == X86::RETL || inst->getOpcode() == X86::RETQ) {
@@ -208,8 +173,7 @@ namespace {
 	}
       }
     }
-    return false;
-#endif    
+    return changed;
   }
 
 } // end of anonymous namespace

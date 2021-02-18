@@ -129,6 +129,12 @@ FunctionPass *createX86EvexToVexInsts();
 FunctionPass *createX86ClearReturn();
 void initializeX86ClearReturnPass(PassRegistry &);
 
+FunctionPass *createX86SaveRestoreContext();
+void initializeX86SaveRestoreContextPass(PassRegistry &);
+
+FunctionPass *createX86CreateUnwindTable();
+void initializeX86CreateUnwindTablePass(PassRegistry &);
+
 /// This pass creates the thunks for the retpoline feature.
 FunctionPass *createX86IndirectThunksPass();
 

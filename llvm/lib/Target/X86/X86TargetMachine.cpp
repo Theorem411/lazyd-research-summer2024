@@ -80,6 +80,8 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeX86Target() {
   initializeX86ExpandPseudoPass(PR);
   initializeX86ExecutionDomainFixPass(PR);
   initializeX86ClearReturnPass(PR);
+  initializeX86SaveRestoreContextPass(PR);
+  initializeX86CreateUnwindTablePass(PR);
   initializeX86DomainReassignmentPass(PR);
   initializeX86AvoidSFBPassPass(PR);
   initializeX86AvoidTrailingCallPassPass(PR);
@@ -529,7 +531,9 @@ void X86PassConfig::addPostRegAlloc() {
 
 void X86PassConfig::addPreSched2() { 
     addPass(createX86ClearReturn()); 
+    addPass(createX86CreateUnwindTable());
     addPass(createX86ExpandPseudoPass());
+    addPass(createX86SaveRestoreContext());
  }
 
 void X86PassConfig::addPreEmitPass() {

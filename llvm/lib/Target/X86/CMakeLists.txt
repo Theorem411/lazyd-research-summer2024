@@ -84,6 +84,8 @@ set(sources
   X86WinEHState.cpp
   X86InsertWait.cpp
   X86ClearReturn.cpp
+  X86SaveRestoreContext.cpp
+  X86CreateUnwindTable.cpp
   )
 
 add_llvm_target(X86CodeGen ${sources}
