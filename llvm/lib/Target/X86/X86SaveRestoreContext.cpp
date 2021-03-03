@@ -27,10 +27,9 @@
 
 // This files lower the save/restore context builtin into assembly
 
-
 using namespace llvm;
 
-#define X86_SAVERESTORE_CONTEXT_PASS_NAME "Save return context"
+#define X86_SAVERESTORE_CONTEXT_PASS_NAME "Save restore context"
 
 namespace {
 
@@ -86,9 +85,9 @@ namespace {
     SmallVector<MachineInstr *, 10> inst2delete;
     for (auto &MBB : MF) {
       // Code Inspired from StackMapLiveness
-
       LiveRegs.init(*TRI);
       // FIXME: This should probably be addLiveOuts().
+      // Adds all live-out registers of basic block MBB but skips pristine registers. Pristine: registers not saved/restored?
       LiveRegs.addLiveOutsNoPristines(MBB);
       // Reverse iterate over all instructions and add the current live register
       // set to an instruction if we encounter a patchpoint instruction.
@@ -96,12 +95,16 @@ namespace {
 	
 	if (I->getOpcode() == X86::ULI_SAVE_CONTEXT || I->getOpcode() == X86::ULI_SAVE_CONTEXT_NOSP) {
 	  // Generate assembly for ULI_SAVE_CONTEXT/(_NOSP)
+#if 0
 	  uint32_t *Mask = MF.allocateRegisterMask(TRI->getNumRegs());
 	  for (auto Reg : LiveRegs)
 	    Mask[Reg / 32] |= 1U << (Reg % 32);
 
 	  MachineOperand MO = MachineOperand::CreateRegLiveOut(Mask);
-	  //I->addOperand(MF, MO);
+	  I->addOperand(MF, MO);
+#endif
+
+	  
 #if 0
 	  MO.dump();
 	  I->dump();
@@ -123,51 +126,50 @@ namespace {
 	  unsigned liveReg = 0;
 
 	  // Store live register
-	  for (auto Reg : LiveRegs) {
-	    // TODO: Live register can be in the form of rbx, ebx, bx, ....
-	    // If rbx is live, only need to store rbx once and ignore ebx, bx, etc. 
+	  for (auto Reg : LiveRegs)
+	  {
 	    if(!(liveReg & 0x1) && (Reg == X86::RBX || Reg == X86::EBX || Reg == X86::BX || Reg == X86::BH || Reg == X86::BL)) {	      
-	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RBX).addReg(Reg);      
+	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RBX).addReg(X86::RBX);      
 	      liveReg |= 0x1;
 	    } else if(!(liveReg & 0x2) &&(Reg == X86::R12 || Reg == X86::R12D || Reg == X86::R12W || Reg == X86::R12B)) {		
-	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R12).addReg(Reg);
+	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R12).addReg(X86::R12);
 	      liveReg |= 0x2;
 	    } else if(!(liveReg & 0x4) && (Reg == X86::R13 || Reg == X86::R13D || Reg == X86::R13W || Reg == X86::R13B) ) {		
-	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R13).addReg(Reg);
+	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R13).addReg(X86::R13);
 	      liveReg |= 0x4;
 	    } else if(!(liveReg & 0x8) &&(Reg == X86::R14 || Reg == X86::R14D || Reg == X86::R14W || Reg == X86::R14B) ) {		
-	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R14).addReg(Reg);
+	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R14).addReg(X86::R14);
 	      liveReg |= 0x8;
 	    } else if(!(liveReg & 0x10) &&(Reg == X86::R15 || Reg == X86::R15D || Reg == X86::R15W || Reg == X86::R15B) ) {		
-	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R15).addReg(Reg);
+	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R15).addReg(X86::R15);
 	      liveReg |= 0x10;
 	    } else if(!(liveReg & 0x20) &&(Reg == X86::RDI || Reg == X86::EDI || Reg == X86::DI || Reg == X86::DIL) ) {		
-	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RDI).addReg(Reg);
+	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RDI).addReg(X86::RDI);
 	      liveReg |= 0x20;
 	    } else if(!(liveReg & 0x40) && (Reg == X86::RSI || Reg == X86::ESI || Reg == X86::SI || Reg == X86::SIL) ) {		
-	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RSI).addReg(Reg);
+	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RSI).addReg(X86::RSI);
 	      liveReg |= 0x40;
 	    } else if(!(liveReg & 0x80) &&(Reg == X86::R8 || Reg == X86::R8D || Reg == X86::R8W || Reg == X86::R8B)) {		
-	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R8).addReg(Reg);
+	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R8).addReg(X86::R8);
 	      liveReg |= 0x80;
 	    } else if(!(liveReg & 0x100) && (Reg == X86::R9 || Reg == X86::R9D || Reg == X86::R9W || Reg == X86::R9B)) {		
-	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R9).addReg(Reg);
+	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R9).addReg(X86::R9);
 	      liveReg |= 0x100;
 	    } else if(!(liveReg & 0x200) &&(Reg == X86::R10 || Reg == X86::R10D || Reg == X86::R10W || Reg == X86::R10B)) {
-	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R10).addReg(Reg);
+	      //addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R10).addReg(X86::R10);
 	      liveReg |= 0x200;
 	    } else if(!(liveReg & 0x400) && (Reg == X86::R11 || Reg == X86::R11D || Reg == X86::R11W || Reg == X86::R11B)) {		
-	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R11).addReg(Reg);
+	      //addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R11).addReg(X86::R11);
 	      liveReg |= 0x400;
 	    } else if(!(liveReg & 0x800) &&(Reg == X86::RDX || Reg == X86::EDX || Reg == X86::DX || Reg == X86::DH || Reg == X86::DL)) {		
-	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RDX).addReg(Reg);
+	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RDX).addReg(X86::RDX);
 	      liveReg |= 0x800;
 	    } else if(!(liveReg & 0x1000) &&(Reg == X86::RCX || Reg == X86::ECX || Reg == X86::CX || Reg == X86::CH || Reg == X86::CL)) {
-	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RCX).addReg(Reg);
+	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RCX).addReg(X86::RCX);
 	      liveReg |= 0x1000;
 	    } else if(!(liveReg & 0x2000) &&(Reg == X86::RAX || Reg == X86::EAX || Reg == X86::AX || Reg == X86::AH || Reg == X86::AL)) {		
 	      // Move from register to memory
-	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RAX).addReg(Reg);
+	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RAX).addReg(X86::RAX);
 	      liveReg |= 0x2000;
 	    }
 	  }
@@ -179,21 +181,6 @@ namespace {
 
 	} else if(I->getOpcode() == X86::ULI_RESTORE_CONTEXT) {
 	  // Generate assembly for ULI_RESTORE_CONTEXT
-	  /*
-	  MBB:
-	    ...
-	    //ULI_RESTORE_CONTEXT
-	  CHECK_RBX:
-	    testq 
-	    je CHECK_R12
-	  MOV_RBX:
-	    mov () rbx
-          CHECK_R12:
-	    ...
-	  MBB_Split: 
-	    ....
-
-	  */
 	  auto regParam0 = I->getOperand(0).getReg();
 	  
 	  if(regParam0 != X86::RBX)
@@ -229,7 +216,23 @@ namespace {
 	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64rm), X86::RBP), regParam0, false, I_RBP);
 	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::TAILJMPm)), regParam0, false, I_RIP);
 	  inst2delete.push_back(&*I);
+	} else if (I->getOpcode() == X86::ULI_SAVE_CALLEE) {
+	  // Store base pointer 
+	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RBP).addReg(X86::RBP);
+	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RSP).addReg(X86::RSP);	  
+	  // Store the second argument (IP) into the first argument + offset
+	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RIP).addReg(I->getOperand(1).getReg());
+
+	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RBX).addReg(X86::RBX);      
+	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R12).addReg(X86::R12);
+	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R13).addReg(X86::R13);
+	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R14).addReg(X86::R14);
+	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R15).addReg(X86::R15);	      
+	  
+	  inst2delete.push_back(&*I);
 	}
+	/// Simulates liveness when stepping backwards over an instruction(bundle):
+	/// Remove Defs, add uses. This is the recommended way of calculating liveness.
 	LiveRegs.stepBackward(*I);
       }
     }
