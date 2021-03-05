@@ -5957,9 +5957,13 @@ let TargetPrefix = "x86" in {
        Intrinsic<[], [], []>;
   def int_x86_setup_rbp_from_sp_in_rbp : GCCBuiltin<"__builtin_setup_rbp_from_sp_in_rbp">,
        Intrinsic<[], [], []>;     
+  def int_x86_uli_get_workcontext : GCCBuiltin<"__builtin_uli_get_workcontext">,
+       Intrinsic<[llvm_ptrptr_ty], [], []>;     
   def int_x86_uli_unwind_poll : GCCBuiltin<"__builtin_uli_unwind_poll">,
        Intrinsic<[], [], []>;
   def int_x86_uli_save_context : GCCBuiltin<"__builtin_uli_save_context">,
+       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+  def int_x86_uli_save_callee : GCCBuiltin<"__builtin_uli_save_callee">,
        Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
   def int_x86_uli_save_context_nosp : GCCBuiltin<"__builtin_uli_save_context_nosp">,
        Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;

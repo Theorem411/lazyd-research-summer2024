@@ -23,7 +23,35 @@
 
 using namespace llvm;
 
-#define WORKCTX_SIZE 13
+// Copy from unwind_scheduler.h
+#define I_RBP 0   // Base pointer
+#define I_RIP 1   // Instruction pointer
+#define I_RSP 2   // Stack pointer
+// Callee register
+#define I_RBX 3 
+#define I_R12 4
+#define I_R13 5
+#define I_R14 6
+#define I_R15 7
+// Register
+#define I_RDI 8
+#define I_RSI 9
+#define I_R8 10
+#define I_R9 11
+#define I_R10 12
+#define I_R11 13
+#define I_RDX 14
+#define I_RCX 15
+#define I_RAX 16
+
+#define I_JOINCNT 17 // Join counter 
+#define I_NEWRSP 18 // New rsp of the parallel task
+#define I_OWNER 19 // Who owns the job
+#define I_LOC  20 // Location on the parallel task queue of the owner
+#define I_ADDRLOC  21 // The address in the stack that store the location of work
+#define I_PADDING1 22
+#define I_PADDING2 23
+#define WORKCTX_SIZE I_PADDING2 + 1
 
 using workcontext_ty = void * [WORKCTX_SIZE];
 using unwind_poll_ty = int(void);
@@ -35,6 +63,12 @@ using mylongwithoutjmp_callee_ty = void (void**);
 static cl::opt<std::string> UnwindPollingType_2(
     "unwind-polling-type2", cl::init("unwind-only"), cl::NotHidden,
     cl::desc("The type of polling used :unwind-steal, unwind-suspend, unwind-only. Ignored if DisableUnwindPoll is true (default = unwind-only)"));
+
+// Use builtin to save restore context
+static cl::opt<bool> EnableSaveRestoreCtx_2(
+    "enable-saverestore-ctx2", cl::init(false), cl::NotHidden,
+    cl::desc("Use builtin to save restore context (default = off)"));
+
 
 #define DEFAULT_GET_LIB_FUNC(name)					\
   static Constant *Get_##name(Module& M) {				\
@@ -306,15 +340,32 @@ namespace {
     B.CreateCondBr(res, ResumeParent, StartUnwind);
 
 #else
-    Constant* MYSETJMP_CALLEE = Get_mysetjmp_callee(M); 
-    auto setjmp = B.CreateCall(MYSETJMP_CALLEE, {(gunwind_ctx)}); 
-    auto isEqZero64 = B.CreateICmpEQ(setjmp, B.getInt32(0));
-    auto branchInst = B.CreateCondBr(isEqZero64, StartUnwind, ResumeParent);
+    if(!EnableSaveRestoreCtx_2) {
+      Value* NULL8 = ConstantPointerNull::get(IntegerType::getInt8Ty(Ctx)->getPointerTo());
+      auto donothingFcn = Intrinsic::getDeclaration(&M, Intrinsic::donothing);
+      auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);      
+      auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), StartUnwind, ResumeParent, {});   
+      
+      B.SetInsertPoint(insertPoint);
+      B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(InitiateUnwind, 1)});
+      B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), NULL8});
+
+      //Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, I_RIP);
+      //B.CreateStore(BlockAddress::get(InitiateUnwind, 1), savedPc);
+
+    } else {
+      Constant* MYSETJMP_CALLEE = Get_mysetjmp_callee(M); 
+      auto setjmp = B.CreateCall(MYSETJMP_CALLEE, {(gunwind_ctx)}); 
+      auto isEqZero64 = B.CreateICmpEQ(setjmp, B.getInt32(0));
+      auto branchInst = B.CreateCondBr(isEqZero64, StartUnwind, ResumeParent);
+    }
     
 #endif
     
     // return 1
     B.SetInsertPoint(StartUnwind);
+    
+
     B.CreateRet(ONE);
 
     // Call postunwind
@@ -426,10 +477,17 @@ namespace {
     GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", TypeBuilder<workcontext_ty,false>::get(Ctx), M, true);
     Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
     
-    Constant* MYSETJMP_CALLEE = Get_mysetjmp_callee(M); 
-    auto setjmp = B.CreateCall(MYSETJMP_CALLEE, {(gunwind_ctx)}); 
-    auto isEqZero64 = B.CreateICmpEQ(setjmp, B.getInt32(0));
-    auto branchInst = B.CreateCondBr(isEqZero64, StartUnwind, ResumeParent);    
+    if(!EnableSaveRestoreCtx_2) {
+      auto donothingFcn = Intrinsic::getDeclaration(&M, Intrinsic::donothing);
+      auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);      
+      B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(ResumeParent)});
+      B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), StartUnwind, ResumeParent, {});   
+    } else {
+      Constant* MYSETJMP_CALLEE = Get_mysetjmp_callee(M); 
+      auto setjmp = B.CreateCall(MYSETJMP_CALLEE, {(gunwind_ctx)}); 
+      auto isEqZero64 = B.CreateICmpEQ(setjmp, B.getInt32(0));
+      auto branchInst = B.CreateCondBr(isEqZero64, StartUnwind, ResumeParent);    
+    }
     
     // return 1
     B.SetInsertPoint(StartUnwind);
@@ -547,10 +605,19 @@ namespace {
     Constant* preunwind_steal = Get_preunwind_steal(M);
     B.CreateCall(preunwind_steal);
 
-    Constant* MYSETJMP_CALLEE = Get_mysetjmp_callee(M); 
-    auto setjmp = B.CreateCall(MYSETJMP_CALLEE, {(gunwind_ctx)}); 
-    auto isEqZero64 = B.CreateICmpEQ(setjmp, B.getInt32(0));
-    auto branchInst = B.CreateCondBr(isEqZero64, StartUnwind, ResumeParent);    
+    if(!EnableSaveRestoreCtx_2) {
+      auto donothingFcn = Intrinsic::getDeclaration(&M, Intrinsic::donothing);
+      auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);      
+      //B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(InitiateUnwind, 1)});
+      B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(ResumeParent)});
+      B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), StartUnwind, ResumeParent, {});   
+
+    } else {
+      Constant* MYSETJMP_CALLEE = Get_mysetjmp_callee(M); 
+      auto setjmp = B.CreateCall(MYSETJMP_CALLEE, {(gunwind_ctx)}); 
+      auto isEqZero64 = B.CreateICmpEQ(setjmp, B.getInt32(0));
+      auto branchInst = B.CreateCondBr(isEqZero64, StartUnwind, ResumeParent);    
+    }
 
     // return 1
     B.SetInsertPoint(StartUnwind);

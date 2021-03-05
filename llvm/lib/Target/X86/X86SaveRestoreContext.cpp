@@ -125,6 +125,7 @@ namespace {
 
 	  unsigned liveReg = 0;
 
+	  // FIXME: If 32 bits, use mov32mr
 	  // Store live register
 	  for (auto Reg : LiveRegs)
 	  {
@@ -214,7 +215,7 @@ namespace {
 	  
 	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64rm), X86::RSP), regParam0, false, I_RSP);
 	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64rm), X86::RBP), regParam0, false, I_RBP);
-	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::TAILJMPm)), regParam0, false, I_RIP);
+	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::TAILJMPm64)), regParam0, false, I_RIP);
 	  inst2delete.push_back(&*I);
 	} else if (I->getOpcode() == X86::ULI_SAVE_CALLEE) {
 	  // Store base pointer 

@@ -1816,7 +1816,11 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
         addRegOffset(BuildMI(*mb, inst, DL, TII.get(X86::LEA64r), X86::RSP), SrcReg,
             false, -FrameSize - HackOffset);
         instructions_to_delete.push_back(inst);
-      }
+      } else if (inst->getOpcode() == X86::ULI_GET_WORKCONTEXT) {
+	// For now move 0x8(%rsp) to the destination register
+	addRegOffset(BuildMI(*mb, inst, DL, TII.get(X86::MOV64rm), inst->getOperand(0).getReg()), StackPtr, false, 8);
+        instructions_to_delete.push_back(inst);
+      } 
     }
   }
 
@@ -1898,7 +1902,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
       uint64_t stacklet_size = 1 << stacklet_size_log2;
 
       DL.print(errs());
-      errs() << "Adding stacklet check to fxn '" << Fn->getName() << "' with stacklet size '" << stacklet_size << "'\n";
+      errs() << "Adding stacklet check to fxn '" << Fn.getName() << "' with stacklet size '" << stacklet_size << "' with stacklet size log2 '" << stacklet_size_log2 << "'\n";
 
       const BasicBlock *LLVM_BB = MBB.getBasicBlock();
 

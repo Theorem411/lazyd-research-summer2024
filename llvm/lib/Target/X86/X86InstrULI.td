@@ -161,12 +161,25 @@ in {
                       [(int_x86_setup_rsp_from_rbp)]>;
    def SETUP_RBP_FROM_SP_IN_RBP : PseudoI<(outs), (ins),
                       [(int_x86_setup_rbp_from_sp_in_rbp)]>;
+   def ULI_GET_WORKCONTEXT : PseudoI<(outs GR64:$dst), (ins),
+                      [(set GR64:$dst, (int_x86_uli_get_workcontext))]>;
 
-   def ULI_SAVE_CONTEXT : PseudoI<(outs), (ins GR64:$src0, GR64:$src1),
-      [(int_x86_uli_save_context GR64:$src0, GR64:$src1)]>;
-   def ULI_SAVE_CONTEXT_NOSP : PseudoI<(outs), (ins GR64:$src0, GR64:$src1),
-      [(int_x86_uli_save_context_nosp GR64:$src0, GR64:$src1)]>;
-   def ULI_RESTORE_CONTEXT : PseudoI<(outs), (ins GR64:$src0),
-      [(int_x86_uli_restore_context GR64:$src0)]>; 
+
+ let Uses = [R10, R11] in		      
+ {
+   def ULI_SAVE_CONTEXT : PseudoI<(outs), (ins),
+      [(int_x86_uli_save_context R10, R11)]>;
+   def ULI_SAVE_CALLEE : PseudoI<(outs), (ins),
+      [(int_x86_uli_save_callee R10, R11)]>;
+   def ULI_SAVE_CONTEXT_NOSP : PseudoI<(outs), (ins),
+      [(int_x86_uli_save_context_nosp R10, R11)]>;
+ }
+
+ let Uses = [R10] in 
+
+ {    
+     def ULI_RESTORE_CONTEXT : PseudoI<(outs), (ins),
+      [(int_x86_uli_restore_context R10)]>; 
+ }	
 
 }
