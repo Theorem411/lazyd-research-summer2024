@@ -5969,5 +5969,8 @@ let TargetPrefix = "x86" in {
        Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
   def int_x86_uli_restore_context : GCCBuiltin<"__builtin_uli_restore_context">,
        Intrinsic<[], [llvm_ptr_ty], []>;
-       
+  // uli_reload_here: Used to prevent gvn optimization in the slow path. Forces a reload
+  // before merging back to a slow path (PRE optimization allow this)
+  def int_x86_uli_reload_here : GCCBuiltin<"__builtin_uli_reload_here">,
+       Intrinsic<[], [llvm_ptr_ty], []>;
 }

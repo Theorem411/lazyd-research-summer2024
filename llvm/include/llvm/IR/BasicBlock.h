@@ -522,6 +522,11 @@ public:
   /// complexity when asserts are enabled as when they are disabled.
   void validateInstrOrdering() const;
 
+  /// Indicate that the basic block has its address taken
+  void setHasAddressTaken(int Amt) {
+    AdjustBlockAddressRefCount(Amt);
+  }
+
 private:
 #if defined(_AIX) && (!defined(__GNUC__) || defined(__clang__))
 // Except for GCC; by default, AIX compilers store bit-fields in 4-byte words

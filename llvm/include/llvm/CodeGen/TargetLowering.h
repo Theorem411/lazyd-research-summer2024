@@ -1783,6 +1783,13 @@ public:
     return Register();
   }
 
+  /// If the opcode is a savecontext, return true
+  virtual bool
+  isSaveContextOpcode(const MachineInstr &MI) const {
+    // If a target machine does not support it, always return false
+    return false;
+  }
+
   virtual bool needsFixedCatchObjects() const {
     report_fatal_error("Funclet EH is not implemented for this target");
   }

@@ -922,11 +922,25 @@ ModRefInfo BasicAAResult::getModRefInfo(const CallBase *Call,
           !CI->getAttributes().hasAttrSomewhere(Attribute::ByVal))
         return ModRefInfo::NoModRef;
 
+
   // Stack restore is able to modify unescaped dynamic allocas. Assume it may
   // modify them even though the alloca is not escaped.
   if (auto *AI = dyn_cast<AllocaInst>(Object))
     if (!AI->isStaticAlloca() && isIntrinsicCall(Call, Intrinsic::stackrestore))
       return ModRefInfo::Mod;
+
+#if 0
+  // TODO: CNP Check if needed
+  // If the object is an alloca and a fork storage, and the potentially clobbering 
+  // inst is a forkable function, then return NoModRef. We know that fork storage is 
+  // only used in the slowpath for that particular stack frame (locally used)
+  if (auto ai = dyn_cast<AllocaInst>(Object)) {
+    if(ai->isForkStorage())
+      if (const CallInst *CI = dyn_cast<CallInst>(CS.getInstruction()))
+	if (CI->getCalledFunction()->hasFnAttribute(Attribute::Forkable))
+	  return ModRefInfo::NoModRef;
+  }
+#endif
 
   // If the pointer is to a locally allocated object that does not escape,
   // then the call can not mod/ref the pointer unless the call takes the pointer

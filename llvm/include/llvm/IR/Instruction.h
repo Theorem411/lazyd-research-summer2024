@@ -711,6 +711,16 @@ public:
             SkipPseudoOp));
   }
 
+  // Return true if the instruction is a retpad
+  bool isRetPad() const {
+    switch (getOpcode()) {
+    case Instruction::RetPad:
+      return true;
+    default:
+      return false;
+    }
+  }
+
   /// Create a copy of 'this' instruction that is identical in all ways except
   /// the following:
   ///   * The instruction has no parent

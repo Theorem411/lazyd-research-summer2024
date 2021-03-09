@@ -426,6 +426,10 @@ bool llvm::wouldInstructionBeTriviallyDead(Instruction *I,
   if (I->isEHPad())
     return false;
 
+  // We don't want to remove retpad for multiretcall
+  if(isa<RetPadInst>(I))
+    return false;
+
   // We don't want debug info removed by anything this general, unless
   // debug info is empty.
   if (DbgDeclareInst *DDI = dyn_cast<DbgDeclareInst>(I)) {

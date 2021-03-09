@@ -1645,6 +1645,10 @@ namespace llvm {
     Register
     getExceptionSelectorRegister(const Constant *PersonalityFn) const override;
 
+    /// If the opcode is a savecontext, return true
+    bool
+    isSaveContextOpcode(const MachineInstr &MI) const override;
+
     virtual bool needsFixedCatchObjects() const override;
 
     /// This method returns a target specific FastISel object,

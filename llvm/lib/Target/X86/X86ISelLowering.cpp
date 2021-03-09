@@ -4743,6 +4743,8 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
   bool &isTailCall                      = CLI.IsTailCall;
   bool isVarArg                         = CLI.IsVarArg;
 
+  assert(!isTailCall && "Tail call not allowed in MultiRetCall");
+
   MachineFunction &MF = DAG.getMachineFunction();
   bool Is64Bit        = Subtarget.is64Bit();
   bool IsWin64        = Subtarget.isCallingConvWin64(CallConv);
@@ -4756,6 +4758,7 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
                  (Fn && Fn->hasFnAttribute("no_caller_saved_registers")) ||
                  (Fn && Fn->hasFnAttribute("user_level_interrupt"));
 
+#if 0
   if (CallConv == CallingConv::X86_INTR)
     report_fatal_error("X86 interrupts may not be called directly");
   else if (CallConv == CallingConv::X86_ULI)
@@ -4775,8 +4778,10 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
                G->getGlobal()->hasDefaultVisibility()))
       isTailCall = false;
   }
+#endif
 
   bool IsMustTail = CLI.CS && CLI.CS.isMustTailCall();
+#if 0
   if (IsMustTail) {
     // Force this to be a tail call.  The verifier rules are enough to ensure
     // that we can lower this successfully without moving the return address
@@ -4797,6 +4802,7 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
     if (isTailCall)
       ++NumTailCalls;
   }
+#endif
 
   assert(!(isVarArg && canGuaranteeTCO(CallConv)) &&
          "Var args not supported with calling convention fastcc, ghc or hipe");
@@ -4828,6 +4834,7 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
     NumBytes = GetAlignedArgumentStackSize(NumBytes, DAG);
 
   int FPDiff = 0;
+#if 0
   if (isTailCall && !IsSibcall && !IsMustTail) {
     // Lower arguments at fp - stackoffset + fpdiff.
     unsigned NumBytesCallerPushed = X86Info->getBytesToPopOnReturn();
@@ -4839,6 +4846,7 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
     if (FPDiff < X86Info->getTCReturnAddrDelta())
       X86Info->setTCReturnAddrDelta(FPDiff);
   }
+#endif
 
   unsigned NumBytesToPush = NumBytes;
   unsigned NumBytesToPop = NumBytes;
@@ -4863,9 +4871,11 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
 
   SDValue RetAddrFrIdx;
   // Load return address for tail calls.
+#if 0
   if (isTailCall && FPDiff)
     Chain = EmitTailCallLoadRetAddr(DAG, RetAddrFrIdx, Chain, isTailCall,
                                     Is64Bit, FPDiff, dl);
+#endif
 
   SmallVector<std::pair<unsigned, SDValue>, 8> RegsToPass;
   SmallVector<SDValue, 8> MemOpChains;
@@ -5020,6 +5030,7 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
     }
   }
 
+#if 0
   // For tail calls lower the arguments to the 'real' stack slots.  Sibcalls
   // don't need this because the eligibility check rejects calls that require
   // shuffling arguments passed in memory.
@@ -5091,6 +5102,7 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
                                      getPointerTy(DAG.getDataLayout()),
                                      RegInfo->getSlotSize(), FPDiff, dl);
   }
+#endif
 
   // Build a sequence of copy-to-reg nodes chained together with token chain
   // and flag operands which copy the outgoing args into registers.
@@ -5149,18 +5161,22 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
   SDVTList NodeTys = DAG.getVTList(MVT::Other, MVT::Glue);
   SmallVector<SDValue, 8> Ops;
 
+#if 0
   if (!IsSibcall && isTailCall) {
     Chain = DAG.getCALLSEQ_END(Chain,
                                DAG.getIntPtrConstant(NumBytesToPop, dl, true),
                                DAG.getIntPtrConstant(0, dl, true), InFlag, dl);
     InFlag = Chain.getValue(1);
   }
+#endif
 
   Ops.push_back(Chain);
   Ops.push_back(Callee);
 
+#if 0
   if (isTailCall)
     Ops.push_back(DAG.getConstant(FPDiff, dl, MVT::i32));
+#endif
 
   // Add argument registers to the end of the list so that they are known live
   // into the call.
@@ -5221,6 +5237,7 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
   if (InFlag.getNode())
     Ops.push_back(InFlag);
 
+#if 0
   if (isTailCall) {
     // We used to do:
     //// If this is the first return lowered for this function, add the regs
@@ -5231,13 +5248,11 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
     MF.getFrameInfo().setHasTailCall();
     return DAG.getNode(X86ISD::TC_RETURN, dl, NodeTys, Ops);
   }
+#endif
   
   Chain = DAG.getNode(X86ISD::CALL, dl, NodeTys, Ops);
   InFlag = Chain.getValue(1);
   
-  //Chain.dump();
-  //InFlag.dump();
-
 #if 0
   // Create the CALLSEQ_END node.
   unsigned NumBytesForCalleeToPop;
@@ -5385,6 +5400,7 @@ X86TargetLowering::LowerMultiRetCallEpilogue(TargetLowering::CallLoweringInfo &C
                  (Fn && Fn->hasFnAttribute("no_caller_saved_registers")) ||
                  (Fn && Fn->hasFnAttribute("user_level_interrupt"));
 
+
   if (CallConv == CallingConv::X86_INTR)
     report_fatal_error("X86 interrupts may not be called directly");
   else if (CallConv == CallingConv::X86_ULI)
@@ -5392,6 +5408,7 @@ X86TargetLowering::LowerMultiRetCallEpilogue(TargetLowering::CallLoweringInfo &C
   if (Attr.getValueAsString() == "true")
     isTailCall = false;
 
+#if 0
   if (Subtarget.isPICStyleGOT() &&
       !MF.getTarget().Options.GuaranteedTailCallOpt) {
     // If we are using a GOT, disable tail calls to external symbols with
@@ -5404,8 +5421,11 @@ X86TargetLowering::LowerMultiRetCallEpilogue(TargetLowering::CallLoweringInfo &C
                G->getGlobal()->hasDefaultVisibility()))
       isTailCall = false;
   }
-
+#endif
   bool IsMustTail = CLI.CS && CLI.CS.isMustTailCall();
+  
+
+#if 0
   if (IsMustTail) {
     // Force this to be a tail call.  The verifier rules are enough to ensure
     // that we can lower this successfully without moving the return address
@@ -5426,6 +5446,7 @@ X86TargetLowering::LowerMultiRetCallEpilogue(TargetLowering::CallLoweringInfo &C
     if (isTailCall)
       ++NumTailCalls;
   }
+#endif
 
   assert(!(isVarArg && canGuaranteeTCO(CallConv)) &&
          "Var args not supported with calling convention fastcc, ghc or hipe");
@@ -5457,6 +5478,7 @@ X86TargetLowering::LowerMultiRetCallEpilogue(TargetLowering::CallLoweringInfo &C
     NumBytes = GetAlignedArgumentStackSize(NumBytes, DAG);
 
   int FPDiff = 0;
+#if 0
   if (isTailCall && !IsSibcall && !IsMustTail) {
     // Lower arguments at fp - stackoffset + fpdiff.
     unsigned NumBytesCallerPushed = X86Info->getBytesToPopOnReturn();
@@ -5468,6 +5490,7 @@ X86TargetLowering::LowerMultiRetCallEpilogue(TargetLowering::CallLoweringInfo &C
     if (FPDiff < X86Info->getTCReturnAddrDelta())
       X86Info->setTCReturnAddrDelta(FPDiff);
   }
+#endif
 
   unsigned NumBytesToPush = NumBytes;
   unsigned NumBytesToPop = NumBytes;
@@ -26983,6 +27006,7 @@ static SDValue getScalarMaskingNode(SDValue Op, SDValue Mask,
   return DAG.getNode(X86ISD::SELECTS, dl, VT, IMask, Op, PreservedSrc);
 }
 
+
 static int getSEHRegistrationNodeSize(const Function *Fn) {
   if (!Fn->hasPersonalityFn())
     report_fatal_error(
@@ -26996,6 +27020,16 @@ static int getSEHRegistrationNodeSize(const Function *Fn) {
   }
   report_fatal_error(
       "can only recover FP for 32-bit MSVC EH personality functions");
+}
+
+bool X86TargetLowering::isSaveContextOpcode (
+    const MachineInstr &MI) const { 
+  return (MI.getOpcode() == X86::ULI_SAVE_CONTEXT_NOSP || MI.getOpcode() == X86::ULI_SAVE_CONTEXT);
+}
+
+
+bool X86TargetLowering::needsFixedCatchObjects() const {
+  return Subtarget.isTargetWin64();
 }
 
 /// When the MSVC runtime transfers control to us, either to an outlined

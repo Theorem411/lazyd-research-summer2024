@@ -290,6 +290,13 @@ bool MachineBasicBlock::isEntryBlock() const {
   return getParent()->begin() == getIterator();
 }
 
+bool MachineBasicBlock::hasMultiRetCallIndirectSuccessor() const {
+  for (const_succ_iterator I = succ_begin(), E = succ_end(); I != E; ++I)
+    if ((*I)->isMultiRetCallIndirectTarget())
+      return true;
+  return false;
+}
+
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 LLVM_DUMP_METHOD void MachineBasicBlock::dump() const {
   print(dbgs());
@@ -360,10 +367,26 @@ void MachineBasicBlock::print(raw_ostream &OS, ModuleSlotTracker &MST,
   printName(OS, PrintNameIr | PrintNameAttributes, &MST);
   OS << ":\n";
 
+
   const TargetRegisterInfo *TRI = MF->getSubtarget().getRegisterInfo();
   const MachineRegisterInfo &MRI = MF->getRegInfo();
   const TargetInstrInfo &TII = *getParent()->getSubtarget().getInstrInfo();
   bool HasLineAttributes = false;
+
+  // Debug for multiretcall
+  const char *Comma = "";
+  if (const BasicBlock *LBB = getBasicBlock()) {
+    OS << Comma << "derived from LLVM BB ";
+    LBB->printAsOperand(OS, /*PrintType=*/false, MST);
+    Comma = ", ";
+  }
+  if (isEHPad()) { OS << Comma << "EH LANDING PAD"; Comma = ", "; }
+  if (isMultiRetCallIndirectTarget()) { OS << Comma << "MULTIRETCALL INDIRECT TARGET"; Comma = ", "; }
+  if (hasAddressTaken()) { OS << Comma << "ADDRESS TAKEN"; Comma = ", "; }
+  if (Alignment)
+    OS << Comma << "Align " << Alignment << " (" << (1u << Alignment)
+       << " bytes)";
+
 
   // Print the preds of this block according to the CFG.
   if (!pred_empty() && IsStandalone) {

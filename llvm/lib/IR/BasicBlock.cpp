@@ -277,7 +277,7 @@ BasicBlock::const_iterator BasicBlock::getFirstInsertionPt() const {
     return end();
 
   const_iterator InsertPt = FirstNonPHI->getIterator();
-  if (InsertPt->isEHPad()) ++InsertPt;
+  if (InsertPt->isEHPad() || InsertPt->isRetPad()) ++InsertPt;
   return InsertPt;
 }
 
