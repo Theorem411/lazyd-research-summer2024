@@ -3251,7 +3251,7 @@ MCSymbol *AsmPrinter::createTempSymbol(const Twine &Name) const {
 }
 
 MCSymbol *AsmPrinter::GetBlockAddressSymbol(const BlockAddress *BA) const {
-#if 0
+#if 1
   BasicBlock* bb = BA->getBasicBlockorSuccessor();
   // getBasicBlock may return successor of basic block?
   return MMI->getAddrLabelSymbol(bb);
