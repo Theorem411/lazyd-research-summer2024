@@ -36,6 +36,7 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -910,10 +911,17 @@ public:
     BasicBlock* bb = getBasicBlock();
     if(isReturnSuccessor()) {
       unsigned successor = getIndexOfSucc();
-      TerminatorInst* ti = bb->getTerminator();         
+      TerminatorInst* ti = (bb->getTerminator());         
+
+      //outs() << "Getbasicblocksuccessor\n";      
+      //ti->dump();
+      //outs() << "bb: " << bb->getName() <<  "\n";
+      //bbSucc->dump();
+
       auto bbSucc = (ti)->getSuccessor(successor);
-      // TODO: Check if this required
-      //bbSucc->AdjustBlockAddressRefCount(1);      
+
+      //bbSucc->AdjustBlockAddressRefCount(1);
+
       return bbSucc;      
     } else  {
       return bb;

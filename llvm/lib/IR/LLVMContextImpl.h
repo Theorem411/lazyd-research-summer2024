@@ -1436,8 +1436,14 @@ public:
 
   StringMap<std::unique_ptr<ConstantDataSequential>> CDSConstants;
 
+#if 0
   DenseMap<std::pair<const Function *, const BasicBlock *>, BlockAddress *>
       BlockAddresses;
+#else
+  // Add key: <does it return a successor, which successor> 
+  DenseMap<std::pair <std::pair<const Function *, const BasicBlock *>, std::pair<unsigned, unsigned>>, BlockAddress *>
+    BlockAddresses;
+#endif  
 
   DenseMap<const GlobalValue *, DSOLocalEquivalent *> DSOLocalEquivalents;
 
