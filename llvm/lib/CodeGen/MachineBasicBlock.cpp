@@ -297,6 +297,14 @@ bool MachineBasicBlock::hasMultiRetCallIndirectSuccessor() const {
   return false;
 }
 
+bool MachineBasicBlock::isMultiRetCall() const {
+  bool res =true;
+  for (const_succ_iterator I = succ_begin(), E = succ_end(); I != E; ++I)
+    res &= (*I)->isMultiRetCallIndirectTarget();
+    
+  return res && (Successors.size() > 1);
+}
+
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 LLVM_DUMP_METHOD void MachineBasicBlock::dump() const {
   print(dbgs());
@@ -704,11 +712,25 @@ void MachineBasicBlock::updateTerminator(
       // The block has an unconditional fallthrough. If its successor is not its
       // layout successor, insert a branch. First we have to locate the only
       // non-landing-pad successor, as that is the fallthrough block.
-      for (succ_iterator SI = succ_begin(), SE = succ_end(); SI != SE; ++SI) {
-        if ((*SI)->isEHPad() || (*SI)->isMultiRetCallIndirectTarget())
-          continue;
-        assert(!TBB && "Found more than one non-landing-pad successor!");
-	TBB = *SI;
+
+      if(isMultiRetCall()) {
+	// If the multiretcall, take the branch with the highest probability
+	auto maxProb = BranchProbability::getZero();
+	for (succ_iterator SI = succ_begin(), SE = succ_end(); SI != SE; ++SI) {	  
+	  auto prob = getSuccProbability(SI);
+	  if(prob >= maxProb) {
+	    maxProb = prob;
+	    TBB = *SI;
+	  }	  
+	}
+
+      } else {      
+	for (succ_iterator SI = succ_begin(), SE = succ_end(); SI != SE; ++SI) {
+	  if ((*SI)->isEHPad() )
+	    continue;
+	  assert(!TBB && "Found more than one non-landing-pad successor!");
+	  TBB = *SI;
+	}
       }
 
       // If there is no non-landing-pad successor, the block has no fall-through
@@ -752,7 +774,8 @@ void MachineBasicBlock::updateTerminator(
   // fallthrough successor.
   MachineBasicBlock *FallthroughBB = nullptr;
   for (succ_iterator SI = succ_begin(), SE = succ_end(); SI != SE; ++SI) {
-    if ((*SI)->isEHPad() || *SI == TBB || (*SI)->isMultiRetCallIndirectTarget())
+    //if ((*SI)->isEHPad() || *SI == TBB || (*SI)->isMultiRetCallIndirectTarget())
+    if ((*SI)->isEHPad() || *SI == TBB)
       continue;
     assert(!FallthroughBB && "Found more than one fallthrough successor.");
     FallthroughBB = *SI;

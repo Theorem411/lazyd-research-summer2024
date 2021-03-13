@@ -580,6 +580,8 @@ public:
   
   /// Indicate if any of the successor basic block is a MultiRetCallIndirect
   bool hasMultiRetCallIndirectSuccessor() const;
+  /// Indicate that the basic block terminates with multiretcall
+  bool isMultiRetCall() const;
 
   /// Returns true if this is the entry block of the function.
   bool isEntryBlock() const;
