@@ -2871,6 +2871,18 @@ Instruction *InstCombinerImpl::visitAllocSite(Instruction &MI) {
       if (DVI->isAddressOfVariable() || DVI->getExpression()->startsWithDeref())
         DVI->eraseFromParent();
 
+    // TODO: CNP Check if this is needed
+    if (MultiRetCallInst *II = dyn_cast<MultiRetCallInst>(&MI)) {
+      // Replace MultiRetCallInst with a NOP intrinsic to maintain the original CFG
+      Module *M = II->getModule();
+      Function *F = Intrinsic::getDeclaration(M, Intrinsic::donothing);
+      MultiRetCallInst::Create(F, II->getDefaultDest(), II->getIndirectDests(),
+                         None, "", II->getParent());
+    }
+
+    for (auto *DII : DIIs)
+      eraseInstFromFunction(*DII);
+
     return eraseInstFromFunction(MI);
   }
   return nullptr;
@@ -4029,6 +4041,8 @@ bool InstCombinerImpl::run() {
       if (!UserInst)
         return None;
 
+    // Can not sink retpad inst
+    if (!isa<RetPadInst>(I) ) {
       BasicBlock *BB = I->getParent();
       BasicBlock *UserParent = nullptr;
 
