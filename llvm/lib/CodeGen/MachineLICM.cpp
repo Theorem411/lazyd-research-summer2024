@@ -530,7 +530,7 @@ void MachineLICMBase::HoistRegionPostRA() {
     // If the header of the loop containing this basic block is a landing pad,
     // then don't try to hoist instructions out of this loop.
     const MachineLoop *ML = MLI->getLoopFor(BB);
-    if (ML && ML->getHeader()->isEHPad()) continue;
+    if (ML && (ML->getHeader()->isEHPad() || ML->getHeader()->isMultiRetCallIndirectTarget()) ) continue;
 
     // Conservatively treat live-in's as an external def.
     // FIXME: That means a reload that're reused in successor block(s) will not
@@ -737,7 +737,7 @@ void MachineLICMBase::HoistOutOfLoop(MachineDomTreeNode *HeaderN) {
     // If the header of the loop containing this basic block is a landing pad,
     // then don't try to hoist instructions out of this loop.
     const MachineLoop *ML = MLI->getLoopFor(BB);
-    if (ML && ML->getHeader()->isEHPad())
+    if (ML && (ML->getHeader()->isEHPad() || ML->getHeader()->isMultiRetCallIndirectTarget()) )
       continue;
 
     // If this subregion is not in the top level loop at all, exit.
