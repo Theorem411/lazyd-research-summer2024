@@ -1083,6 +1083,10 @@ bool BranchFolder::TailMergeBlocks(MachineFunction &MF) {
       if (PBB->hasEHPadSuccessor() || PBB->mayHaveInlineAsmBr())
         continue;
 
+      // Skip blocks which may jump to a landing pad. Can't tail merge these.
+      if (PBB->hasMultiRetCallIndirectSuccessor())
+        continue;
+
       // After block placement, only consider predecessors that belong to the
       // same loop as IBB.  The reason is the same as above when skipping loop
       // header.
@@ -1104,6 +1108,30 @@ bool BranchFolder::TailMergeBlocks(MachineFunction &MF) {
             auto Next = ++PBB->getIterator();
             if (Next != MF.end())
               FBB = &*Next;
+          }
+        }
+
+
+        // Failing case: the only way IBB can be reached from PBB is via
+        // exception handling.  Happens for landing pads.  Would be nice to have
+        // a bit in the edge so we didn't have to do all this.
+        if (IBB->isEHPad() || IBB->isMultiRetCallIndirectTarget()) {
+	  MachineFunction::iterator IP = ++PBB->getIterator();
+          MachineBasicBlock *PredNextBB = nullptr;
+          if (IP != MF.end())
+            PredNextBB = &*IP;
+          if (!TBB) {
+            if (IBB != PredNextBB)      // fallthrough
+              continue;
+          } else if (FBB) {
+            if (TBB != IBB && FBB != IBB)   // cbr then ubr
+              continue;
+          } else if (Cond.empty()) {
+            if (TBB != IBB)               // ubr
+              continue;
+          } else {
+            if (TBB != IBB && IBB != PredNextBB)  // cbr
+              continue;
           }
         }
 
@@ -1344,7 +1372,7 @@ ReoptimizeBlock:
 
     if (FallThrough == MF.end()) {
       // TODO: Simplify preds to not branch here if possible!
-    } else if (FallThrough->isEHPad()) {
+    } else if (FallThrough->isEHPad() || FallThrough->isMultiRetCallIndirectTarget()) { 
       // Don't rewrite to a landing pad fallthough.  That could lead to the case
       // where a BB jumps to more than one landing pad.
       // TODO: Is it ever worth rewriting predecessors which don't already
