@@ -4941,16 +4941,14 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
       InstructionList.push_back(I);
       break;
     case bitc::FUNC_CODE_INST_RETPAD: { // RETPAD: [opty, op]      
-      unsigned OpNum = 0;
-      Value *Op;
-      if (getValueTypePair(Record, OpNum, NextValueNo, Op) ||
-	  (2 != Record.size()) )	  
-	// TODO : Check if the record is correct
+      // TODO: Check if this code is correct
+      unsigned Idx = 0;
+      Type *Ty = getTypeByID(Record[Idx++]);
+      if (!Ty)
         return error("Invalid record");
-
-      Type *Ty = Op->getType();      
-      I = new RetPadInst(Ty, Op, "");
-      InstructionList.push_back(I);
+      
+      //I = new RetPadInst(Ty, nullptr);
+      //InstructionList.push_back(I);
       break;
     }
     case bitc::FUNC_CODE_INST_DETACH: { // DETACH: [bb#, bb#, [bb#,] val]

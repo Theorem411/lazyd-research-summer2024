@@ -3043,10 +3043,13 @@ void ModuleBitcodeWriter::writeInstruction(const Instruction &I,
     AbbrevToUse = FUNCTION_INST_UNREACHABLE_ABBREV;
     break;
   case Instruction::RetPad:
+#if 0
+    // TODO: Check if this code is correct
     Code = bitc::FUNC_CODE_INST_RETPAD;
     if (!pushValueAndType(I.getOperand(0), InstID, Vals)) 
       AbbrevToUse = FUNCTION_INST_RETPAD_ABBREV;    
     Vals.push_back(VE.getTypeID(I.getType()));
+#endif
     break;
   case Instruction::Detach:
     {
