@@ -6789,6 +6789,10 @@ bool LLParser::ParseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS) {
       ParseToken(lltok::lsquare, "expected '[' in multiretcall"))
     return true;
 
+  // Needed to create a symbol that can be used to be passed around and jump to
+  // The issue is that blockaddress succ. needs the terminator of block address and during parsing,
+  // the terminator may not be avaialable
+  DefaultDest->setHasAddressTaken(1);
 
   // parse the destination list.
   SmallVector<BasicBlock *, 16> IndirectDests;
@@ -6798,11 +6802,15 @@ bool LLParser::ParseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS) {
     if (ParseTypeAndBasicBlock(DestBB, PFS))
       return true;
     IndirectDests.push_back(DestBB);
-    
+    // Needed to create a symbol that can be used to be passed around and jump to
+    DestBB->setHasAddressTaken(1);
+
     while (EatIfPresent(lltok::comma)) {
       if (ParseTypeAndBasicBlock(DestBB, PFS))
 	return true;
       IndirectDests.push_back(DestBB);
+      // Needed to create a symbol that can be used to be passed around and jump to
+      DestBB->setHasAddressTaken(1);
     }
   }    
 
@@ -7314,11 +7322,12 @@ bool LLParser::parseFreeze(Instruction *&Inst, PerFunctionState &PFS) {
 }
 
 /// ParseRetPad
-///   ::= 'retpad' TypeAndValue 
+///   ::= 'retpad' Type
 int LLParser::ParseRetPad(Instruction *&Inst, PerFunctionState &PFS) {
   Value *Val; LocTy Loc;
   Type *Ty;
 
+#if 0
   LocTy ExplicitTypeLoc = Lex.getLoc();
   if (ParseType(Ty) ||
       ParseToken(lltok::comma, "expected comma after retpad's type") ||
@@ -7331,6 +7340,16 @@ int LLParser::ParseRetPad(Instruction *&Inst, PerFunctionState &PFS) {
 
   Inst = new RetPadInst(Ty, Val, "");
   return InstNormal;
+
+#else
+  LocTy ExplicitTypeLoc = Lex.getLoc();
+  if (ParseType(Ty, "", true))
+    return true;
+
+  Inst = RetPadInst::Create(Ty, Twine());
+  return InstNormal;
+
+#endif
 }
 
 /// parseCall
