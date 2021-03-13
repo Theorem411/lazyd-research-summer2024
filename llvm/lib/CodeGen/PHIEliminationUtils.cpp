@@ -59,6 +59,7 @@ llvm::findPHICopyInsertPoint(MachineBasicBlock* MBB, MachineBasicBlock* SuccMBB,
   }
 
 #if 0
+  // TODO: Fix this to ensure copy is not inserted after save context
   // Make sure the copy goes after any phi nodes but before
   // any debug nodes.
   auto newInsertPoint = MBB->SkipPHIsAndLabels(InsertPoint);
