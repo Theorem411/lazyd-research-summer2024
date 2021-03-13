@@ -742,6 +742,11 @@ bool TailDuplicator::duplicateSimpleBB(
   for (MachineBasicBlock *PredBB : Preds) {
     if (PredBB->hasEHPadSuccessor() || PredBB->mayHaveInlineAsmBr())
       continue;
+    
+    // Is this needed? Yes, the codegen will remove the pre.sync otherwise
+    // TODO: Need to check why this happen and what the code is doing
+    if(PredBB->hasMultiRetCallIndirectSuccessor())
+      continue;
 
     if (bothUsedInPHI(*PredBB, Succs))
       continue;
