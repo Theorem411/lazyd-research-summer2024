@@ -590,6 +590,7 @@ bool Instruction::mayReadFromMemory() const {
   case Instruction::AtomicRMW:
   case Instruction::CatchPad:
   case Instruction::CatchRet:
+  case Instruction::RetPad: // FIXME: Should be dependent on the multiretcall inst it is attached to
     return true;
   case Instruction::Call:
   case Instruction::Invoke:
@@ -613,6 +614,7 @@ bool Instruction::mayWriteToMemory() const {
   case Instruction::AtomicRMW:
   case Instruction::CatchPad:
   case Instruction::CatchRet:
+  case Instruction::RetPad: // FIXME: Should be dependent on the multiretcall inst it is attached to
     return true;
   case Instruction::Call:
   case Instruction::Invoke:
