@@ -3060,35 +3060,58 @@ void SelectionDAGBuilder::visitMultiRetCall(const MultiRetCallInst &I) {
     LowerMultiRetCallPrologueTo(&I, getValue(Callee), false, nullptr);
   }
 
+  // Without setHasAddressTaken(1)
+  // I got the following bug: 
+  // clang-6.0: /afs/ece/project/seth_group/pakha/uli/src/compiler/llvm/lib/CodeGen/MachineModuleInfo.cpp:117: llvm::ArrayRef<llvm::MCSymbol*> llvm::MMIAddrLabelMap::getAddrLabelSymbolToEmit(llvm::BasicBlock*): Assertion `BB->hasAddressTaken() && "Shouldn't get label for block without address taken"' failed.
+
+
   // Prevent from MachineVerifier issue
-  //Return->setIsMultiRetCallIndirectTarget();
+  Return->setIsMultiRetCallIndirectTarget();  
+  I.getDefaultDest()->setHasAddressTaken(1);
 
   // Update successor info.
   addSuccessorWithProb(MultiRetCallMBB, Return, BranchProbability::getOne());
   for (unsigned i = 0, e = I.getNumIndirectDests(); i < e; ++i) {
     MachineBasicBlock *Target = FuncInfo.MBBMap[I.getIndirectDest(i)];
+
     addSuccessorWithProb(MultiRetCallMBB, Target, BranchProbability::getZero());
+        
+    Target->setIsMultiRetCallIndirectTarget();    
     
-    Target->setIsMultiRetCallIndirectTarget();
+    // TODO: Fix me For register allocation?
+    //Target->setIsEHPad();
+    //outs() << "SelectionDAGBuilder Target: " << I.getIndirectDest(i)->getName() << "\n";
+    I.getIndirectDest(i)->setHasAddressTaken(1);
+
+    Target->setHasAddressTaken();
+
   }
   MultiRetCallMBB->normalizeSuccProbs();
 
   // Drop into normal successor.
   DAG.setRoot(DAG.getNode(ISD::BR, getCurSDLoc(),
-                          MVT::Other, getControlRoot(),
-                          DAG.getBasicBlock(Return)));
+			MVT::Other, getControlRoot(),
+			DAG.getBasicBlock(Return)));
 }
 
 void SelectionDAGBuilder::visitRetPad(const RetPadInst &I) {  
   const BasicBlock* bb = I.getParent();
-  const BasicBlock* predBB = bb->getSinglePredecessor();
+  //const BasicBlock* predBB = bb->getSinglePredecessor();
+  
+  const_pred_iterator PI = pred_begin(bb);
+  const BasicBlock* predBB = *PI;
+
+  // Seem its ok as long as it calls the same function 
   assert(predBB && "Must have a single predecessor");
     
   const MultiRetCallInst * MRCI = dyn_cast<MultiRetCallInst>(predBB->getTerminator());
+
   assert(MRCI && "RetPad predecessor must terminate with MultiRetCallInst");
 
+#if 0
   const auto MRCI2 = I.getMultiRetCallOperand();
   assert(MRCI == MRCI2 && "The parent's terminator should be the same with the operand of the retpad");
+#endif
 
   const Value *Callee(MRCI->getCalledValue());
   
@@ -3101,39 +3124,21 @@ void SelectionDAGBuilder::visitRetPad(const RetPadInst &I) {
   // We already took care of the exported value for the statepoint instruction
   // during call to the LowerStatepoint.
   if (!isStatepoint(I)) {
-    // TODO: MultiRetcall will store the return result of the function call in the function call successors. 
-    // This will break the Machine SSA since in each successor, the same register will be updated.
-    // Temporary hack? Keeping MachineSSA sane    
-    
-    outs() << "---------------------------------Start visitRetPad-------------------------\n";
-
-    //if(true)
-    //CopyToExportRegsIfNeeded(MRCI);
-  
-#if 1
-    if (!MRCI->getType()->isEmptyTy()) {
-      DenseMap<const Value *, unsigned>::iterator VMI = FuncInfo.ValueMap.find(MRCI);
-      if (VMI != FuncInfo.ValueMap.end()) {
-	assert(!MRCI->use_empty() && "Unused value assigned virtual registers!");
-	outs() << "Value of reg: " << VMI->second << "\n" ;
-	//FuncInfo.Reg2Replace.insert(VMI->second);
-      }
-      
-      // Add live register (for function that returns value is stored in rax, this make rax live in this basic block) 
+    if (!MRCI->getType()->isVoidTy()) {
       SDValue Op = getNonRegisterValue(MRCI);  
-      FuncInfo.MBB->addLiveIn(cast<RegisterSDNode>(Op.getOperand(1))->getReg());
+      
+      //  Register return by the child
+      auto regFromChild = cast<RegisterSDNode>(Op.getOperand(1))->getReg();
 
-      SDValue Res = DAG.getCopyFromReg(DAG.getEntryNode(), getCurSDLoc(), cast<RegisterSDNode>(Op.getOperand(1))->getReg(), MVT::i32);
+      // Add live register (for function that returns value is stored in rax, this make rax live in this basic block) 
+      // TODO: Gotstolen: multiple time we make eax live
+      FuncInfo.MBB->addLiveIn(regFromChild);
+
+      // Copy the result of the multiretcall into to the retpad  
+      SDValue Res = DAG.getCopyFromReg(DAG.getEntryNode(), getCurSDLoc(), regFromChild, Op.getValueType());
       setValue(&I, Res);    
     }
-#endif
-
-    outs() << "---------------------------------End visitRetPad-------------------------\n";
   }
-
-  // Copy the register that stores the result to a new register represented by retpad
-  // Need to set value the instruction tothre result of lowering the epilogue of MultiRetCall
-  
 
 }
 
@@ -7766,21 +7771,6 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
     (void)getRoot();
     DAG.setRoot(lowerStartEH(getControlRoot(), EHPadBB, BeginLabel));
     CLI.setChain(getRoot());
-
-  } else if (  CLI.CS.getCalledFunction() && CLI.CS.getCalledFunction()->hasFnAttribute(Attribute::Forkable)  ) {
-#if 0
-      // Insert a label at the front of a forkable function call 
-      // The inserted label represent return address.       
-      MCSymbol *StartLabel = MMI.getContext().createTempSymbol();
-      DAG.setRoot(DAG.getEHLabel(getCurSDLoc(), getRoot(), StartLabel));
-      CLI.setChain(getRoot());
-
-      if( MF.getFunction().getParent()->CallStealMap.lookup( CLI.CS.getInstruction()).stealHandler ){
-        // Map call instructions's name with return address label
-        MF.addReturnAddr2LabelMap((CLI.CS.getInstruction()->getName() + "_start").str() , StartLabel);
-      }
-#endif
-
   }
 
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
@@ -7801,32 +7791,13 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
     // relying on us setting vregs for them.
     PendingExports.clear();
   } else {
-      DAG.setRoot(Result.second);
+    DAG.setRoot(Result.second);
   }
 
   if (EHPadBB) {
     DAG.setRoot(lowerEndEH(getRoot(), cast_or_null<InvokeInst>(CLI.CB), EHPadBB,
                            BeginLabel));
   }
-  else if (  CLI.CS.getCalledFunction() && CLI.CS.getCalledFunction()->hasFnAttribute(Attribute::Forkable)  ) {
-      // Insert a label at the end of a forkable function call 
-      // The inserted label represent return address. 
-#if 0      
-      MCSymbol *EndLabel = MMI.getContext().createTempSymbol();
-      DAG.setRoot(DAG.getEHLabel(getCurSDLoc(), getRoot(), EndLabel));
-
-      if( MF.getFunction().getParent()->CallStealMap.lookup( CLI.CS.getInstruction()).stealHandler ){
-        // Map call instructions's name with return address label
-        MF.addReturnAddr2LabelMap( (CLI.CS.getInstruction()->getName() + "_end").str() , EndLabel);
-      }
-
-      if(MF.getFunction().getParent()->StolenHandlerExists.lookup( CLI.CS.getInstruction()->getParent()  )){       
-        // Map got-stolen handler basic block with a its entry label
-        MF.addStolenHandler2LabelMap(CLI.CS.getInstruction()->getParent()->getName(), EndLabel);        
-      }
-#endif
-  }
-
   return Result;
 }
 
@@ -7834,8 +7805,12 @@ std::pair<SDValue, SDValue>
 SelectionDAGBuilder::lowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &CLI,
                                     const BasicBlock *EHPadBB) {
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  
+  /// The first element is the return value for the function (if RetTy is not VoidTy).  The second element is the
+  /// outgoing token chain. It calls LowerCall to do the actual lowering.
   std::pair<SDValue, SDValue> Result = TLI.LowerMultiRetCallPrologueTo(CLI);
   
+  // Set chain to DAG
   DAG.setRoot(Result.second);
   return Result;
 }
@@ -7846,6 +7821,7 @@ SelectionDAGBuilder::lowerMultiRetCallEpilogue(TargetLowering::CallLoweringInfo 
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   std::pair<SDValue, SDValue> Result = TLI.LowerMultiRetCallEpilogueTo(CLI);
 
+  // Set chain to DAG
   DAG.setRoot(Result.second);
   return Result;
 }
@@ -7979,9 +7955,12 @@ void SelectionDAGBuilder::LowerMultiRetCallPrologueTo(ImmutableCallSite CS, SDVa
   // does not support this yet. It would have to move into the swifterror
   // register before the call.
   auto *Caller = CS.getInstruction()->getParent()->getParent();
+
+#if 0
   if (TLI.supportSwiftError() &&
       Caller->getAttributes().hasAttrSomewhere(Attribute::SwiftError))
     isTailCall = false;
+#endif
 
   for (ImmutableCallSite::arg_iterator i = CS.arg_begin(), e = CS.arg_end();
        i != e; ++i) {
@@ -8017,6 +7996,7 @@ void SelectionDAGBuilder::LowerMultiRetCallPrologueTo(ImmutableCallSite CS, SDVa
       isTailCall = false;
   }
 
+#if 0
   // Check if target-independent constraints permit a tail call here.
   // Target-dependent constraints are checked within TLI->LowerCallTo.
   if (isTailCall && !isInTailCallPosition(CS, DAG.getTarget()))
@@ -8026,6 +8006,9 @@ void SelectionDAGBuilder::LowerMultiRetCallPrologueTo(ImmutableCallSite CS, SDVa
   // been updated to support tail calls.
   if (TLI.supportSwiftError() && SwiftErrorVal)
     isTailCall = false;
+#endif
+
+  assert(!isTailCall && "Lower MultiRetCall does not support tailcall");
 
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(getCurSDLoc())
@@ -8050,6 +8033,7 @@ void SelectionDAGBuilder::LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDVa
   const Value *SwiftErrorVal = nullptr;
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
 
+#if 0
   // We can't tail call inside a function with a swifterror argument. Lowering
   // does not support this yet. It would have to move into the swifterror
   // register before the call.
@@ -8057,7 +8041,9 @@ void SelectionDAGBuilder::LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDVa
   if (TLI.supportSwiftError() &&
       Caller->getAttributes().hasAttrSomewhere(Attribute::SwiftError))
     isTailCall = false;
+#endif
 
+#if 0
   for (ImmutableCallSite::arg_iterator i = CS.arg_begin(), e = CS.arg_end();
        i != e; ++i) {
     TargetLowering::ArgListEntry Entry;
@@ -8091,7 +8077,9 @@ void SelectionDAGBuilder::LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDVa
     if (Entry.IsSRet && isa<Instruction>(V))
       isTailCall = false;
   }
+#endif
 
+#if 0
   // Check if target-independent constraints permit a tail call here.
   // Target-dependent constraints are checked within TLI->LowerCallTo.
   if (isTailCall && !isInTailCallPosition(CS, DAG.getTarget()))
@@ -8101,6 +8089,10 @@ void SelectionDAGBuilder::LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDVa
   // been updated to support tail calls.
   if (TLI.supportSwiftError() && SwiftErrorVal)
     isTailCall = false;
+
+#endif
+  
+  assert(!isTailCall && "Lower MultiRetCall does not support tailcall");
 
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(getCurSDLoc())
@@ -8117,6 +8109,7 @@ void SelectionDAGBuilder::LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDVa
     setValue(Inst, Result.first);
   }
 
+#if 0
   // The last element of CLI.InVals has the SDValue for swifterror return.
   // Here we copy it to a virtual register and update SwiftErrorMap for
   // book-keeping.
@@ -8132,6 +8125,8 @@ void SelectionDAGBuilder::LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDVa
       FuncInfo.setCurrentSwiftErrorVReg(FuncInfo.MBB, SwiftErrorVal, VReg);
     DAG.setRoot(CopyNode);
   }
+#endif
+
 }
 
 static SDValue getMemCmpLoad(const Value *PtrVal, MVT LoadVT,
@@ -10387,6 +10382,7 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
     }
   }
 
+#if 1 // Seems to be needed
   SmallVector<ISD::OutputArg, 4> Outs;
   GetReturnInfo(CLI.RetTy, getReturnAttrs(CLI), Outs, *this, DL);
 
@@ -10397,6 +10393,7 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
   SDValue DemoteStackSlot;
   int DemoteStackIdx = -100;
   if (!CanLowerReturn) {
+    // sret deotion
     // FIXME: equivalent assert?
     // assert(!CS.hasInAllocaArgument() &&
     //        "sret demotion is incompatible with inalloca");
@@ -10449,9 +10446,12 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
       }
     }
   }
+#endif
+
 
   // We push in swifterror return as the last element of CLI.Ins.
   ArgListTy &Args = CLI.getArgs();
+#if 0
   if (supportSwiftError()) {
     for (unsigned i = 0, e = Args.size(); i != e; ++i) {
       if (Args[i].IsSwiftError) {
@@ -10463,7 +10463,7 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
       }
     }
   }
-
+#endif
 
   // Handle all of the outgoing arguments.
   CLI.Outs.clear();
@@ -10605,6 +10605,7 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
   // Update CLI.InVals to use outside of this function.
   CLI.InVals = InVals;
 
+  // Since we don not handle the epilogue of the function, just return void
   return std::make_pair(SDValue(), CLI.Chain);
 }
 
@@ -10620,6 +10621,7 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
   auto &DL = CLI.DAG.getDataLayout();
   ComputeValueVTs(*this, DL, CLI.RetTy, RetTys, &Offsets);
 
+#if 0
   if (CLI.IsPostTypeLegalization) {
     // If we are lowering a libcall after legalization, split the return type.
     SmallVector<EVT, 4> OldRetTys = std::move(RetTys);
@@ -10635,6 +10637,7 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
         Offsets.push_back(Offset + j * RegisterVTByteSZ);
     }
   }
+#endif
 
   SmallVector<ISD::OutputArg, 4> Outs;
   GetReturnInfo(CLI.RetTy, getReturnAttrs(CLI), Outs, *this, DL);
@@ -10699,6 +10702,7 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
     }
   }
 
+#if 0
   // We push in swifterror return as the last element of CLI.Ins.
   ArgListTy &Args = CLI.getArgs();
   if (supportSwiftError()) {
@@ -10712,11 +10716,14 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
       }
     }
   }
+#endif
+
 
 
   // Handle all of the outgoing arguments.
   CLI.Outs.clear();
   CLI.OutVals.clear();
+#if 0
   for (unsigned i = 0, e = Args.size(); i != e; ++i) {
     SmallVector<EVT, 4> ValueVTs;
     ComputeValueVTs(*this, DL, Args[i].Ty, ValueVTs);
@@ -10847,6 +10854,7 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
         CLI.Outs[CLI.Outs.size() - 1].Flags.setInConsecutiveRegsLast();
     }
   }
+#endif
 
   SmallVector<SDValue, 4> InVals;
   CLI.Chain = LowerMultiRetCallEpilogue(CLI, InVals);
@@ -10862,6 +10870,7 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
   assert((CLI.IsTailCall || InVals.size() == CLI.Ins.size()) &&
          "LowerCall didn't emit the correct number of values!");
 
+#if 0
   // For a tail call, the return value is merely live-out and there aren't
   // any nodes in the DAG representing it. Return a special value to
   // indicate that a tail call has been emitted and no more Instructions
@@ -10870,6 +10879,7 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
     CLI.DAG.setRoot(CLI.Chain);
     return std::make_pair(SDValue(), SDValue());
   }
+#endif
 
 #ifndef NDEBUG
   for (unsigned i = 0, e = CLI.Ins.size(); i != e; ++i) {
