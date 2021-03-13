@@ -4072,8 +4072,6 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
   } else if (const RetPadInst *RPI = dyn_cast<RetPadInst>(&I) ) {
     Out << ' ';
     TypePrinter.print(I.getType(), Out);
-    Out << ", ";
-    writeOperand(RPI->getOperand(0), true);
   } else if (const LandingPadInst *LPI = dyn_cast<LandingPadInst>(&I)) {
     Out << ' ';
     TypePrinter.print(I.getType(), Out);
