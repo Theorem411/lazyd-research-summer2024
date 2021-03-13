@@ -1034,8 +1034,9 @@ void MultiRetCallInst::init(FunctionType *FTy, Value *Fn, BasicBlock *Fallthroug
 void MultiRetCallInst::updateArgBlockAddresses(unsigned i, BasicBlock *B) {
   assert(getNumIndirectDests() > i && "IndirectDest # out of range for multiretcall");
   if (BasicBlock *OldBB = getIndirectDest(i)) {
-    BlockAddress *Old = BlockAddress::get(OldBB);
-    BlockAddress *New = BlockAddress::get(B);
+    // TODO: Check why I need the parent
+    BlockAddress *Old = BlockAddress::get(OldBB->getParent(), OldBB);
+    BlockAddress *New = BlockAddress::get(OldBB->getParent(), B);    
     for (unsigned ArgNo = 0, e = getNumArgOperands(); ArgNo != e; ++ArgNo)
       if (dyn_cast<BlockAddress>(getArgOperand(ArgNo)) == Old)
 	setArgOperand(ArgNo, New);
@@ -1452,16 +1453,44 @@ RetPadInst::RetPadInst(Value *MultiRetCallVal, const Twine &NameStr, BasicBlock 
   : RetPadInst(MultiRetCallVal->getType(), MultiRetCallVal, NameStr, InsertAtEnd) {} 
 
 RetPadInst::RetPadInst(Type *Ty, Value *MultiRetCallVal, const Twine &NameStr, Instruction *InsertBefore) 
-  : UnaryInstruction(Ty, Instruction::RetPad, MultiRetCallVal, InsertBefore) {
+  : Instruction(Ty, Instruction::RetPad, nullptr, 0, InsertBefore) {
   AssertOK();
   setName(NameStr);
 }
+
 RetPadInst::RetPadInst(Type *Ty, Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd) 
-  : UnaryInstruction(Ty, Instruction::RetPad, MultiRetCallVal, InsertAtEnd) {
+  : Instruction(Ty, Instruction::RetPad, nullptr, 0, InsertAtEnd) {
   AssertOK();
   setName(NameStr);  
 } 
 
+RetPadInst::RetPadInst(Type *Ty, const Twine &NameStr, Instruction *InsertBefore) 
+  : Instruction(Ty, Instruction::RetPad, nullptr, 0, InsertBefore) {
+  AssertOK();
+  setName(NameStr);  
+} 
+
+RetPadInst::RetPadInst(Type *Ty, const Twine &NameStr, BasicBlock *InsertAtEnd) 
+  : Instruction(Ty, Instruction::RetPad, nullptr, 0, InsertAtEnd) {
+  AssertOK();
+  setName(NameStr);  
+} 
+
+RetPadInst* RetPadInst::Create(Type* Ty, const Twine &NameStr, Instruction *InsertBefore) {
+  return new RetPadInst(Ty, NameStr, InsertBefore);
+}
+
+RetPadInst* RetPadInst::Create(Type* Ty, const Twine &NameStr, BasicBlock *InsertAtEnd) {
+  return new RetPadInst(Ty, NameStr, InsertAtEnd);
+}
+
+RetPadInst *RetPadInst::Create(Value *MultiRetCallVal, const Twine &NameStr, Instruction *InsertBefore) {
+  return new RetPadInst(MultiRetCallVal, NameStr, InsertBefore);
+}
+
+RetPadInst *RetPadInst::Create(Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd) {
+  return new RetPadInst(MultiRetCallVal, NameStr, InsertAtEnd);
+}
 
 
 //===----------------------------------------------------------------------===//
@@ -5220,7 +5249,7 @@ FreezeInst *FreezeInst::cloneImpl() const {
 }
 
 RetPadInst *RetPadInst::cloneImpl() const {
-  return new RetPadInst(getOperand(0), Twine());
+  return new RetPadInst(getType(), Twine());
 }
 
 DetachInst *DetachInst::cloneImpl() const {
