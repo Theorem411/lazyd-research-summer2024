@@ -151,6 +151,17 @@ public:
   /// Specify whether this alloca is used to represent a swifterror.
   void setSwiftError(bool V) { setSubclassData<SwiftErrorField>(V); }
 
+  /// Return true if this alloca is used as a swifterror argument to a call.
+  bool isForkStorage() const {
+    return getSubclassDataFromInstruction() & 128 ;
+  }
+
+  /// Specify whether this alloca is used for fork storage
+  void setForkStorage(bool V) {
+    setInstructionSubclassData((getSubclassDataFromInstruction() & ~128) |
+                               (V ? 128 : 0));    
+  }
+
   // Methods for support type inquiry through isa, cast, and dyn_cast:
   static bool classof(const Instruction *I) {
     return (I->getOpcode() == Instruction::Alloca);
@@ -5626,7 +5637,7 @@ DEFINE_TRANSPARENT_OPERAND_ACCESSORS(SyncInst, Value)
 /// This IR indicates that the basic block is part of a multiretcall IR
 ///
 
-class RetPadInst : public UnaryInstruction {
+class RetPadInst : public Instruction {
   void AssertOK();
 
 protected:
@@ -5637,12 +5648,17 @@ protected:
 public:
   RetPadInst(Value *MultiRetCallVal, const Twine &NameStr, Instruction *InsertBefore = nullptr);
   RetPadInst(Type *Ty, Value *MultiRetCallVal, const Twine &NameStr, Instruction *InsertBefore = nullptr);
+  RetPadInst(Type *Ty, const Twine &NameStr, Instruction *InsertBefore = nullptr);
+
   RetPadInst(Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd);
   RetPadInst(Type *Ty, Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd);
-    
+  RetPadInst(Type *Ty, const Twine &NameStr, BasicBlock *InsertAtEnd);
+
+#if 0
   Value* getMultiRetCallOperand() { return getOperand(0); }
   const Value* getMultiRetCallOperand() const { return getOperand(0); }
   Type* getMultiRetCallOperandType() const { return getMultiRetCallOperand()->getType(); }
+#endif
 
   // Methods for support type inquiry through isa, cast, and dyn_cast:
   static bool classof(const Instruction *I) {
@@ -5651,6 +5667,13 @@ public:
   static bool classof(const Value *V) {
     return isa<Instruction>(V) && classof(cast<Instruction>(V));
   }
+
+  /// Constructors - 
+  static RetPadInst *Create(Value *MultiRetCallVal, const Twine &NameStr, Instruction *InsertBefore = nullptr);
+  static RetPadInst *Create(Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd);
+  
+  static RetPadInst* Create(Type* Ty, const Twine &NameStr, Instruction *InsertBefore = nullptr);
+  static RetPadInst* Create(Type* Ty, const Twine &NameStr, BasicBlock *InsertAtEnd);
 
 private:  
 };
