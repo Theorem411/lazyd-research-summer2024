@@ -25,6 +25,7 @@
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
+#include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/TargetOpcodes.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
@@ -68,8 +69,9 @@ InsertPointAnalysis::computeLastInsertPoint(const LiveInterval &CurLI,
 
   SmallVector<const MachineBasicBlock *, 1> ExceptionalSuccessors;
   bool EHPadSuccessor = false;
+  // TODO: Fix this hack, separate MultiRetcall from EHPadSuccessor
   for (const MachineBasicBlock *SMBB : MBB.successors()) {
-    if (SMBB->isEHPad()) {
+    if (SMBB->isEHPad() || SMBB->isMultiRetCallIndirectTarget()) {
       ExceptionalSuccessors.push_back(SMBB);
       EHPadSuccessor = true;
     } else if (SMBB->isInlineAsmBrIndirectTarget())
@@ -112,7 +114,12 @@ InsertPointAnalysis::computeLastInsertPoint(const LiveInterval &CurLI,
       if (I->isCall()) {
 	LIP.second = LIS.getInstructionIndex(*I);
         break;
+      } else if ( TLI->isSaveContextOpcode(*I) ) {
+	// For the case that we encounter a save context + multireturncall (similar to setjmp)  
+	LIP.second = LIS.getInstructionIndex(*I);
+        break;
       }
+
     }
   }
 
