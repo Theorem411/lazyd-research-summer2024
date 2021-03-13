@@ -29,10 +29,10 @@ llvm::findPHICopyInsertPoint(MachineBasicBlock* MBB, MachineBasicBlock* SuccMBB,
   // the copy before the call/invoke instruction. Similarly for an INLINEASM_BR
   // going to an indirect target. This is similar to SplitKit.cpp's
   // computeLastInsertPoint, and similarly assumes that there cannot be multiple
-  // instructions that are Calls with EHPad successors or INLINEASM_BR in a
+  // instructions that are Calls with EHPad successors or INLINEASM_BR or a retpad in a
   // block.
   bool EHPadSuccessor = SuccMBB->isEHPad();
-  if (!EHPadSuccessor && !SuccMBB->isInlineAsmBrIndirectTarget())
+  if (!EHPadSuccessor && !SuccMBB->isInlineAsmBrIndirectTarget() && !SuccMBB->isMultiRetCallIndirectTarget())
     return MBB->getFirstTerminator();
 
   // Discover any defs in this basic block.
@@ -58,7 +58,36 @@ llvm::findPHICopyInsertPoint(MachineBasicBlock* MBB, MachineBasicBlock* SuccMBB,
     }
   }
 
+#if 0
   // Make sure the copy goes after any phi nodes but before
   // any debug nodes.
+  auto newInsertPoint = MBB->SkipPHIsAndLabels(InsertPoint);
+  auto TLI = MBB->getParent()->getSubtarget().getTargetLowering();
+  
+  outs() << "\n============================\n";
+  MBB->dump();
+
+  outs()<< "MBB begin\n";
+  MBB->begin()->dump();
+
+  outs() << "Inserpoint\n";
+  newInsertPoint->dump();
+
+  // If insertpoint is savecontext opcode, return 
+  if(TLI->isSaveContextOpcode(*newInsertPoint)) 
+    return newInsertPoint;
+    
+  // Make sure that the newInsertPoint is not after a SaveContextOpcode
+  auto tmpInsertPoint = newInsertPoint;
+  while(tmpInsertPoint != MBB->begin()) {
+    tmpInsertPoint->dump();
+    assert(!TLI->isSaveContextOpcode(*tmpInsertPoint) && "Insert point can not be after save context opcode");
+    --tmpInsertPoint;
+    
+  }
+
+  return newInsertPoint;
+#else
   return MBB->SkipPHIsAndLabels(InsertPoint);
+#endif
 }
