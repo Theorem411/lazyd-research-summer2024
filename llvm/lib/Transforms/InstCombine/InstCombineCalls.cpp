@@ -2880,12 +2880,23 @@ Instruction *InstCombinerImpl::visitCallBase(CallBase &Call) {
       if (isa<CallInst>(OldCall))
         return eraseInstFromFunction(*OldCall);
 
+
       // We cannot remove an invoke or a callbr, because it would change thexi
       // CFG, just change the callee to a null pointer.
       cast<CallBase>(OldCall)->setCalledFunction(
           CalleeF->getFunctionType(),
           Constant::getNullValue(CalleeF->getType()));
       return nullptr;
+#if 0
+      // TODO: CNP check interface
+      // We cannot remove an multiretcall, because it would change the CFG, just
+      // change the callee to a null pointer.            
+      if(isa<MultiRetCallInst>(OldCall))
+	cast<MultiRetCallInst>(OldCall)->setCalledFunction(
+						     Constant::getNullValue(CalleeF->getType()));
+      return nullptr;
+#endif
+      
     }
   }
 
@@ -2901,6 +2912,11 @@ Instruction *InstCombinerImpl::visitCallBase(CallBase &Call) {
 
     if (Call.isTerminator()) {
       // Can't remove an invoke or callbr because we cannot change the CFG.
+      return nullptr;
+    }
+
+    if (isa<MultiRetCallInst>(CS.getInstruction())) {
+      // Can't remove an multiretcall because we cannot change the CFG.
       return nullptr;
     }
 
@@ -3136,9 +3152,13 @@ bool InstCombinerImpl::transformConstExprCastCall(CallBase &Call) {
             if (PN->getParent() == II->getNormalDest() ||
                 PN->getParent() == II->getUnwindDest())
               return false;
+
       // FIXME: Be conservative for callbr to avoid a quadratic search.
       if (isa<CallBrInst>(Caller))
         return false;
+
+      if (isa<MultiRetCallInst>(Caller))
+	return false;
     }
   }
 
@@ -3302,6 +3322,8 @@ bool InstCombinerImpl::transformConstExprCastCall(CallBase &Call) {
   } else if (CallBrInst *CBI = dyn_cast<CallBrInst>(Caller)) {
     NewCall = Builder.CreateCallBr(Callee, CBI->getDefaultDest(),
                                    CBI->getIndirectDests(), Args, OpBundles);
+  } else if (MultiRetCallInst *II = dyn_cast<MultiRetCallInst>(Caller)) {
+    NewCS = Builder.CreateMultiRetCall(Callee, II->getDefaultDest(), II->getIndirectDests(), Args, OpBundles);
   } else {
     NewCall = Builder.CreateCall(Callee, Args, OpBundles);
     cast<CallInst>(NewCall)->setTailCallKind(
@@ -3330,6 +3352,9 @@ bool InstCombinerImpl::transformConstExprCastCall(CallBase &Call) {
       } else if (CallBrInst *CBI = dyn_cast<CallBrInst>(Caller)) {
         BasicBlock::iterator I = CBI->getDefaultDest()->getFirstInsertionPt();
         InsertNewInstBefore(NC, *I);
+      } else if (MultiRetCallInst *II = dyn_cast<MultiRetCallInst>(Caller)) {
+	BasicBlock::iterator I = II->getDefaultDest()->getFirstInsertionPt();
+	InsertNewInstBefore(NC, *I);
       } else {
         // Otherwise, it's a call, just insert cast right after the call.
         InsertNewInstBefore(NC, *Caller);
@@ -3484,6 +3509,12 @@ InstCombinerImpl::transformCallThroughTrampoline(CallBase &Call,
                                CBI->getIndirectDests(), NewArgs, OpBundles);
         cast<CallBrInst>(NewCaller)->setCallingConv(CBI->getCallingConv());
         cast<CallBrInst>(NewCaller)->setAttributes(NewPAL);
+      } else if(MultiRetCallInst *II = dyn_cast<MultiRetCallInst>(Caller)) {
+	NewCaller =
+	  MultiRetCallInst::Create(NewFTy, NewCallee, II->getDefaultDest(),
+			     II->getIndirectDests(), NewArgs, OpBundles);
+	cast<MultiRetCallInst>(NewCaller)->setCallingConv(II->getCallingConv());
+	cast<MultiRetCallInst>(NewCaller)->setAttributes(NewPAL);
       } else {
         NewCaller = CallInst::Create(NewFTy, NewCallee, NewArgs, OpBundles);
         cast<CallInst>(NewCaller)->setTailCallKind(
