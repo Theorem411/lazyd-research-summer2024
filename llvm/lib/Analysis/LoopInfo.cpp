@@ -731,6 +731,8 @@ bool Loop::isSafeToClone() const {
     if (isa<IndirectBrInst>(BB->getTerminator()) ||
         isa<CallBrInst>(BB->getTerminator()))
       return false;
+    if (isa<MultiRetCallInst>(BB->getTerminator()))
+      return false;
 
     for (Instruction &I : *BB)
       if (auto *CB = dyn_cast<CallBase>(&I))
