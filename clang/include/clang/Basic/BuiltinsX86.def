@@ -2176,6 +2176,9 @@ BUILTIN(__builtin_uli_save_callee, "vv*v*", "")
 BUILTIN(__builtin_uli_save_context_nosp, "vv*v*", "")
 BUILTIN(__builtin_uli_restore_context, "vv*", "")
 
+// Return child's address of return address
+BUILTIN(__builtin_uli_child_addressofreturnaddress, "v*", "")
+
 // return from uli interrup
 BUILTIN(__builtin_uli_retq, "v", "")
 
