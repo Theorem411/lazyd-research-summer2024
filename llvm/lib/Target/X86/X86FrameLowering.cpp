@@ -1817,8 +1817,19 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
             false, -FrameSize - HackOffset);
         instructions_to_delete.push_back(inst);
       } else if (inst->getOpcode() == X86::ULI_GET_WORKCONTEXT) {
+	// Should be done in a separate file
+
 	// For now move 0x8(%rsp) to the destination register
 	addRegOffset(BuildMI(*mb, inst, DL, TII.get(X86::MOV64rm), inst->getOperand(0).getReg()), StackPtr, false, 8);
+        instructions_to_delete.push_back(inst);
+      } else if (inst->getOpcode() == X86::ULI_CHILD_ADDRESSOFRETURNADDRESS) {
+	// Should be done in a separate file
+
+	// For now LEAQ -0x8(%rsp) to destination register
+	auto SrcReg =  X86::RSP;
+        auto offset =  -8;
+        addRegOffset(BuildMI(*mb, inst, DL, TII.get(X86::LEA64r), inst->getOperand(0).getReg()), SrcReg,
+            false, offset);
         instructions_to_delete.push_back(inst);
       } 
     }

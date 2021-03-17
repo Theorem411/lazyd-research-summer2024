@@ -5945,6 +5945,9 @@ let TargetPrefix = "x86" in {
 //===----------------------------------------------------------------------===//
 // Misc functions that are helpers for stacklets
 let TargetPrefix = "x86" in {
+  def int_x86_uli_child_addressofreturnaddress : GCCBuiltin<"__builtin_uli_child_addressofreturnaddress">,
+       Intrinsic<[llvm_ptr_ty], [], [IntrNoMem]>;
+
   def int_x86_read_sp : GCCBuiltin<"__builtin_read_sp">,
        Intrinsic<[llvm_i64_ty], [], [IntrNoMem]>;
   def int_x86_get_frame_size : GCCBuiltin<"__builtin_get_frame_size">,
@@ -5969,6 +5972,7 @@ let TargetPrefix = "x86" in {
        Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
   def int_x86_uli_restore_context : GCCBuiltin<"__builtin_uli_restore_context">,
        Intrinsic<[], [llvm_ptr_ty], []>;
+  // TODO: May not be used
   // uli_reload_here: Used to prevent gvn optimization in the slow path. Forces a reload
   // before merging back to a slow path (PRE optimization allow this)
   def int_x86_uli_reload_here : GCCBuiltin<"__builtin_uli_reload_here">,

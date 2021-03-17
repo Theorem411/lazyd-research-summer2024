@@ -163,6 +163,8 @@ in {
                       [(int_x86_setup_rbp_from_sp_in_rbp)]>;
    def ULI_GET_WORKCONTEXT : PseudoI<(outs GR64:$dst), (ins),
                       [(set GR64:$dst, (int_x86_uli_get_workcontext))]>;
+   def ULI_CHILD_ADDRESSOFRETURNADDRESS : PseudoI<(outs GR64:$dst), (ins),
+                      [(set GR64:$dst, (int_x86_uli_child_addressofreturnaddress))]>;
 
 
  let Uses = [R10, R11] in		      
