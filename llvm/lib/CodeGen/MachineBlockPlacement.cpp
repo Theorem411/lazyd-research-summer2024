@@ -713,6 +713,7 @@ BranchProbability MachineBlockPlacement::collectViableSuccessors(
   for (MachineBasicBlock *Succ : BB->successors()) {
     bool SkipSucc = false;
 
+    // TODO: No longer needed
     // If the "landing pad" is a gotstolen handler or slow path entry or unwind path, then consider 
     // it as a viable successor, otherwise it would generate the wrong control flow in backend
     bool bOnlyEHPad = Succ->isEHPad();
@@ -2089,6 +2090,7 @@ MachineBlockPlacement::findBestLoopTopHelper(
   for (MachineBasicBlock *Pred : OldTop->predecessors()) {
     if (!LoopBlockSet.count(Pred))
       continue;
+
     if (Pred == L.getHeader())
       continue;
     LLVM_DEBUG(dbgs() << "   old top pred: " << getBlockName(Pred) << ", has "
@@ -2105,6 +2107,20 @@ MachineBlockPlacement::findBestLoopTopHelper(
     }
 
     if (!canMoveBottomBlockToTop(Pred, OldTop))
+      continue;
+
+    // Prevents a det.cont to be the best loop top.
+    // If det.cont is at the top of loop, det.achd needs to perform a jump to det.cont
+    // If a jump is inserted, the return address of det.achd is no longer det.cont but a jmp
+    // Hence no work will be created during unwind
+    if(Pred->isMultiRetCallIndirectTarget())
+      continue;
+
+    DEBUG(dbgs() << "    header pred: " << getBlockName(Pred) << ", has "
+                 << Pred->succ_size() << " successors, ";
+          MBFI->printBlockFreq(dbgs(), Pred) << " freq\n");
+
+    if (Pred->succ_size() > 1)
       continue;
 
     BlockFrequency Gains = FallThroughGains(Pred, OldTop, OtherBB,
