@@ -29,6 +29,7 @@ struct HandleUnwindPollPass
   bool handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPathEntry);
   bool handleSaveRestoreCtx(BasicBlock &BB);
   BasicBlock* findUnwindPathEntry(Function &F);
+  bool   detachExists(Function &F);
 public:
   /// \return Preserved analyses of function \p F after transformation.
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);

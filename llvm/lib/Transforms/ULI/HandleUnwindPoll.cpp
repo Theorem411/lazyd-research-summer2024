@@ -638,6 +638,22 @@ namespace {
   
 }
 
+bool HandleUnwindPollPass::detachExists(Function& F) {
+  Module* M = F.getParent();
+  
+  for(auto &Fcn : *M) {
+    for (auto &BB : Fcn) {
+      for (auto it = BB.begin(); it != BB.end(); ++it) {
+	auto &instr = *it;
+      
+	if(isa<DetachInst>(&instr))
+	  return true;
+      }
+    }
+  }
+  return false;
+}
+
 BasicBlock* HandleUnwindPollPass::findUnwindPathEntry(Function& F) {
   BasicBlock* unwindPathEntry = nullptr;
   for (auto &BB : F) {
@@ -782,6 +798,7 @@ bool HandleUnwindPollPass::runInitialization(Module &M) {
 bool HandleUnwindPollPass::runImpl(Function &F) {
   bool changed = false;
 
+  bool bDetachExists= detachExists(F);
   auto unwindPathEntry = findUnwindPathEntry(F);  
 
   if(unwindPathEntry && !initialized) {
@@ -806,8 +823,11 @@ bool HandleUnwindPollPass::runImpl(Function &F) {
   }
 
   for (auto &BB : F) {
-    // Find unwind path entry
-    changed |= handleUnwindPoll(BB, unwindPathEntry);
+    // If detach have not been lowered, don't lower the poll
+    if(!bDetachExists)
+      // Find unwind path entry
+      changed |= handleUnwindPoll(BB, unwindPathEntry);
+    
     changed |= handleSaveRestoreCtx(BB);
   }
   return changed;
