@@ -41,6 +41,7 @@ static cl::opt<bool> PrepareForLTOOption(
     cl::desc("Run loop-rotation in the prepare-for-lto stage. This option "
              "should be used for testing only."));
 
+
 LoopRotatePass::LoopRotatePass(bool EnableHeaderDuplication, bool PrepareForLTO)
     : EnableHeaderDuplication(EnableHeaderDuplication),
       PrepareForLTO(PrepareForLTO) {}
