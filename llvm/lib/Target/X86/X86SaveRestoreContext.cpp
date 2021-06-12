@@ -217,10 +217,13 @@ namespace {
 	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64rm), X86::RBP), regParam0, false, I_RBP);
 	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::TAILJMPm64)), regParam0, false, I_RIP);
 	  inst2delete.push_back(&*I);
-	} else if (I->getOpcode() == X86::ULI_SAVE_CALLEE) {
+	} else if (I->getOpcode() == X86::ULI_SAVE_CALLEE || I->getOpcode() == X86::ULI_SAVE_CALLEE_NOSP) {
 	  // Store base pointer 
 	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RBP).addReg(X86::RBP);
-	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RSP).addReg(X86::RSP);	  
+	  
+	  if (I->getOpcode() == X86::ULI_SAVE_CALLEE) {
+	    addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RSP).addReg(X86::RSP);	  
+	  }
 	  // Store the second argument (IP) into the first argument + offset
 	  addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RIP).addReg(I->getOperand(1).getReg());
 

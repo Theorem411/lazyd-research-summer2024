@@ -173,6 +173,8 @@ in {
       [(int_x86_uli_save_context R10, R11)]>;
    def ULI_SAVE_CALLEE : PseudoI<(outs), (ins),
       [(int_x86_uli_save_callee R10, R11)]>;
+   def ULI_SAVE_CALLEE_NOSP : PseudoI<(outs), (ins),
+      [(int_x86_uli_save_callee_nosp R10, R11)]>;   
    def ULI_SAVE_CONTEXT_NOSP : PseudoI<(outs), (ins),
       [(int_x86_uli_save_context_nosp R10, R11)]>;
  }

@@ -5968,13 +5968,11 @@ let TargetPrefix = "x86" in {
        Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
   def int_x86_uli_save_callee : GCCBuiltin<"__builtin_uli_save_callee">,
        Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+  // TODO: Keep here for now. May delete this in the future
+  def int_x86_uli_save_callee_nosp : GCCBuiltin<"__builtin_uli_save_callee_nosp">,
+       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;  
   def int_x86_uli_save_context_nosp : GCCBuiltin<"__builtin_uli_save_context_nosp">,
        Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
   def int_x86_uli_restore_context : GCCBuiltin<"__builtin_uli_restore_context">,
-       Intrinsic<[], [llvm_ptr_ty], []>;
-  // TODO: May not be used
-  // uli_reload_here: Used to prevent gvn optimization in the slow path. Forces a reload
-  // before merging back to a slow path (PRE optimization allow this)
-  def int_x86_uli_reload_here : GCCBuiltin<"__builtin_uli_reload_here">,
        Intrinsic<[], [llvm_ptr_ty], []>;
 }
