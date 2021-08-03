@@ -28,7 +28,7 @@ using namespace llvm;
 #define I_RIP 1   // Instruction pointer
 #define I_RSP 2   // Stack pointer
 // Callee register
-#define I_RBX 3 
+#define I_RBX 3
 #define I_R12 4
 #define I_R13 5
 #define I_R14 6
@@ -44,20 +44,24 @@ using namespace llvm;
 #define I_RCX 15
 #define I_RAX 16
 
-#define I_JOINCNT 17 // Join counter 
+#define I_JOINCNT 17 // Join counter
 #define I_NEWRSP 18 // New rsp of the parallel task
 #define I_OWNER 19 // Who owns the job
 #define I_LOC  20 // Location on the parallel task queue of the owner
 #define I_ADDRLOC  21 // The address in the stack that store the location of work
-#define I_PADDING1 22
-#define I_PADDING2 23
-#define WORKCTX_SIZE I_PADDING2 + 1
+#define I_DEQ_CMPLT 22
+#define I_SLOWPATH_DEQUE 23
+#define WORKCTX_SIZE I_SLOWPATH_DEQUE + 1
 
-using workcontext_ty = void * [WORKCTX_SIZE];
 using unwind_poll_ty = int(void);
 using mylongwithoutjmp_callee_ty = void (void**);
 
 #define UNWINDRTS_FUNC(name, CGF) Get__unwindrts_##name(CGF)
+
+// Set the size of the work context length
+static cl::opt<int> WorkCtxLen2(
+    "set-workctx-len2", cl::init(WORKCTX_SIZE), cl::NotHidden,
+    cl::desc("Size of work context length (default = WORKCTX_SIZE)"));
 
 // The type of polling used (ignored if DisableUnwindPoll = true)
 static cl::opt<std::string> UnwindPollingType_2(
@@ -70,11 +74,11 @@ static cl::opt<bool> EnableSaveRestoreCtx_2(
     cl::desc("Use builtin to save restore context (default = off)"));
 
 
-#define DEFAULT_GET_LIB_FUNC(name)					\
-  static Constant *Get_##name(Module& M) {				\
-    return M.getOrInsertFunction( #name,				\
-				  TypeBuilder< name##_ty, false>::get(M.getContext()) \
-				  );					\
+#define DEFAULT_GET_LIB_FUNC(name)                                      \
+  static Constant *Get_##name(Module& M) {                              \
+    return M.getOrInsertFunction( #name,                                \
+                                  TypeBuilder< name##_ty, false>::get(M.getContext()) \
+                                  );                                    \
   }
 
 using mylongjmp_callee_ty = void (void**);
@@ -124,16 +128,16 @@ namespace {
   };
 
   /// \brief  Create Global variable if it exists, if it doesn't it, create
-  GlobalVariable* GetGlobalVariable(const char* GlobalName, Type* GlobalType, Module& M, bool localThread=false){    
+  GlobalVariable* GetGlobalVariable(const char* GlobalName, Type* GlobalType, Module& M, bool localThread=false){
     GlobalVariable* globalVar = M.getNamedGlobal(GlobalName);
     if(globalVar){
       return globalVar;
     }
     globalVar = dyn_cast<GlobalVariable>(M.getOrInsertGlobal(GlobalName, GlobalType));
-    globalVar->setLinkage(GlobalValue::ExternalLinkage);  
+    globalVar->setLinkage(GlobalValue::ExternalLinkage);
     if(localThread)
-      globalVar->setThreadLocal(true);    
-    return globalVar; 
+      globalVar->setThreadLocal(true);
+    return globalVar;
   }
 
   /// \brief Helper to find a function with the given name, creating it if it
@@ -141,15 +145,15 @@ namespace {
   /// false, signifying that the caller needs to add the function body.
   template <typename T>
   bool GetOrCreateFunction(const char *FnName, Module& M,
-			   Function *&Fn,
-			   Function::LinkageTypes Linkage =
-			   Function::InternalLinkage,
-			   bool DoesNotThrow = true) {
+                           Function *&Fn,
+                           Function::LinkageTypes Linkage =
+                           Function::InternalLinkage,
+                           bool DoesNotThrow = true) {
     LLVMContext &Ctx = M.getContext();
     Fn = M.getFunction(FnName);
     if (Fn)
       return true;
-    
+
     // Otherwise we have to create it
     FunctionType *FTy = TypeBuilder<T, false>::get(Ctx);
     Fn = Function::Create(FTy, Linkage, FnName, &M);
@@ -158,8 +162,8 @@ namespace {
       Fn->setDoesNotThrow();
     return false;
   }
-  
-  /// \brief MySetJmp 
+
+  /// \brief MySetJmp
   Function* Get__unwindrts_mysetjmp_callee(Module& M) {
     // Inline assembly to move the callee saved regist to rdi
     Function* Fn = nullptr;
@@ -170,9 +174,9 @@ namespace {
     BasicBlock* Entry = BasicBlock::Create(Ctx, "mysetjmp.entry", Fn);
 
     Type* Int32Ty = TypeBuilder<int32_t, false>::get(Ctx);
-    Value* ZERO = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);  
-    Value* ONE = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);  
-    
+    Value* ZERO = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
+    Value* ONE = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
+
     Function::arg_iterator args = Fn->arg_begin();
     Value* argsCtx = &*args;
     using AsmTypeCallee = void (void**);
@@ -180,8 +184,8 @@ namespace {
 
     Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rdi\nmovq %rbp, 0(%rdi)\nmovq %rsp, 16(%rdi)\nmovq %rbx, 24(%rdi)\nmovq %r12, 32(%rdi)\nmovq %r13, 40(%rdi)\nmovq %r14, 48(%rdi)\nmovq %r15, 56(%rdi)\n", "r,~{rdi},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     IRBuilder<> B(Entry);
-    
-    B.CreateCall(Asm, {argsCtx});    
+
+    B.CreateCall(Asm, {argsCtx});
     B.CreateRet(ONE);
     return Fn;
   }
@@ -197,9 +201,9 @@ namespace {
     BasicBlock* Entry  = BasicBlock::Create(Ctx, "mysetjmp.entry", Fn);
 
     Type* Int32Ty = TypeBuilder<int32_t, false>::get(Ctx);
-    Value* ZERO = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);  
-    Value* ONE = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);  
-    
+    Value* ZERO = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
+    Value* ONE = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
+
     Function::arg_iterator args = Fn->arg_begin();
     Value* argsCtx = &*args;
     using AsmTypeCallee = void (void**);
@@ -207,11 +211,11 @@ namespace {
 
     Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rdi\nmovq %rbp, 0(%rdi)\nmovq %rbx, 24(%rdi)\nmovq %r12, 32(%rdi)\nmovq %r13, 40(%rdi)\nmovq %r14, 48(%rdi)\nmovq %r15, 56(%rdi)\n", "r,~{rdi},~{rsi},~{r8},~{r9},~{r10},~{r11},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     IRBuilder<> B(Entry);
-    
-    B.CreateCall(Asm, {argsCtx});    
+
+    B.CreateCall(Asm, {argsCtx});
     //auto OpaqueTrueTy = FunctionType::get(Type::getInt32Ty(Ctx), false);
     //auto OpaqueTrue = InlineAsm::get(OpaqueTrueTy, "xor $0, $0",  "=r,~{dirflag},~{fpsr},~{flags}", false);
-    //CallInst* res = B.CreateCall(OpaqueTrue); 
+    //CallInst* res = B.CreateCall(OpaqueTrue);
     B.CreateRet(ONE);
 
     return Fn;
@@ -223,14 +227,14 @@ namespace {
       return Fn;
 
     LLVMContext& Ctx = M.getContext();
-    BasicBlock* Entry           = BasicBlock::Create(Ctx, "mylongjmp.entry", Fn);    
+    BasicBlock* Entry           = BasicBlock::Create(Ctx, "mylongjmp.entry", Fn);
     Function::arg_iterator args = Fn->arg_begin();
     Value* argsCtx = &*args;
     using AsmTypCallee = void ( void** );
     FunctionType *FAsmTypCallee = TypeBuilder<AsmTypCallee, false>::get(Ctx);
     //Value *Asm = InlineAsm::get(FAsmTypCallee, "movq $0, %rdi\nmovq 0(%rdi), %rbp\nmovq 16(%rdi), %rsp\nmovq 24(%rdi), %rbx\nmovq 32(%rdi), %r12\nmovq 40(%rdi), %r13\nmovq 48(%rdi), %r14\nmovq 56(%rdi), %r15\njmpq *8(%rdi)", "r,~{rdi},~{rbx},~{r12},~{r13},~{r14},~{r15},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     Value *Asm = InlineAsm::get(FAsmTypCallee, "movq $0, %rdi\nmovq 0(%rdi), %rbp\nmovq 16(%rdi), %rsp\nmovq 24(%rdi), %rbx\nmovq 32(%rdi), %r12\nmovq 40(%rdi), %r13\nmovq 48(%rdi), %r14\nmovq 56(%rdi), %r15\njmpq *8(%rdi)", "r,~{rdi},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
-    IRBuilder<> B(Entry);    
+    IRBuilder<> B(Entry);
     B.CreateCall(Asm, argsCtx);
     B.CreateRetVoid();
     return Fn;
@@ -242,14 +246,14 @@ namespace {
       return Fn;
 
     LLVMContext& Ctx = M.getContext();
-    BasicBlock* Entry           = BasicBlock::Create(Ctx, "mywithoutlongjmp.entry", Fn);    
+    BasicBlock* Entry           = BasicBlock::Create(Ctx, "mywithoutlongjmp.entry", Fn);
     Function::arg_iterator args = Fn->arg_begin();
     Value* argsCtx = &*args;
     using AsmTypCallee = void ( void** );
     FunctionType *FAsmTypCallee = TypeBuilder<AsmTypCallee, false>::get(Ctx);
     Value *Asm = InlineAsm::get(FAsmTypCallee, "movq $0, %rdi\nmovq 0(%rdi), %rbp\nmovq 16(%rdi), %rsp\nmovq 24(%rdi), %rbx\nmovq 32(%rdi), %r12\nmovq 40(%rdi), %r13\nmovq 48(%rdi), %r14\nmovq 56(%rdi), %r15\n", "r,~{rdi},~{rbx},~{r12},~{r13},~{r14},~{r15},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
 
-    IRBuilder<> B(Entry);    
+    IRBuilder<> B(Entry);
     B.CreateCall(Asm, argsCtx);
     B.CreateRetVoid();
     return Fn;
@@ -261,14 +265,15 @@ namespace {
     if (GetOrCreateFunction<unwind_poll_ty>("unwind_poll_llvm", M, Fn))
     return Fn;
     LLVMContext& Ctx = M.getContext();
-    
+    auto workcontext_ty = ArrayType::get(PointerType::getInt8PtrTy(Ctx), WorkCtxLen2);
+
     BasicBlock* PollEntry = BasicBlock::Create(Ctx, "poll.entry", Fn);
     BasicBlock* StartUnwind = BasicBlock::Create(Ctx, "start.unwind", Fn);
     BasicBlock* ResumeParent = BasicBlock::Create(Ctx, "resume.parent", Fn);
     BasicBlock* InitiateUnwind = BasicBlock::Create(Ctx, "initiate.unwind", Fn);
     BasicBlock* ReturnFromPoll = BasicBlock::Create(Ctx, "return.from.poll", Fn);
     IRBuilder<> B(PollEntry);
-  
+
     Value *ONE = B.getInt32(1);
     Value *ZERO = B.getInt32(0);
     Value* ONEBYTE = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
@@ -285,7 +290,7 @@ namespace {
     //auto bWorkExists = B.CreateAlignedLoad(pbWorkExists, 4);
 #if 0
     // Why so expensive?
-    // if(readcyclecounter - latestTime >= thresholdTime) 
+    // if(readcyclecounter - latestTime >= thresholdTime)
     Function* readcyclecounter = Intrinsic::getDeclaration(&M, Intrinsic::readcyclecounter);
     Value* cyclecounter = B.CreateCall(readcyclecounter);
     auto diffCtr = B.CreateSub(cyclecounter, latestTime);
@@ -294,10 +299,10 @@ namespace {
 
     B.SetInsertPoint(InitiateUnwind);
     // Update latest time
-    B.CreateAlignedStore(cyclecounter, platestTime, 8);  
+    B.CreateAlignedStore(cyclecounter, platestTime, 8);
 #else
     auto incCtr = B.CreateAdd(latestTime, B.getInt64(1));
-    B.CreateAlignedStore(incCtr, platestTime, 8);  
+    B.CreateAlignedStore(incCtr, platestTime, 8);
     auto cmpVal = B.CreateICmpSGE(latestTime, thresholdTime);
     auto cmpVal2 = B.CreateICmpEQ(bWorkExists, B.getInt32(0));
     auto cmpAnd = B.CreateAnd(cmpVal, cmpVal2);
@@ -305,36 +310,36 @@ namespace {
 
     B.SetInsertPoint(InitiateUnwind);
     // Update latest time
-    B.CreateAlignedStore(B.getInt64(0), platestTime, 8);  
+    B.CreateAlignedStore(B.getInt64(0), platestTime, 8);
 
 #endif
     // mysetjmp_callee(unwindCtx)
     // Store my context
-    GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", TypeBuilder<workcontext_ty,false>::get(Ctx), M, true);
+    GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", workcontext_ty, M, true);
     Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
-    
+
 #if 0
     Constant *MYSETJMP_CALLEE = UNWINDRTS_FUNC(mysetjmp_callee, M);
-    Value *res2 = B.CreateCall(MYSETJMP_CALLEE, {gunwind_ctx});   
+    Value *res2 = B.CreateCall(MYSETJMP_CALLEE, {gunwind_ctx});
     llvm::InlineFunctionInfo ifi;
-    llvm::InlineFunction(dyn_cast<CallInst>(res2), ifi, nullptr, true);                  
+    llvm::InlineFunction(dyn_cast<CallInst>(res2), ifi, nullptr, true);
 
     // unwindCtx.ip = resumeparent
     // Set context.PC to ResumeParent
-    Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, 1);   
-    B.CreateStore(BlockAddress::get(ResumeParent), savedPc);    
-   
+    Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, 1);
+    B.CreateStore(BlockAddress::get(ResumeParent), savedPc);
+
     // Trashed callee register
     using AsmTypeCallee = void (void);
     FunctionType *reloadCaller = TypeBuilder<AsmTypeCallee, false>::get(Ctx);
     Value *Asm = InlineAsm::get(reloadCaller, "", "~{rdi},~{rsi},~{r8},~{r9},~{r10},~{r11},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
-    B.CreateCall(Asm);        
+    B.CreateCall(Asm);
 
     // Potential jump to return unwind
     // potential_jump(ResumeParent);
     auto OpaqueTrueTy = FunctionType::get(Type::getInt1Ty(Ctx), false);
     auto OpaqueTrue = InlineAsm::get(OpaqueTrueTy, "xor $0, $0",  "=r,~{dirflag},~{fpsr},~{flags}", false);
-    CallInst* res = B.CreateCall(OpaqueTrue); 
+    CallInst* res = B.CreateCall(OpaqueTrue);
     // Somehow need to set this to true to avoid cloberring with the alloca for fork result (analysis restul from MemoryDependency analysis)
     res->setTailCall(true);
     B.CreateCondBr(res, ResumeParent, StartUnwind);
@@ -343,9 +348,9 @@ namespace {
     if(!EnableSaveRestoreCtx_2) {
       Value* NULL8 = ConstantPointerNull::get(IntegerType::getInt8Ty(Ctx)->getPointerTo());
       auto donothingFcn = Intrinsic::getDeclaration(&M, Intrinsic::donothing);
-      auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);      
-      auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), StartUnwind, ResumeParent, {});   
-      
+      auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);
+      auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), StartUnwind, ResumeParent, {});
+
       B.SetInsertPoint(insertPoint);
       B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(InitiateUnwind, 1)});
       B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), NULL8});
@@ -354,17 +359,17 @@ namespace {
       //B.CreateStore(BlockAddress::get(InitiateUnwind, 1), savedPc);
 
     } else {
-      Constant* MYSETJMP_CALLEE = Get_mysetjmp_callee(M); 
-      auto setjmp = B.CreateCall(MYSETJMP_CALLEE, {(gunwind_ctx)}); 
+      Constant* MYSETJMP_CALLEE = Get_mysetjmp_callee(M);
+      auto setjmp = B.CreateCall(MYSETJMP_CALLEE, {(gunwind_ctx)});
       auto isEqZero64 = B.CreateICmpEQ(setjmp, B.getInt32(0));
       auto branchInst = B.CreateCondBr(isEqZero64, StartUnwind, ResumeParent);
     }
-    
+
 #endif
-    
+
     // return 1
     B.SetInsertPoint(StartUnwind);
-    
+
 
     B.CreateRet(ONE);
 
@@ -373,13 +378,13 @@ namespace {
     Constant* postunwind = Get_postunwind(M);
     B.CreateCall(postunwind);
 
-    B.CreateBr(ReturnFromPoll);    
-    
+    B.CreateBr(ReturnFromPoll);
+
     // return 0
     B.SetInsertPoint(ReturnFromPoll);
     B.CreateRet(ZERO);
 
-    return Fn;    
+    return Fn;
   }
 
   /*
@@ -387,30 +392,30 @@ namespace {
     goto unwindPathEntry;
     }
 
-    New Function for suspend: 
+    New Function for suspend:
     unwind_suspend_llvm() {
     poll.entry:
-    
-    // Suspend when threshold 
+
+    // Suspend when threshold
     if(readcyclecounter - load @latestTime >= load @thresholdTime) {
     initiate.unwind:
     store @latestTime <- readcyclecounter
-	
+
     // If we already have work, just suspend
     if(bWorkExists) {
     unwind_suspend();
     return 0;
     }
-	
+
     // Otherwise, create the work, then suspend
-    mysetjmp_callee (gunwind_ctx);     
+    mysetjmp_callee (gunwind_ctx);
     gunwind_ctx.ip <- return_here;
     trashed callee register;
     potential jump to return_here;
-      
+
     start.unwind:
     return 1;
-	
+
     resume.parent:
     postunwind(); // Runtime call
     unwind_suspend(); // Runtime call
@@ -418,7 +423,7 @@ namespace {
     return.from.poll:
     return 0;
     }
-      
+
   */
 
   // Suspend. Only create work if there is no parallel task
@@ -427,16 +432,17 @@ namespace {
     if (GetOrCreateFunction<unwind_poll_ty>("unwind_suspend_llvm", M, Fn))
     return Fn;
     LLVMContext& Ctx = M.getContext();
-    
+    auto workcontext_ty = ArrayType::get(PointerType::getInt8PtrTy(Ctx), WorkCtxLen2);
+
     BasicBlock* PollEntry = BasicBlock::Create(Ctx, "poll.entry", Fn);
     BasicBlock* StartUnwind = BasicBlock::Create(Ctx, "start.unwind", Fn);
     BasicBlock* ResumeParent = BasicBlock::Create(Ctx, "resume.parent", Fn);
     BasicBlock* CheckForWork = BasicBlock::Create(Ctx, "check.for.work", Fn);
-    BasicBlock* ImmediateSuspend = BasicBlock::Create(Ctx, "immediate.suspend", Fn);    
+    BasicBlock* ImmediateSuspend = BasicBlock::Create(Ctx, "immediate.suspend", Fn);
     BasicBlock* InitiateUnwind = BasicBlock::Create(Ctx, "initiate.unwind", Fn);
     BasicBlock* ReturnFromPoll = BasicBlock::Create(Ctx, "return.from.poll", Fn);
     IRBuilder<> B(PollEntry);
-  
+
     Value *ONE = B.getInt32(1);
     Value *ZERO = B.getInt32(0);
     Value* ONEBYTE = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
@@ -453,7 +459,7 @@ namespace {
 
     // Check requirement
     auto incCtr = B.CreateAdd(latestTime, B.getInt64(1));
-    B.CreateAlignedStore(incCtr, platestTime, 8);  
+    B.CreateAlignedStore(incCtr, platestTime, 8);
     auto cmpVal = B.CreateICmpSGE(latestTime, thresholdTime);
     B.CreateCondBr(cmpVal, CheckForWork, ReturnFromPoll);
 
@@ -462,33 +468,33 @@ namespace {
     Constant* unwind_workexists = Get_unwind_workexists(M);
     auto bWorkExists = B.CreateCall(unwind_workexists);
 
-    B.CreateAlignedStore(B.getInt64(0), platestTime, 8);  
+    B.CreateAlignedStore(B.getInt64(0), platestTime, 8);
     auto cmpVal2 = B.CreateICmpEQ(bWorkExists, B.getInt32(0));
     B.CreateCondBr(cmpVal2, InitiateUnwind, ImmediateSuspend);
-    
+
     B.SetInsertPoint(ImmediateSuspend);
-    // Suspend here 
+    // Suspend here
     B.CreateCall(unwind_suspend);
-    B.CreateBr(ReturnFromPoll);    
-    
+    B.CreateBr(ReturnFromPoll);
+
     // mysetjmp_callee(unwindCtx)
     // Store my context
     B.SetInsertPoint(InitiateUnwind);
-    GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", TypeBuilder<workcontext_ty,false>::get(Ctx), M, true);
+    GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", workcontext_ty, M, true);
     Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
-    
+
     if(!EnableSaveRestoreCtx_2) {
       auto donothingFcn = Intrinsic::getDeclaration(&M, Intrinsic::donothing);
-      auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);      
+      auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);
       B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(ResumeParent)});
-      B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), StartUnwind, ResumeParent, {});   
+      B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), StartUnwind, ResumeParent, {});
     } else {
-      Constant* MYSETJMP_CALLEE = Get_mysetjmp_callee(M); 
-      auto setjmp = B.CreateCall(MYSETJMP_CALLEE, {(gunwind_ctx)}); 
+      Constant* MYSETJMP_CALLEE = Get_mysetjmp_callee(M);
+      auto setjmp = B.CreateCall(MYSETJMP_CALLEE, {(gunwind_ctx)});
       auto isEqZero64 = B.CreateICmpEQ(setjmp, B.getInt32(0));
-      auto branchInst = B.CreateCondBr(isEqZero64, StartUnwind, ResumeParent);    
+      auto branchInst = B.CreateCondBr(isEqZero64, StartUnwind, ResumeParent);
     }
-    
+
     // return 1
     B.SetInsertPoint(StartUnwind);
     B.CreateRet(ONE);
@@ -498,15 +504,15 @@ namespace {
     Constant* postunwind = Get_postunwind(M);
     B.CreateCall(postunwind);
 
-    // Suspend here 
+    // Suspend here
     B.CreateCall(unwind_suspend);
-    B.CreateBr(ReturnFromPoll);    
-    
+    B.CreateBr(ReturnFromPoll);
+
     // return 0
     B.SetInsertPoint(ReturnFromPoll);
     B.CreateRet(ZERO);
 
-    return Fn;   
+    return Fn;
   }
 
   /*
@@ -517,37 +523,37 @@ namespace {
   goto unwindPathEntry;
   }
 
-  New Function for checking if there is request from other thread: 
+  New Function for checking if there is request from other thread:
   unwind_communicate_llvm() {
   poll.entry:
-    
+
   // There is a request from other worker
   if(request_cell != -1) {
-  initiate.unwind: 
-	
-  // If we already have work, tell the requestor to steal it from the task queue 
+  initiate.unwind:
+
+  // If we already have work, tell the requestor to steal it from the task queue
   if(bWorkExists) {
   unwind_gosteal();
   return 0;
   }
-	
+
   // Otherwise, create the work, then send the top most work
-  mysetjmp_callee (gunwind_ctx);     
+  mysetjmp_callee (gunwind_ctx);
   gunwind_ctx.ip <- return_here;
   trashed callee register;
   potential jump to return_here;
-      
+
   start.unwind:
   return 1;
-	
+
   resume.parent:
   // Give the top work to the requestor
-  postunwind_steal(); // Runtime call	
+  postunwind_steal(); // Runtime call
   }
   return.from.poll:
   return 0;
   }
-      
+
   */
 
   // Use for checking if there is a request for work
@@ -556,16 +562,17 @@ namespace {
     if (GetOrCreateFunction<unwind_poll_ty>("unwind_communicate_llvm", M, Fn))
     return Fn;
     LLVMContext& Ctx = M.getContext();
-    
+    auto workcontext_ty = ArrayType::get(PointerType::getInt8PtrTy(Ctx), WorkCtxLen2);
+
     BasicBlock* PollEntry = BasicBlock::Create(Ctx, "poll.entry", Fn);
     BasicBlock* StartUnwind = BasicBlock::Create(Ctx, "start.unwind", Fn);
     BasicBlock* ResumeParent = BasicBlock::Create(Ctx, "resume.parent", Fn);
     BasicBlock* CheckForWork = BasicBlock::Create(Ctx, "check.for.work", Fn);
-    BasicBlock* WorkExists = BasicBlock::Create(Ctx, "work.already.exists", Fn);    
+    BasicBlock* WorkExists = BasicBlock::Create(Ctx, "work.already.exists", Fn);
     BasicBlock* InitiateUnwind = BasicBlock::Create(Ctx, "initiate.unwind", Fn);
     BasicBlock* ReturnFromPoll = BasicBlock::Create(Ctx, "return.from.poll", Fn);
     IRBuilder<> B(PollEntry);
-  
+
     Value *ONE = B.getInt32(1);
     Value *ZERO = B.getInt32(0);
     Value* ONEBYTE = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
@@ -573,7 +580,7 @@ namespace {
     Constant* unwind_gosteal = Get_unwind_gosteal(M);
 
     GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
-    GlobalVariable* prequestCell = GetGlobalVariable("request_cell", IntegerType::getInt64Ty(Ctx), M, true);    
+    GlobalVariable* prequestCell = GetGlobalVariable("request_cell", IntegerType::getInt64Ty(Ctx), M, true);
     //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
 
     auto threadId = B.CreateAlignedLoad(pThreadId, 4);
@@ -592,14 +599,14 @@ namespace {
     B.CreateCondBr(cmpVal2, InitiateUnwind, WorkExists);
 
     B.SetInsertPoint(WorkExists);
-    // Already have work, send it  
+    // Already have work, send it
     B.CreateCall(unwind_gosteal);
-    B.CreateBr(ReturnFromPoll);    
+    B.CreateBr(ReturnFromPoll);
 
     // mysetjmp_callee(unwindCtx)
     // Store my context
     B.SetInsertPoint(InitiateUnwind);
-    GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", TypeBuilder<workcontext_ty,false>::get(Ctx), M, true);
+    GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", workcontext_ty, M, true);
     Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
 
     Constant* preunwind_steal = Get_preunwind_steal(M);
@@ -607,16 +614,16 @@ namespace {
 
     if(!EnableSaveRestoreCtx_2) {
       auto donothingFcn = Intrinsic::getDeclaration(&M, Intrinsic::donothing);
-      auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);      
+      auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);
       //B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(InitiateUnwind, 1)});
       B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(ResumeParent)});
-      B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), StartUnwind, ResumeParent, {});   
+      B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), StartUnwind, ResumeParent, {});
 
     } else {
-      Constant* MYSETJMP_CALLEE = Get_mysetjmp_callee(M); 
-      auto setjmp = B.CreateCall(MYSETJMP_CALLEE, {(gunwind_ctx)}); 
+      Constant* MYSETJMP_CALLEE = Get_mysetjmp_callee(M);
+      auto setjmp = B.CreateCall(MYSETJMP_CALLEE, {(gunwind_ctx)});
       auto isEqZero64 = B.CreateICmpEQ(setjmp, B.getInt32(0));
-      auto branchInst = B.CreateCondBr(isEqZero64, StartUnwind, ResumeParent);    
+      auto branchInst = B.CreateCondBr(isEqZero64, StartUnwind, ResumeParent);
     }
 
     // return 1
@@ -633,21 +640,21 @@ namespace {
     B.SetInsertPoint(ReturnFromPoll);
     B.CreateRet(ZERO);
 
-    return Fn;   
-  }  
-  
+    return Fn;
+  }
+
 }
 
 bool HandleUnwindPollPass::detachExists(Function& F) {
   Module* M = F.getParent();
-  
+
   for(auto &Fcn : *M) {
     for (auto &BB : Fcn) {
       for (auto it = BB.begin(); it != BB.end(); ++it) {
-	auto &instr = *it;
-      
-	if(isa<DetachInst>(&instr))
-	  return true;
+        auto &instr = *it;
+
+        if(isa<DetachInst>(&instr))
+          return true;
       }
     }
   }
@@ -660,20 +667,20 @@ BasicBlock* HandleUnwindPollPass::findUnwindPathEntry(Function& F) {
 
     for (auto it = BB.begin(); it != BB.end(); ++it) {
       auto &instr = *it;
-    
-      
+
+
       auto call = dyn_cast<CallInst>(&instr);
       if (!call) continue;
       auto fn = call->getCalledFunction();
       if (!fn) continue;
       if (fn->getIntrinsicID() != Intrinsic::var_annotation) continue;
-    
+
       assert(isa<ConstantInt>(call->getArgOperand(3)));
       auto intVal = dyn_cast<ConstantInt>(call->getArgOperand(3));
-      unwindPathEntry = (intVal->getSExtValue() == 3) ? &BB : nullptr;    
-      
+      unwindPathEntry = (intVal->getSExtValue() == 3) ? &BB : nullptr;
+
       if(unwindPathEntry) {
-	return unwindPathEntry;
+        return unwindPathEntry;
       }
     }
   }
@@ -684,7 +691,7 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
   // Search for the unwind path entry, if not found, return
   Module* M = BB.getModule();
   Function* F = BB.getParent();
-  LLVMContext& C = BB.getContext(); 
+  LLVMContext& C = BB.getContext();
   IRBuilder<> B(C);
 
   SmallVector<Instruction*, 4> inst2delete;
@@ -703,47 +710,47 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
       inst2delete.push_back(&instr);
       continue;
     }
-    
+
     B.SetInsertPoint(&instr);
 
     BasicBlock * startUnwindStack = BasicBlock::Create(C, "start.unwind.stack", F);
     Constant* unwind_poll = nullptr;
     if(!UnwindPollingType_2.compare("unwind-only")) {
-      unwind_poll = Get__unwindrts_unwind_poll(*M); 
+      unwind_poll = Get__unwindrts_unwind_poll(*M);
     } else if(!UnwindPollingType_2.compare("unwind-suspend")) {
-      unwind_poll = Get__unwindrts_unwind_suspend(*M);   
+      unwind_poll = Get__unwindrts_unwind_suspend(*M);
     } else if(!UnwindPollingType_2.compare("unwind-steal")) {
-      unwind_poll = Get__unwindrts_unwind_communicate(*M); 
+      unwind_poll = Get__unwindrts_unwind_communicate(*M);
     } else {
       assert(0 && "Unknown unwind-polling-type value");
     }
-	
-    auto pollLlvm = B.CreateCall(unwind_poll);	       	
+
+    auto pollLlvm = B.CreateCall(unwind_poll);
     BasicBlock* bb = pollLlvm->getParent();
     auto cond = B.CreateICmpEQ(pollLlvm, B.getInt32(1));
     auto afterBB = bb->splitBasicBlock(dyn_cast<Instruction>(cond)->getNextNode());
-    
+
     // Update terminator for bb
-    auto terminator = bb->getTerminator();	
+    auto terminator = bb->getTerminator();
     auto branch = BranchInst::Create(startUnwindStack, afterBB, cond);
     ReplaceInstWithInst(terminator, branch);
-	
+
     // TODO:If unwindPathEntry is not found, just delete the builtin
 
-    B.SetInsertPoint(startUnwindStack);	
+    B.SetInsertPoint(startUnwindStack);
     B.CreateBr(unwindPathEntry);
 
     // Remove the polling unwind
-    it->eraseFromParent();    
+    it->eraseFromParent();
 
     llvm::InlineFunctionInfo ifi;
     llvm::InlineFunction(dyn_cast<CallInst>(pollLlvm), ifi, nullptr, true);
 
     handleUnwindPoll(*afterBB, unwindPathEntry);
-    
+
     return true;
   }
-  
+
   for(auto ii: inst2delete) {
     ii->eraseFromParent();
   }
@@ -755,9 +762,9 @@ bool HandleUnwindPollPass::handleSaveRestoreCtx(BasicBlock &BB) {
   // Search for the unwind path entry, if not found, return
   Module* M = BB.getModule();
   Function* F = BB.getParent();
-  LLVMContext& C = BB.getContext(); 
+  LLVMContext& C = BB.getContext();
   IRBuilder<> B(C);
- 
+
   bool changed = false;
 
   BasicBlock* unwindPathEntry = nullptr;
@@ -767,24 +774,24 @@ bool HandleUnwindPollPass::handleSaveRestoreCtx(BasicBlock &BB) {
     if (!call) continue;
     auto fn = call->getCalledFunction();
     if (!fn) continue;
-    if ( (fn->getIntrinsicID() != Intrinsic::x86_uli_restore_context) 
-	 && (fn->getIntrinsicID() != Intrinsic::x86_uli_save_context) 
-	 && (fn->getIntrinsicID() != Intrinsic::x86_uli_save_context_nosp) ) continue;
-    
-    
-    // For now replace we function call 
+    if ( (fn->getIntrinsicID() != Intrinsic::x86_uli_restore_context)
+         && (fn->getIntrinsicID() != Intrinsic::x86_uli_save_context)
+         && (fn->getIntrinsicID() != Intrinsic::x86_uli_save_context_nosp) ) continue;
+
+
+    // For now replace we function call
     if(fn->getIntrinsicID() == Intrinsic::x86_uli_restore_context) {
       // TODO
-      
+
     } else if(fn->getIntrinsicID() == Intrinsic::x86_uli_save_context) {
 
     } else if(fn->getIntrinsicID() == Intrinsic::x86_uli_save_context_nosp) {
 
     }
-    
+
     changed = true;
   }
-  
+
   return changed;
 }
 
@@ -799,7 +806,7 @@ bool HandleUnwindPollPass::runImpl(Function &F) {
   bool changed = false;
 
   bool bDetachExists= detachExists(F);
-  auto unwindPathEntry = findUnwindPathEntry(F);  
+  auto unwindPathEntry = findUnwindPathEntry(F);
 
   if(unwindPathEntry && !initialized) {
     Module &M = *(F.getParent());
@@ -809,16 +816,16 @@ bool HandleUnwindPollPass::runImpl(Function &F) {
     fcn->addFnAttr(Attribute::NoUnwindPath);
     fcn = UNWINDRTS_FUNC(unwind_communicate, M);
     fcn->addFnAttr(Attribute::NoUnwindPath);
-  
+
     fcn = UNWINDRTS_FUNC(mysetjmp_callee, M);
     fcn->addFnAttr(Attribute::NoUnwindPath);
     fcn = UNWINDRTS_FUNC(mysetjmp_callee_nosp, M);
     fcn->addFnAttr(Attribute::NoUnwindPath);
     fcn = UNWINDRTS_FUNC(mylongwithoutjmp_callee, M);
-    fcn->addFnAttr(Attribute::NoUnwindPath);      
+    fcn->addFnAttr(Attribute::NoUnwindPath);
     fcn = UNWINDRTS_FUNC(mylongjmp_callee, M);
     fcn->addFnAttr(Attribute::NoUnwindPath);
-    
+
     initialized = true;
   }
 
@@ -827,7 +834,7 @@ bool HandleUnwindPollPass::runImpl(Function &F) {
     if(!bDetachExists)
       // Find unwind path entry
       changed |= handleUnwindPoll(BB, unwindPathEntry);
-    
+
     changed |= handleSaveRestoreCtx(BB);
   }
   return changed;
