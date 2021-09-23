@@ -39,7 +39,6 @@ cd ..
 git clone --recursive https://github.com/user-level-interrupts/uli-llvm
 
 cd uli-llvm
-git checkout dev-chrisma-unwind
 
 If you don’t see clang in uli-llvm/tools or clang is empty, link uli-clang to uli-llvm/tools/clang:
     At /afs/ece.cmu.edu/project/seth_group/<andrew_id>
