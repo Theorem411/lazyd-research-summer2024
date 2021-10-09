@@ -695,11 +695,14 @@ MemDepResult MemoryDependenceResults::getDependency(Instruction *QueryInst) {
       bool isLoad = !isModSet(MR);
       if (auto *II = dyn_cast<IntrinsicInst>(QueryInst))
         isLoad |= II->getIntrinsicID() == Intrinsic::lifetime_start;
-
       LocalCache =
           getPointerDependencyFrom(MemLoc, isLoad, ScanPos->getIterator(),
                                    QueryParent, QueryInst, nullptr);
     } else if (auto *QueryCall = dyn_cast<CallBase>(QueryInst)) {
+      bool isReadOnly = AA.onlyReadsMemory(QueryCall);
+      LocalCache = getCallDependencyFrom(QueryCall, isReadOnly,
+                                         ScanPos->getIterator(), QueryParent);
+    } else if (auto *QueryCall = dyn_cast<MultiRetCallInst>(QueryInst)) {
       bool isReadOnly = AA.onlyReadsMemory(QueryCall);
       LocalCache = getCallDependencyFrom(QueryCall, isReadOnly,
                                          ScanPos->getIterator(), QueryParent);

@@ -108,7 +108,7 @@ bool BasicAAResult::invalidate(Function &Fn, const PreservedAnalyses &PA,
 /// Returns true if the pointer is one which would have been considered an
 /// escape by isNonEscapingLocalObject.
 static bool isEscapeSource(const Value *V) {
-  if (isa<CallBase>(V))
+  if (isa<CallBase>(V) || isa<MultiRetCallInst>(V) )
     return true;
 
   // The load case works because isNonEscapingLocalObject considers all
