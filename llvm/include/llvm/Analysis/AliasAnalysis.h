@@ -754,6 +754,17 @@ public:
     return getModRefInfo(Call, MemoryLocation(P, Size));
   }
 
+  /// getModRefInfo (for MultiRetCall) - Return information about whether
+  /// a particular MultiRetCall modifies or reads the specified memory location.
+  ModRefInfo getModRefInfo(const MultiRetCallInst *M, const MemoryLocation &Loc) {
+    return getModRefInfo(ImmutableCallSite(M), Loc);
+  }
+
+  /// getModRefInfo (for MultiRetCall) - A convenience wrapper.
+  ModRefInfo getModRefInfo(const MultiRetCallInst *M, const Value *P, uint64_t Size) {
+    return getModRefInfo(M, MemoryLocation(P, Size));
+  }
+
   /// getModRefInfo (for detaches) - Return information about whether
   /// a particular detach modifies or reads the specified memory location.
   ModRefInfo getModRefInfo(const DetachInst *D, const MemoryLocation &Loc);
