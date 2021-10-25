@@ -73,6 +73,16 @@ static cl::opt<bool> EnableSaveRestoreCtx_2(
     "enable-saverestore-ctx2", cl::init(false), cl::NotHidden,
     cl::desc("Use builtin to save restore context (default = off)"));
 
+// Enable poll epoch
+static cl::opt<bool> EnablePollEpoch(
+    "enable-poll-epoch", cl::init(false), cl::NotHidden,
+    cl::desc("Enable poll epoch (default = off)"));
+
+// Enable poll trace
+static cl::opt<bool> EnablePollTrace(
+    "enable-poll-trace", cl::init(false), cl::NotHidden,
+    cl::desc("Enable poll trace (default = off)"));
+
 
 #define DEFAULT_GET_LIB_FUNC(name)                                      \
   static Constant *Get_##name(Module& M) {                              \
@@ -93,8 +103,20 @@ DEFAULT_GET_LIB_FUNC(postunwind)
 using postunwind_steal_ty = void (void );
 DEFAULT_GET_LIB_FUNC(postunwind_steal)
 
+using pollepoch_ty = void (void );
+DEFAULT_GET_LIB_FUNC(pollepoch)
+
+using calleverypoll_ty = void (void );
+DEFAULT_GET_LIB_FUNC(calleverypoll)
+
 using preunwind_steal_ty = void (void );
 DEFAULT_GET_LIB_FUNC(preunwind_steal)
+
+using reduce_threshold_ty = void (void );
+DEFAULT_GET_LIB_FUNC(reduce_threshold)
+
+using check_workexists_and_modify_threshold_ty = int (void);
+DEFAULT_GET_LIB_FUNC(check_workexists_and_modify_threshold)
 
 using unwind_workexists_ty = int (void );
 DEFAULT_GET_LIB_FUNC(unwind_workexists)
@@ -270,8 +292,15 @@ namespace {
     BasicBlock* PollEntry = BasicBlock::Create(Ctx, "poll.entry", Fn);
     BasicBlock* StartUnwind = BasicBlock::Create(Ctx, "start.unwind", Fn);
     BasicBlock* ResumeParent = BasicBlock::Create(Ctx, "resume.parent", Fn);
+    //BasicBlock* WorkExists = BasicBlock::Create(Ctx, "work.already.exists", Fn);
     BasicBlock* InitiateUnwind = BasicBlock::Create(Ctx, "initiate.unwind", Fn);
+        
     BasicBlock* ReturnFromPoll = BasicBlock::Create(Ctx, "return.from.poll", Fn);
+    BasicBlock* CheckForWork = BasicBlock::Create(Ctx, "check.for.work", Fn);
+
+    BasicBlock* ReduceThreshold = BasicBlock::Create(Ctx, "reduce.threshold", Fn);
+    BasicBlock* JoinThreshold = BasicBlock::Create(Ctx, "join.threshold", Fn);
+
     IRBuilder<> B(PollEntry);
 
     Value *ONE = B.getInt32(1);
@@ -280,80 +309,105 @@ namespace {
 
     GlobalVariable* platestTime = GetGlobalVariable("latestTime", IntegerType::getInt64Ty(Ctx), M, true);
     GlobalVariable* pthresholdTime = GetGlobalVariable("thresholdTime", IntegerType::getInt64Ty(Ctx), M, true);
-    //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
+    GlobalVariable* prequestCell = GetGlobalVariable("request_cell", IntegerType::getInt64Ty(Ctx), M, true);
+    
+   
+    if(EnablePollEpoch) {
+      Constant* pollepoch = Get_pollepoch(M);
+      B.CreateCall(pollepoch);
+    }
 
+    if(EnablePollTrace) {
+      Constant* calleverypoll = Get_calleverypoll(M);
+      B.CreateCall(calleverypoll);
+    }
+
+    auto requestCell = B.CreateAlignedLoad(prequestCell, 8);
     auto latestTime = B.CreateAlignedLoad(platestTime, 8);
+#if 0    
     auto thresholdTime = B.CreateAlignedLoad(pthresholdTime, 8);
+#endif    
     Constant* unwind_workexists = Get_unwind_workexists(M);
-    auto bWorkExists = B.CreateCall(unwind_workexists);
 
     //auto bWorkExists = B.CreateAlignedLoad(pbWorkExists, 4);
 #if 0
-    // Why so expensive?
-    // if(readcyclecounter - latestTime >= thresholdTime)
-    Function* readcyclecounter = Intrinsic::getDeclaration(&M, Intrinsic::readcyclecounter);
-    Value* cyclecounter = B.CreateCall(readcyclecounter);
-    auto diffCtr = B.CreateSub(cyclecounter, latestTime);
-    auto cmpVal = B.CreateICmpSGE(diffCtr, thresholdTime);
-    B.CreateCondBr(cmpVal, InitiateUnwind, ReturnFromPoll);
-
-    B.SetInsertPoint(InitiateUnwind);
-    // Update latest time
-    B.CreateAlignedStore(cyclecounter, platestTime, 8);
-#else
     auto incCtr = B.CreateAdd(latestTime, B.getInt64(1));
+#else
+    auto incCtr = B.CreateSub(latestTime, B.getInt64(1));
+#endif    
     B.CreateAlignedStore(incCtr, platestTime, 8);
-    auto cmpVal = B.CreateICmpSGE(latestTime, thresholdTime);
+#if 0
+    auto cmpVal = B.CreateICmpSGE(incCtr, thresholdTime);
+#else
+    auto cmpVal = B.CreateICmpSLE(incCtr, B.getInt64(0));
+#endif    
+    //auto cmpVal2 = B.CreateICmpEQ(bWorkExists, B.getInt32(0));
+    //auto cmpAnd = B.CreateAnd(cmpVal, cmpVal2);
+    //auto bWorkExists = B.CreateAlignedLoad(pbWorkExists, 4);
+
+
+#if 0
+    auto cmpReq = B.CreateICmpEQ(requestCell, B.getInt64(-1));
+    B.CreateCondBr(cmpReq, JoinThreshold, ReduceThreshold);
+#else    
+    auto cmpReq = B.CreateNot(B.CreateICmpEQ(requestCell, B.getInt64(-1)));
+    auto cmpReqOrVal = B.CreateOr(cmpReq, cmpVal); 
+    B.CreateCondBr(cmpReqOrVal, CheckForWork, ReturnFromPoll);
+#endif    
+    //B.CreateCondBr(cmpReq, JoinThreshold, CheckForWork);
+    //B.CreateBr(JoinThreshold);
+    B.SetInsertPoint(ReduceThreshold);
+    
+    // Hopefully the compiler will optimize this instruction
+#if 1
+#if 0   
+    auto halfThreshold = B.CreateMul(thresholdTime, B.getInt64(4));
+    halfThreshold = B.CreateSDiv(halfThreshold, B.getInt64(5));    
+
+    B.CreateAlignedStore(halfThreshold, pthresholdTime, 8);
+    B.CreateAlignedStore(B.getInt64(-1), prequestCell, 8);
+#endif
+#else    
+    Constant* reduce_threshold = Get_reduce_threshold(M);
+    B.CreateCall(reduce_threshold);
+#endif
+    //B.CreateBr(JoinThreshold);
+    B.CreateBr(CheckForWork);
+
+    B.SetInsertPoint(JoinThreshold);
+    B.CreateCondBr(cmpVal, CheckForWork, ReturnFromPoll);
+
+    B.SetInsertPoint(CheckForWork);
+    // Update latest time
+#if 0
+    B.CreateAlignedStore(B.getInt64(0), platestTime, 8);
+    auto bWorkExists = B.CreateCall(unwind_workexists);
     auto cmpVal2 = B.CreateICmpEQ(bWorkExists, B.getInt32(0));
-    auto cmpAnd = B.CreateAnd(cmpVal, cmpVal2);
-    B.CreateCondBr(cmpAnd, InitiateUnwind, ReturnFromPoll);
+    B.CreateCondBr(cmpVal2, InitiateUnwind, ReturnFromPoll);
+#else
+    Constant* check_workexists_and_modify_threshold = Get_check_workexists_and_modify_threshold(M);
+    auto bWorkExists = B.CreateCall(check_workexists_and_modify_threshold);
+    auto cmpVal2 = B.CreateICmpEQ(bWorkExists, B.getInt32(0));
+    B.CreateCondBr(cmpVal2, InitiateUnwind, ReturnFromPoll);    
+#endif
 
     B.SetInsertPoint(InitiateUnwind);
-    // Update latest time
-    B.CreateAlignedStore(B.getInt64(0), platestTime, 8);
 
-#endif
     // mysetjmp_callee(unwindCtx)
     // Store my context
     GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", workcontext_ty, M, true);
     Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
 
-#if 0
-    Constant *MYSETJMP_CALLEE = UNWINDRTS_FUNC(mysetjmp_callee, M);
-    Value *res2 = B.CreateCall(MYSETJMP_CALLEE, {gunwind_ctx});
-    llvm::InlineFunctionInfo ifi;
-    llvm::InlineFunction(dyn_cast<CallInst>(res2), ifi, nullptr, true);
+    Constant* preunwind_steal = Get_preunwind_steal(M);
+    B.CreateCall(preunwind_steal);
 
-    // unwindCtx.ip = resumeparent
-    // Set context.PC to ResumeParent
-    Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, 1);
-    B.CreateStore(BlockAddress::get(ResumeParent), savedPc);
 
-    // Trashed callee register
-    using AsmTypeCallee = void (void);
-    FunctionType *reloadCaller = TypeBuilder<AsmTypeCallee, false>::get(Ctx);
-    Value *Asm = InlineAsm::get(reloadCaller, "", "~{rdi},~{rsi},~{r8},~{r9},~{r10},~{r11},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
-    B.CreateCall(Asm);
-
-    // Potential jump to return unwind
-    // potential_jump(ResumeParent);
-    auto OpaqueTrueTy = FunctionType::get(Type::getInt1Ty(Ctx), false);
-    auto OpaqueTrue = InlineAsm::get(OpaqueTrueTy, "xor $0, $0",  "=r,~{dirflag},~{fpsr},~{flags}", false);
-    CallInst* res = B.CreateCall(OpaqueTrue);
-    // Somehow need to set this to true to avoid cloberring with the alloca for fork result (analysis restul from MemoryDependency analysis)
-    res->setTailCall(true);
-    B.CreateCondBr(res, ResumeParent, StartUnwind);
-
-#else
     if(!EnableSaveRestoreCtx_2) {
-      Value* NULL8 = ConstantPointerNull::get(IntegerType::getInt8Ty(Ctx)->getPointerTo());
       auto donothingFcn = Intrinsic::getDeclaration(&M, Intrinsic::donothing);
       auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);
-      auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), StartUnwind, ResumeParent, {});
-
-      B.SetInsertPoint(insertPoint);
-      B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(InitiateUnwind, 1)});
-      B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), NULL8});
+      //B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(InitiateUnwind, 1)});
+      B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(ResumeParent)});
+      B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), StartUnwind, ResumeParent, {});
 
       //Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, I_RIP);
       //B.CreateStore(BlockAddress::get(InitiateUnwind, 1), savedPc);
@@ -365,19 +419,14 @@ namespace {
       auto branchInst = B.CreateCondBr(isEqZero64, StartUnwind, ResumeParent);
     }
 
-#endif
-
     // return 1
     B.SetInsertPoint(StartUnwind);
-
-
     B.CreateRet(ONE);
 
     // Call postunwind
     B.SetInsertPoint(ResumeParent);
     Constant* postunwind = Get_postunwind(M);
     B.CreateCall(postunwind);
-
     B.CreateBr(ReturnFromPoll);
 
     // return 0
@@ -578,6 +627,11 @@ namespace {
     Value* ONEBYTE = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
 
     Constant* unwind_gosteal = Get_unwind_gosteal(M);
+    
+    if(EnablePollEpoch) {
+      Constant* pollepoch = Get_pollepoch(M);
+      B.CreateCall(pollepoch);
+    }
 
     GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
     GlobalVariable* prequestCell = GetGlobalVariable("request_cell", IntegerType::getInt64Ty(Ctx), M, true);
@@ -704,7 +758,9 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
     if (!call) continue;
     auto fn = call->getCalledFunction();
     if (!fn) continue;
-    if (fn->getIntrinsicID() != Intrinsic::x86_uli_unwind_poll) continue;
+    bool isFcnNotPoll = (fn->getIntrinsicID() != Intrinsic::x86_uli_unwind_poll) 
+      && (fn->getIntrinsicID() != Intrinsic::x86_uli_unwind_beat) ;
+    if (isFcnNotPoll) continue;
 
     if(!unwindPathEntry) {
       inst2delete.push_back(&instr);
@@ -715,7 +771,8 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
 
     BasicBlock * startUnwindStack = BasicBlock::Create(C, "start.unwind.stack", F);
     Constant* unwind_poll = nullptr;
-    if(!UnwindPollingType_2.compare("unwind-only")) {
+    if((!UnwindPollingType_2.compare("unwind-only")) || 
+       (fn->getIntrinsicID() == Intrinsic::x86_uli_unwind_beat)) {
       unwind_poll = Get__unwindrts_unwind_poll(*M);
     } else if(!UnwindPollingType_2.compare("unwind-suspend")) {
       unwind_poll = Get__unwindrts_unwind_suspend(*M);
