@@ -935,10 +935,15 @@ ModRefInfo BasicAAResult::getModRefInfo(const CallBase *Call,
   // inst is a forkable function, then return NoModRef. We know that fork storage is 
   // only used in the slowpath for that particular stack frame (locally used)
   if (auto ai = dyn_cast<AllocaInst>(Object)) {
-    if(ai->isForkStorage())
-      if (const CallInst *CI = dyn_cast<CallInst>(CS.getInstruction()))
+    if(ai->isForkStorage()) {
+      if (const CallInst *CI = dyn_cast<CallInst>(CS.getInstruction())) {
 	if (CI->getCalledFunction()->hasFnAttribute(Attribute::Forkable))
 	  return ModRefInfo::NoModRef;
+      } else if (const MultiRetCallInst *MRCI = dyn_cast<MultiRetCallInst>(CS.getInstruction())) {
+	if (MRCI->getCalledFunction()->hasFnAttribute(Attribute::Forkable))
+	  return ModRefInfo::NoModRef;
+      }
+    }
   }
 #endif
 
