@@ -121,6 +121,9 @@ DEFAULT_GET_LIB_FUNC(check_workexists_and_modify_threshold)
 using unwind_workexists_ty = int (void );
 DEFAULT_GET_LIB_FUNC(unwind_workexists)
 
+using POLL_ty = void (int, void*, void*) ;
+DEFAULT_GET_LIB_FUNC(POLL)
+
 using unwind_gosteal_ty = void (void );
 DEFAULT_GET_LIB_FUNC(unwind_gosteal)
 
@@ -697,6 +700,103 @@ namespace {
     return Fn;
   }
 
+  // Use for checking if there is a request for work
+  Function* Get__unwindrts_unwind_ulifsim(Module& M) {
+    Function* Fn = nullptr;
+    if (GetOrCreateFunction<unwind_poll_ty>("unwind_ulifsim_llvm", M, Fn))
+      return Fn;
+    LLVMContext& Ctx = M.getContext();
+    auto workcontext_ty = ArrayType::get(PointerType::getInt8PtrTy(Ctx), WorkCtxLen2);
+
+    BasicBlock* PollEntry = BasicBlock::Create(Ctx, "poll.entry", Fn);
+    BasicBlock* StartUnwind = BasicBlock::Create(Ctx, "start.unwind", Fn);
+    BasicBlock* ResumeParent = BasicBlock::Create(Ctx, "resume.parent", Fn);
+    BasicBlock* CheckForWork = BasicBlock::Create(Ctx, "check.for.work", Fn);
+    BasicBlock* WorkExists = BasicBlock::Create(Ctx, "work.already.exists", Fn);
+    BasicBlock* InitiateUnwind = BasicBlock::Create(Ctx, "initiate.unwind", Fn);
+    BasicBlock* ReturnFromPoll = BasicBlock::Create(Ctx, "return.from.poll", Fn);
+    IRBuilder<> B(PollEntry);
+
+    Value *ONE = B.getInt32(1);
+    Value *ZERO = B.getInt32(0);
+    Value* ONEBYTE = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
+
+    Constant* unwind_gosteal = Get_unwind_gosteal(M);
+    
+    if(EnablePollEpoch) {
+      Constant* pollepoch = Get_pollepoch(M);
+      B.CreateCall(pollepoch);
+    }
+
+    GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
+    GlobalVariable* prequestCell = GetGlobalVariable("request_cell", IntegerType::getInt64Ty(Ctx), M, true);
+    //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
+
+    auto threadId = B.CreateAlignedLoad(pThreadId, 4);
+    auto requestCell = B.CreateAlignedLoad(prequestCell, 8);
+
+    // Check requirement
+    auto cmpVal = B.CreateICmpEQ(requestCell, B.getInt64(-1));
+    B.CreateCondBr(cmpVal, ReturnFromPoll, CheckForWork);
+
+    // Update latest time
+    B.SetInsertPoint(CheckForWork);
+    Constant* POLL = Get_POLL(M);
+    //auto bWorkExists = B.CreateCall(POLL, B.getInt32(0));
+    
+    // FIXME: can not refer to myself blockaddress(self, idx)
+    //auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(POLL), WorkExists, {InitiateUnwind}, 
+    //             {B.getInt32(0), BlockAddress::get(CheckForWork, 0), BlockAddress::get(CheckForWork, 1)});
+
+    auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(POLL), WorkExists, {InitiateUnwind}, 
+					    {B.getInt32(0), BlockAddress::get(WorkExists), BlockAddress::get(InitiateUnwind)});
+
+
+    B.SetInsertPoint(WorkExists);
+    // Already have work, send it
+    B.CreateCall(unwind_gosteal);
+    B.CreateBr(ReturnFromPoll);
+
+    // mysetjmp_callee(unwindCtx)
+    // Store my context
+    B.SetInsertPoint(InitiateUnwind);
+    GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", workcontext_ty, M, true);
+    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
+
+    Constant* preunwind_steal = Get_preunwind_steal(M);
+    B.CreateCall(preunwind_steal);
+
+    if(!EnableSaveRestoreCtx_2) {
+      auto donothingFcn = Intrinsic::getDeclaration(&M, Intrinsic::donothing);
+      auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);
+      //B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(InitiateUnwind, 1)});
+      B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(ResumeParent)});
+      B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), StartUnwind, ResumeParent, {});
+
+    } else {
+      Constant* MYSETJMP_CALLEE = Get_mysetjmp_callee(M);
+      auto setjmp = B.CreateCall(MYSETJMP_CALLEE, {(gunwind_ctx)});
+      auto isEqZero64 = B.CreateICmpEQ(setjmp, B.getInt32(0));
+      auto branchInst = B.CreateCondBr(isEqZero64, StartUnwind, ResumeParent);
+    }
+
+    // return 1
+    B.SetInsertPoint(StartUnwind);
+    B.CreateRet(ONE);
+
+    // Call postunwind
+    B.SetInsertPoint(ResumeParent);
+    Constant* postunwind_steal = Get_postunwind_steal(M);
+    B.CreateCall(postunwind_steal);
+    B.CreateBr(ReturnFromPoll);
+
+    // return 0
+    B.SetInsertPoint(ReturnFromPoll);
+    B.CreateRet(ZERO);
+
+    return Fn;
+  }
+
 }
 
 bool HandleUnwindPollPass::detachExists(Function& F) {
@@ -778,6 +878,8 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
       unwind_poll = Get__unwindrts_unwind_suspend(*M);
     } else if(!UnwindPollingType_2.compare("unwind-steal")) {
       unwind_poll = Get__unwindrts_unwind_communicate(*M);
+    } else if (!UnwindPollingType_2.compare("unwind-ulifsim")) {
+      unwind_poll = Get__unwindrts_unwind_ulifsim(*M);
     } else {
       assert(0 && "Unknown unwind-polling-type value");
     }
