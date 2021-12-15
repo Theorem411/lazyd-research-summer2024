@@ -411,6 +411,9 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(const Triple &T, bool Large) {
   PreHashSection = Ctx->getELFSection(".pre_hash_table", ELF::SHT_PROGBITS,
                                    ELF::SHF_ALLOC);
 
+  PreBSTSection = Ctx->getELFSection(".pre_bst_table", ELF::SHT_PROGBITS,
+                                   ELF::SHF_ALLOC);
+
   COFFDebugSymbolsSection = nullptr;
   COFFDebugTypesSection = nullptr;
 

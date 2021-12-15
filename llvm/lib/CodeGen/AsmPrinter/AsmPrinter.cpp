@@ -1532,6 +1532,18 @@ void AsmPrinter::emitFunctionBody() {
     OutStreamer->GetCommentOS() << "-- End function\n";
 
   OutStreamer->AddBlankLine();
+
+  // Populate preBSTTableEntry
+  // If unwind function exists 
+  for( auto mb = MF->begin(); mb != MF->end(); ++mb ) {      
+    // Add label to unwind path entry
+    if( mb->isUnwindPathEntry() ) {
+      assert(CurrentFnEnd && "Label end does not exists");
+      assert(CurrentFnSym && "Label fn sym does not exists");
+      
+      OutContext.preBSTTableEntry.push_back(std::make_tuple(CurrentFnSym, CurrentFnEnd, mb->getSymbol()));
+    }
+  }
 }
 
 /// Compute the number of Global Variables that uses a Constant.
@@ -1799,12 +1811,11 @@ bool AsmPrinter::doFinalization(Module &M) {
     }
   }
 #else
-  // Generate the Pre_Hash_table in the elf binary
-  
-  // Entry:
-  //  - Return address of function that can spawn
-  //  - Unwind Path entry
-  
+  /* Generate the Pre_Hash_table in the elf binary
+    Entry:
+    - Return address of function that can spawn
+    - Unwind Path entry
+  */
   if(!OutContext.preHashTableEntry.empty()) {
     MCSection *PreHashSection = getObjFileLowering().getPreHashSection();
     OutStreamer->SwitchSection( PreHashSection);
@@ -1832,7 +1843,42 @@ bool AsmPrinter::doFinalization(Module &M) {
     OutStreamer->EmitLabel(PreHashSymEnd);
   }
 
-#endif  
+  /* Generate the Pre_BST_table in the elf binary
+    Entry:
+    - Start of the function
+    - End of the function
+    - Unwind Path entry
+  */
+
+  if(!OutContext.preBSTTableEntry.empty()) {    
+    MCSection *PreBSTSection = getObjFileLowering().getPreBSTSection();
+    OutStreamer->SwitchSection( PreBSTSection);
+    EmitAlignment(2);            
+
+    Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());      
+    M.getOrInsertGlobal("Pre_BST_table", VoidPtrTy);
+    GlobalVariable * preBSTTable = M.getNamedGlobal("Pre_BST_table");
+    preBSTTable->setLinkage(GlobalValue::ExternalLinkage);
+    MCSymbol *PreBSTSym = getSymbol(preBSTTable);
+    // Seems to allow the user code to access the Pre_BST_Table or to used for global variable
+    EmitLinkage(preBSTTable, PreBSTSym);
+    OutStreamer->EmitLabel(PreBSTSym);
+
+    for(auto labelTuple: OutContext.preBSTTableEntry) {
+      EmitLabelPlusOffset(std::get<0>(labelTuple), 0, 8, false);
+      EmitLabelPlusOffset(std::get<1>(labelTuple), 0, 8, false);	
+      EmitLabelPlusOffset(std::get<2>(labelTuple), 0, 8, false);	
+    }
+ 
+    M.getOrInsertGlobal("Pre_BST_table_end", VoidPtrTy);
+    GlobalVariable * preBSTTableEnd = M.getNamedGlobal("Pre_BST_table_end");
+    preBSTTableEnd->setLinkage(GlobalValue::ExternalLinkage);
+    MCSymbol *PreBSTSymEnd = getSymbol(preBSTTableEnd);
+    EmitLinkage(preBSTTableEnd, PreBSTSymEnd);     
+    OutStreamer->EmitLabel(PreBSTSymEnd);    
+  }
+#endif
+  
   // Gather all GOT equivalent globals in the module. We really need two
   // passes over the globals: one to compute and another to avoid its emission
   // in EmitGlobalVariable, otherwise we would not be able to handle cases

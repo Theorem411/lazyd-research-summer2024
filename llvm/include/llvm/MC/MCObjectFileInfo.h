@@ -80,7 +80,8 @@ protected:
   /// Section used to create the hash table in linker / runtime
   /// Contains label representing return addr of forkable function , the callsite's gotstolen and steal request handler basic block
   MCSection *PreHashSection;
-
+  MCSection *PreBSTSection;
+  
   // Dwarf sections for debug info.  If a target supports debug info, these must
   // be set.
   MCSection *DwarfAbbrevSection = nullptr;
@@ -283,6 +284,7 @@ public:
   MCSection *getDwarfPubTypesSection() const { return DwarfPubTypesSection; }
    
   MCSection *getPreHashSection() const { return PreHashSection;}
+  MCSection *getPreBSTSection() const { return PreBSTSection;}
   
   MCSection *getDwarfGnuPubNamesSection() const {
     return DwarfGnuPubNamesSection;

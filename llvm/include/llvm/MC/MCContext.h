@@ -86,6 +86,7 @@ namespace llvm {
     // Used to create the pre hash table. 
     // Store the return address and the associated unwind path address
     SmallVector<std::pair<MCSymbol *, MCSymbol *>, 10> preHashTableEntry;
+    SmallVector<std::tuple<MCSymbol *, MCSymbol *, MCSymbol *>, 10> preBSTTableEntry;
 
   private:
     Environment Env;
