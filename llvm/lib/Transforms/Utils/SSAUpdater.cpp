@@ -292,7 +292,9 @@ public:
     // We can get our predecessor info by walking the pred_iterator list,
     // but it is relatively slow.  If we already have PHI nodes in this
     // block, walk one of them to get the predecessor list instead.
-    if (PHINode *SomePhi = dyn_cast<PHINode>(BB->begin()))
+
+    // FIXME: CNP Need to make sure that PHINode is valid to use, or else compiler's performance drop
+    if (PHINode *SomePhi = dyn_cast<PHINode>(BB->begin()) && false)
       append_range(*Preds, SomePhi->blocks());
     else
       append_range(*Preds, predecessors(BB));
@@ -358,10 +360,10 @@ public:
 /// return it.  If not, construct SSA form by first calculating the required
 /// placement of PHIs and then inserting new PHIs where needed.
 Value *SSAUpdater::GetValueAtEndOfBlockInternal(BasicBlock *BB) {
+
   AvailableValsTy &AvailableVals = getAvailableVals(AV);
   if (Value *V = AvailableVals[BB])
     return V;
-
   SSAUpdaterImpl<SSAUpdater> Impl(this, &AvailableVals, InsertedPHIs,
                                   &getValIsDetached(VID));
   return Impl.GetValue(BB);
