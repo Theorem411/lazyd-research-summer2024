@@ -61,13 +61,16 @@ namespace {
 
     // Used to create a table that maps the 
     for( auto mb = MF.begin(); mb != MF.end(); ++mb ) {      
-      SpawnMBBs.push_back(&*mb);      
-      
+      SpawnMBBs.push_back(&*mb);
       // Add label to unwind path entry
       if( mb->isUnwindPathEntry() ) {
+#if 1
 	MachineBasicBlock::iterator ii = mb->begin();
 	unwindLabel = MF.getLabel();             
 	BuildMI(*mb, ii, DL, TII.get(TargetOpcode::EH_LABEL)).addSym(unwindLabel);
+#else
+	unwindLabel = mb->getSymbol();
+#endif
       }
     }
     
