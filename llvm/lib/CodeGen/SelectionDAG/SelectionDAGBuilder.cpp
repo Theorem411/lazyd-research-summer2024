@@ -152,6 +152,78 @@ static cl::opt<unsigned> SwitchPeelThreshold(
 // store [4096 x i8] %data, [4096 x i8]* %buffer
 static const unsigned MaxParallelChains = 64;
 
+
+
+#if 1
+static SDValue cloneSDNode(const SDLoc &dl, SDValue Op, SelectionDAG &DAG, MachineBasicBlock *MBB) {
+
+  switch (Op.getOpcode()) {
+  case ISD::MERGE_VALUES: {
+
+    // Collect the legal value parts into potentially illegal values
+    // that correspond to the original function's return values.
+    SmallVector<SDValue, 4> Ops;
+    SmallVector<EVT, 4> VTs;
+    for (unsigned i = 0; i < Op.getNumOperands (); ++i) {
+      VTs.push_back(Op.getOperand(i).getValueType());
+      Ops.push_back(cloneSDNode(dl, Op.getOperand(i), DAG, MBB));
+    }
+    return DAG.getNode(ISD::MERGE_VALUES, dl, DAG.getVTList(VTs), Ops);
+  }
+  case ISD::CopyFromReg: {
+    auto regFromChild = cast<RegisterSDNode>(Op.getOperand(1))->getReg();
+    MBB->addLiveIn(regFromChild);
+
+    if(Op.getOperand(0).getOpcode() == ISD::CALLSEQ_END) {
+      SDValue Res = DAG.getCopyFromReg(DAG.getEntryNode(), dl, regFromChild, Op.getOperand(1).getValueType());
+      return Res;
+    } else  {
+      SDValue Res = DAG.getCopyFromReg(cloneSDNode(dl, Op.getOperand(0), DAG, MBB), dl,
+				       regFromChild, Op.getOperand(1).getValueType());
+      return Res;
+    }
+  }
+  case ISD::EXTRACT_SUBVECTOR:{
+    SDValue Res = DAG.getNode(ISD::EXTRACT_SUBVECTOR, dl, Op.getOperand(0).getValueType(),
+			cloneSDNode(dl, Op.getOperand(0), DAG, MBB),
+			Op.getOperand(1) );
+    return Res;
+  }
+  case ISD::CALLSEQ_END: {
+    llvm_unreachable("Have not support the above CALLSEQ_END !");
+  }
+  case ISD::Constant: {
+    llvm_unreachable("Have not support the above Constant !");
+  }
+
+  default:
+    llvm_unreachable("Have not support the above Op !");
+  }
+}
+#endif
+
+
+// True if the Value passed requires ABI mangling as it is a parameter to a
+// function or a return value from a function which is not an intrinsic.
+static bool isABIRegCopy(const Value *V) {
+  const bool IsRetInst = V && isa<ReturnInst>(V);
+  const bool IsCallInst = V && isa<CallInst>(V);
+  const bool IsInLineAsm =
+      IsCallInst && static_cast<const CallInst *>(V)->isInlineAsm();
+  const bool IsIndirectFunctionCall =
+      IsCallInst && !IsInLineAsm &&
+      !static_cast<const CallInst *>(V)->getCalledFunction();
+  // It is possible that the call instruction is an inline asm statement or an
+  // indirect function call in which case the return value of
+  // getCalledFunction() would be nullptr.
+  const bool IsInstrinsicCall =
+      IsCallInst && !IsInLineAsm && !IsIndirectFunctionCall &&
+      static_cast<const CallInst *>(V)->getCalledFunction()->getIntrinsicID() !=
+          Intrinsic::not_intrinsic;
+
+  return IsRetInst || (IsCallInst && (!IsInLineAsm && !IsInstrinsicCall));
+}
+
 static SDValue getCopyFromPartsVector(SelectionDAG &DAG, const SDLoc &DL,
                                       const SDValue *Parts, unsigned NumParts,
                                       MVT PartVT, EVT ValueVT, const Value *V,
@@ -3125,18 +3197,32 @@ void SelectionDAGBuilder::visitRetPad(const RetPadInst &I) {
   // during call to the LowerStatepoint.
   if (!isStatepoint(I)) {
     if (!MRCI->getType()->isVoidTy()) {
+
       SDValue Op = getNonRegisterValue(MRCI);  
-      
-      //  Register return by the child
-      auto regFromChild = cast<RegisterSDNode>(Op.getOperand(1))->getReg();
+      SDValue Op2 = getValue(MRCI);
 
-      // Add live register (for function that returns value is stored in rax, this make rax live in this basic block) 
-      // TODO: Gotstolen: multiple time we make eax live
-      FuncInfo.MBB->addLiveIn(regFromChild);
-
-      // Copy the result of the multiretcall into to the retpad  
-      SDValue Res = DAG.getCopyFromReg(DAG.getEntryNode(), getCurSDLoc(), regFromChild, Op.getValueType());
-      setValue(&I, Res);    
+      switch (Op.getOpcode()) {
+      case ISD::MERGE_VALUES: {		
+	SDValue res = cloneSDNode(getCurSDLoc(), Op, DAG, FuncInfo.MBB);
+	setValue(&I, res);
+	break;
+      }
+      case ISD::CopyFromReg: {	
+	// TODO: Should replace the whole switch case with cloneSDNode
+	auto regFromChild = cast<RegisterSDNode>(Op.getOperand(1))->getReg();
+	// Add live register (for function that returns value is stored in rax, this make rax live in this basic block) 
+	// TODO: Gotstolen: multiple time we make eax live
+	FuncInfo.MBB->addLiveIn(regFromChild);
+	// Copy the result of the multiretcall into to the retpad  
+	SDValue Res = DAG.getCopyFromReg(DAG.getEntryNode(), getCurSDLoc(), regFromChild, Op.getValueType());
+	setValue(&I, Res);    
+	
+	break;
+      }
+      default:	
+	Op->dump();
+	llvm_unreachable("Have not support the above Op !");	
+      }
     }
   }
 
@@ -8016,7 +8102,7 @@ void SelectionDAGBuilder::LowerMultiRetCallPrologueTo(ImmutableCallSite CS, SDVa
       .setCallee(RetTy, FTy, Callee, std::move(Args), CS)
       .setTailCall(isTailCall)
       .setConvergent(CS.isConvergent());
- 
+
   lowerMultiRetCallPrologue(CLI, EHPadBB);
 }
 
@@ -8043,7 +8129,7 @@ void SelectionDAGBuilder::LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDVa
     isTailCall = false;
 #endif
 
-#if 0
+#if 1
   for (ImmutableCallSite::arg_iterator i = CS.arg_begin(), e = CS.arg_end();
        i != e; ++i) {
     TargetLowering::ArgListEntry Entry;
@@ -10599,6 +10685,14 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
     }
   }
 
+#if 0
+  outs () << "DAGBUILDER:LowerMultiRetCallPrologueTo " << *CLI.CS.getInstruction() << "\n";
+  for (auto out : CLI.Outs) {
+    outs() << "Formal argument #" << " has unhandled type "
+             << EVT(out.VT).getEVTString() << '\n';
+  } 
+#endif
+
   SmallVector<SDValue, 4> InVals;
   CLI.Chain = LowerMultiRetCallPrologue(CLI, InVals);
 
@@ -10701,10 +10795,10 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
       }
     }
   }
-
-#if 0
   // We push in swifterror return as the last element of CLI.Ins.
   ArgListTy &Args = CLI.getArgs();
+ 
+#if 0
   if (supportSwiftError()) {
     for (unsigned i = 0, e = Args.size(); i != e; ++i) {
       if (Args[i].IsSwiftError) {
@@ -10718,12 +10812,10 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
   }
 #endif
 
-
-
   // Handle all of the outgoing arguments.
   CLI.Outs.clear();
   CLI.OutVals.clear();
-#if 0
+#if 1
   for (unsigned i = 0, e = Args.size(); i != e; ++i) {
     SmallVector<EVT, 4> ValueVTs;
     ComputeValueVTs(*this, DL, Args[i].Ty, ValueVTs);

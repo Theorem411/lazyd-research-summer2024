@@ -344,6 +344,8 @@ void PEI::calculateCallFrameInfo(MachineFunction &MF) {
   MFI.setAdjustsStack(AdjustsStack);
   MFI.setMaxCallFrameSize(MaxCallFrameSize);
 
+  // Shouldn't this be fixed by retpad?
+#if 0
   // Fix the rsp at gotstolen handler
   // Store the Adjupstack instruction if exists after spawn.
   // The adjupstack will be copied to the gotstolen handler to fix rsp
@@ -369,6 +371,7 @@ void PEI::calculateCallFrameInfo(MachineFunction &MF) {
       }
     }
   }
+#endif
 
   for (MachineBasicBlock::iterator I : FrameSDOps) {
     // If call frames are not being included as part of the stack frame, and

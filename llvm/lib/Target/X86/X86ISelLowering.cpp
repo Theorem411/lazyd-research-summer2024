@@ -4758,7 +4758,7 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
                  (Fn && Fn->hasFnAttribute("no_caller_saved_registers")) ||
                  (Fn && Fn->hasFnAttribute("user_level_interrupt"));
 
-#if 0
+
   if (CallConv == CallingConv::X86_INTR)
     report_fatal_error("X86 interrupts may not be called directly");
   else if (CallConv == CallingConv::X86_ULI)
@@ -4766,6 +4766,7 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
   if (Attr.getValueAsString() == "true")
     isTailCall = false;
 
+#if 0
   if (Subtarget.isPICStyleGOT() &&
       !MF.getTarget().Options.GuaranteedTailCallOpt) {
     // If we are using a GOT, disable tail calls to external symbols with
