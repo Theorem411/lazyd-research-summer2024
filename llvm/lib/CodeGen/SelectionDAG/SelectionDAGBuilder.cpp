@@ -3198,9 +3198,13 @@ void SelectionDAGBuilder::visitRetPad(const RetPadInst &I) {
   if (!isStatepoint(I)) {
     if (!MRCI->getType()->isVoidTy()) {
 
-      SDValue Op = getNonRegisterValue(MRCI);  
-      SDValue Op2 = getValue(MRCI);
 
+      SDValue Op  = getNonRegisterValue(MRCI);  
+#if 1
+      SDValue res = cloneSDNode(getCurSDLoc(), Op, DAG, FuncInfo.MBB);
+      setValue(&I, res);
+#else
+      //SDValue Op2 = getValue(MRCI);
       switch (Op.getOpcode()) {
       case ISD::MERGE_VALUES: {		
 	SDValue res = cloneSDNode(getCurSDLoc(), Op, DAG, FuncInfo.MBB);
@@ -3215,14 +3219,15 @@ void SelectionDAGBuilder::visitRetPad(const RetPadInst &I) {
 	FuncInfo.MBB->addLiveIn(regFromChild);
 	// Copy the result of the multiretcall into to the retpad  
 	SDValue Res = DAG.getCopyFromReg(DAG.getEntryNode(), getCurSDLoc(), regFromChild, Op.getValueType());
-	setValue(&I, Res);    
-	
+	setValue(&I, Res);    	
 	break;
       }
       default:	
 	Op->dump();
 	llvm_unreachable("Have not support the above Op !");	
       }
+#endif
+
     }
   }
 
