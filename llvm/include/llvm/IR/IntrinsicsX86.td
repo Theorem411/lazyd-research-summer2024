@@ -5949,7 +5949,9 @@ let TargetPrefix = "x86" in {
        Intrinsic<[llvm_ptr_ty], [], [IntrNoMem]>;
 
   def int_x86_read_sp : GCCBuiltin<"__builtin_read_sp">,
-       Intrinsic<[llvm_i64_ty], [], [IntrNoMem]>;
+       //Intrinsic<[llvm_i64_ty], [], [IntrNoMem]>;
+       Intrinsic<[llvm_i64_ty], [], [IntrHasSideEffects]>;
+
   def int_x86_get_frame_size : GCCBuiltin<"__builtin_get_frame_size">,
        Intrinsic<[llvm_i64_ty], [], [IntrNoMem]>;
   def int_x86_uli_potential_jump : GCCBuiltin<"__builtin_uli_potential_jump">,

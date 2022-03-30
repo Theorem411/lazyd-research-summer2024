@@ -591,6 +591,7 @@ private:
                       const BasicBlock *EHPadBB = nullptr);
   void visitIntrinsicCall(const CallInst &I, unsigned Intrinsic);
   void visitTargetIntrinsic(const CallInst &I, unsigned Intrinsic);
+  void visitTargetIntrinsic(const MultiRetCallInst &I, unsigned Intrinsic);
   void visitConstrainedFPIntrinsic(const ConstrainedFPIntrinsic &FPI);
   void visitVPLoadGather(const VPIntrinsic &VPIntrin, EVT VT,
                          SmallVector<SDValue, 7> &OpValues, bool IsGather);

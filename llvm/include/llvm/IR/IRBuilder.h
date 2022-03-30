@@ -1212,6 +1212,10 @@ public:
     return Insert(RetPadInst::Create(MultiRetCall, Name));
   }
 
+  RetPadInst* CreateRetPad(Type* Ty, const Twine &Name = "") {
+    return Insert(RetPadInst::Create(Ty, Name));
+  }
+
   //===--------------------------------------------------------------------===//
   // Instruction creation methods: Binary Operators
   //===--------------------------------------------------------------------===//

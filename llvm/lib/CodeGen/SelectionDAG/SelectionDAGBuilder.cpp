@@ -3123,6 +3123,26 @@ void SelectionDAGBuilder::visitMultiRetCall(const MultiRetCallInst &I) {
       // Can be used for a potential jump without having to call a function
       // Ignore invokes to @llvm.donothing: jump directly to the next BB.
       break;    
+
+
+    case Intrinsic::x86_uli_save_callee_nosp:
+    case Intrinsic::x86_uli_save_context_nosp:
+    case Intrinsic::x86_uli_save_context:
+    case Intrinsic::x86_uli_save_callee:
+      const char *RenameFn = nullptr;
+      if (Function *F = I.getCalledFunction()) {
+        if (F->isDeclaration()) {
+          if (const TargetIntrinsicInfo *II = TM.getIntrinsicInfo()) {
+            if (unsigned IID = II->getIntrinsicID(F)) {
+              visitTargetIntrinsic(I, IID);
+            }
+          }
+          if (Intrinsic::ID IID = F->getIntrinsicID()) {
+            visitTargetIntrinsic(I, IID);
+          }
+        }
+      }
+      break;
     }
 
   } else if (I.countOperandBundlesOfType(LLVMContext::OB_deopt)) {
@@ -5153,6 +5173,90 @@ void SelectionDAGBuilder::visitTargetIntrinsic(const CallInst &I,
       Result =
           DAG.getAssertAlign(getCurSDLoc(), Result, Alignment.valueOrOne());
     }
+
+    setValue(&I, Result);
+  }
+}
+
+void SelectionDAGBuilder::visitTargetIntrinsic(const MultiRetCallInst &I, unsigned Intrinsic) {
+  // Ignore the callsite's attributes. A specific call site may be marked with
+  // readnone, but the lowering code will expect the chain based on the
+  // definition.
+  const Function *F = I.getCalledFunction();
+  bool HasChain = !F->doesNotAccessMemory();
+  bool OnlyLoad = HasChain && F->onlyReadsMemory();
+
+  // Build the operand list.
+  SmallVector<SDValue, 8> Ops;
+  if (HasChain) {  // If this intrinsic has side-effects, chainify it.
+    if (OnlyLoad) {
+      // We don't need to serialize loads against other loads.
+      Ops.push_back(DAG.getRoot());
+    } else {
+      Ops.push_back(getRoot());
+    }
+  }
+
+  // Info is set by getTgtMemInstrinsic
+  TargetLowering::IntrinsicInfo Info;
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+#if 0
+  bool IsTgtIntrinsic = TLI.getTgtMemIntrinsic(Info, I,
+                                               DAG.getMachineFunction(),
+                                               Intrinsic);
+#else
+  bool IsTgtIntrinsic = false;
+#endif
+  // Add the intrinsic ID as an integer operand if it's not a target intrinsic.
+  if (!IsTgtIntrinsic || Info.opc == ISD::INTRINSIC_VOID ||
+      Info.opc == ISD::INTRINSIC_W_CHAIN)
+    Ops.push_back(DAG.getTargetConstant(Intrinsic, getCurSDLoc(),
+                                        TLI.getPointerTy(DAG.getDataLayout())));
+
+  // Add all operands of the call to the operand list.
+  for (unsigned i = 0, e = I.getNumArgOperands(); i != e; ++i) {
+    SDValue Op = getValue(I.getArgOperand(i));
+    Ops.push_back(Op);
+  }
+
+  SmallVector<EVT, 4> ValueVTs;
+  ComputeValueVTs(TLI, DAG.getDataLayout(), I.getType(), ValueVTs);
+
+  if (HasChain)
+    ValueVTs.push_back(MVT::Other);
+
+  SDVTList VTs = DAG.getVTList(ValueVTs);
+
+  // Create the node.
+  SDValue Result;
+  if (IsTgtIntrinsic) {
+    // This is target intrinsic that touches memory
+    Result = DAG.getMemIntrinsicNode(Info.opc, getCurSDLoc(), VTs,
+      Ops, Info.memVT,
+      MachinePointerInfo(Info.ptrVal, Info.offset), Info.align,
+      Info.flags, Info.size);
+  } else if (!HasChain) {
+    Result = DAG.getNode(ISD::INTRINSIC_WO_CHAIN, getCurSDLoc(), VTs, Ops);
+  } else if (!I.getType()->isVoidTy()) {
+    Result = DAG.getNode(ISD::INTRINSIC_W_CHAIN, getCurSDLoc(), VTs, Ops);
+  } else {
+    Result = DAG.getNode(ISD::INTRINSIC_VOID, getCurSDLoc(), VTs, Ops);
+  }
+
+  if (HasChain) {
+    SDValue Chain = Result.getValue(Result.getNode()->getNumValues()-1);
+    if (OnlyLoad)
+      PendingLoads.push_back(Chain);
+    else
+      DAG.setRoot(Chain);
+  }
+
+  if (!I.getType()->isVoidTy()) {
+    if (VectorType *PTy = dyn_cast<VectorType>(I.getType())) {
+      EVT VT = TLI.getValueType(DAG.getDataLayout(), PTy);
+      Result = DAG.getNode(ISD::BITCAST, getCurSDLoc(), VT, Result);
+    } else
+      Result = lowerRangeToAssertZExt(DAG, I, Result);
 
     setValue(&I, Result);
   }

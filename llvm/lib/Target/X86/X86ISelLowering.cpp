@@ -27024,8 +27024,8 @@ static int getSEHRegistrationNodeSize(const Function *Fn) {
 }
 
 bool X86TargetLowering::isSaveContextOpcode (
-    const MachineInstr &MI) const { 
-  return (MI.getOpcode() == X86::ULI_SAVE_CONTEXT_NOSP || MI.getOpcode() == X86::ULI_SAVE_CONTEXT);
+  const MachineInstr &MI) const { 
+  return (MI.getOpcode() == X86::ULI_SAVE_CONTEXT_NOSP || MI.getOpcode() == X86::ULI_SAVE_CONTEXT || MI.getOpcode() == X86::ULI_SAVE_CALLEE_NOSP || MI.getOpcode() == X86::ULI_SAVE_CALLEE);
 }
 
 
