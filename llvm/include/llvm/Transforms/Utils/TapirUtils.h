@@ -144,6 +144,10 @@ void AnalyzeTaskForSerialization(
 void SerializeDetach(DetachInst *DI, Task *T, bool ReplaceWithTaskFrame = false,
                      DominatorTree *DT = nullptr);
 
+/// RemoveSync - Remove the sync inst by the specified
+/// detach instruction.  
+BranchInst *RemoveSync(DetachInst *HeadDetach);
+
 /// Get the entry basic block to the detached context that contains
 /// the specified block.
 const BasicBlock *GetDetachedCtx(const BasicBlock *BB);
@@ -245,7 +249,8 @@ public:
   enum SpawningStrategy {
     ST_SEQ,
     ST_DAC,
-    ST_END,
+    ST_HYBRID,
+    ST_END,    
   };
 
 private:
@@ -286,6 +291,8 @@ public:
       return "Spawn iterations sequentially";
     case TapirLoopHints::ST_DAC:
       return "Use divide-and-conquer";
+    case TapirLoopHints::ST_HYBRID:
+      return "Execute iterations sequentially in fast path, use divide-and-conquer in slow path";
     case TapirLoopHints::ST_END:
       return "Unknown";
     }
