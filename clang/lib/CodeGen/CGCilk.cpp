@@ -623,7 +623,20 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
   llvm::BasicBlock *CondBlock = Continue.getBlock();
   EmitBlock(CondBlock);
 
-  LoopStack.setSpawnStrategy(LoopAttributes::DAC);
+
+  switch(CGM.getCodeGenOpts().PForSpawnStrategy) {
+  case LoopAttributes::Sequential:
+    LoopStack.setSpawnStrategy(LoopAttributes::Sequential);
+    break;
+  case LoopAttributes::DAC:
+    LoopStack.setSpawnStrategy(LoopAttributes::DAC);
+    break;
+  case LoopAttributes::Hybrid:
+    LoopStack.setSpawnStrategy(LoopAttributes::Hybrid);
+    break;
+  default:
+    assert(0 && "Unknown Spawn strategy");
+  }
   const SourceRange &R = S.getSourceRange();
   LoopStack.push(CondBlock, CGM.getContext(), CGM.getCodeGenOpts(), ForAttrs,
                  SourceLocToDebugLoc(R.getBegin()),

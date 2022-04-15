@@ -86,7 +86,7 @@ struct LoopAttributes {
   bool MustProgress;
 
   /// Tapir-loop spawning strategy.
-  enum LSStrategy { Sequential, DAC };
+  enum LSStrategy { Sequential, DAC, Hybrid };
 
   /// Value for tapir.loop.spawn.strategy metadata.
   LSStrategy SpawnStrategy;

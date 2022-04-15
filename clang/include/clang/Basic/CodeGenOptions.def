@@ -297,6 +297,7 @@ CODEGENOPT(EnableULITransform, 1, 0) ///< Run ULI Transform
 CODEGENOPT(EnableULIRewrite, 1, 0) ///< Run ULI Rewrite
 CODEGENOPT(DisableULIPollInsertion, 1, 0) ///< Run ULI Rewrite
 VALUE_CODEGENOPT(ULIStackletOverflowCheckSize, 8, 0) ///< Enable ULI stacklet overflow check with the given size as the log2 of the stacklet size. Zero means the option is disabled.
+VALUE_CODEGENOPT(PForSpawnStrategy, 8, 1) ///<Spawn strategy for pfor 
 
 /// Treat loops as finite: language, always, never.
 ENUM_CODEGENOPT(FiniteLoops, FiniteLoopsKind, 2, FiniteLoopsKind::Language)

@@ -1895,6 +1895,8 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
 #endif
   Opts.ULIStackletOverflowCheckSize = getLastArgIntValue(Args, OPT_fuli_stacklet_overflow_size, 0);
   assert(Opts.ULIStackletOverflowCheckSize < 64);
+  Opts.PForSpawnStrategy = getLastArgIntValue(Args, OPT_fpfor_spawn_strategy, 0);
+  assert(Opts.PForSpawnStrategy < 3 && Opts.PForSpawnStrategy >= 0);  
   Opts.EnableULITransform = Args.hasArg(OPT_fenable_uli_transform);
   Opts.EnableULIRewrite = Args.hasArg(OPT_fenable_uli_rewrite);
   Opts.DisableULIPollInsertion = Args.hasArg(OPT_fdisable_uli_poll_insertion);
