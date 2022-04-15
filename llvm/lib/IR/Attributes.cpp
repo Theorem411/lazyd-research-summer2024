@@ -415,7 +415,7 @@ std::string Attribute::getAsString(bool InAttrGrp) const {
 
   if (hasAttribute(Attribute::UserLevelInterrupt))
     return "user_level_interrupt";
-  
+
   if (hasAttribute(Attribute::ULINonAtomic))
     return "uli_non_atomic";
 

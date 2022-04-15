@@ -157,10 +157,10 @@ namespace {
 	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R9).addReg(X86::R9);
 	      liveReg |= 0x100;
 	    } else if(!(liveReg & 0x200) &&(Reg == X86::R10 || Reg == X86::R10D || Reg == X86::R10W || Reg == X86::R10B)) {
-	      //addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R10).addReg(X86::R10);
+	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R10).addReg(X86::R10);
 	      liveReg |= 0x200;
 	    } else if(!(liveReg & 0x400) && (Reg == X86::R11 || Reg == X86::R11D || Reg == X86::R11W || Reg == X86::R11B)) {		
-	      //addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R11).addReg(X86::R11);
+	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_R11).addReg(X86::R11);
 	      liveReg |= 0x400;
 	    } else if(!(liveReg & 0x800) &&(Reg == X86::RDX || Reg == X86::EDX || Reg == X86::DX || Reg == X86::DH || Reg == X86::DL)) {		
 	      addRegOffset(BuildMI(MBB, &*I, DL, TII.get(X86::MOV64mr)), I->getOperand(0).getReg(), false, I_RDX).addReg(X86::RDX);

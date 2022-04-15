@@ -5965,7 +5965,7 @@ let TargetPrefix = "x86" in {
   def int_x86_uli_get_workcontext : GCCBuiltin<"__builtin_uli_get_workcontext">,
        Intrinsic<[llvm_ptrptr_ty], [], []>;     
   def int_x86_uli_unwind_poll : GCCBuiltin<"__builtin_uli_unwind_poll">,
-       Intrinsic<[], [], []>;
+       Intrinsic<[], [], [IntrNoDuplicate]>;
   def int_x86_uli_unwind_beat : GCCBuiltin<"__builtin_uli_unwind_beat">,
        Intrinsic<[], [], []>;
   def int_x86_uli_save_context : GCCBuiltin<"__builtin_uli_save_context">,

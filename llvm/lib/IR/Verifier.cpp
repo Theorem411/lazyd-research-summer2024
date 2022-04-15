@@ -2604,7 +2604,10 @@ void Verifier::visitFunction(const Function &F) {
 
     // The address of the entry block cannot be taken, unless it is dead.
     if (Entry->hasAddressTaken()) {
-      Assert(!BlockAddress::lookup(Entry)->isConstantUsed(),
+      // TODO: For now entry block can not terminate with multiretcall
+      //Assert(!isa<MultiRetCallInst>(Entry->getTerminator()), "Can not terminate entry with multiretcall (for now)", Entry);
+      if(!isa<MultiRetCallInst>(Entry->getTerminator()))
+	Assert(!BlockAddress::lookup(Entry)->isConstantUsed(),
              "blockaddress may not be used with the entry block!", Entry);
     }
 
@@ -4696,7 +4699,7 @@ void Verifier::visitInstruction(Instruction &I) {
       // taken.
       Assert(
           !F->isIntrinsic() ||
-	     i == (isa<CallInst>(I) ? e - 1 : isa<InvokeInst>(I) ? e - 3 : isa<MultiRetCallInst>(I)? e - 1 : 0),
+             i == (isa<CallInst>(I) ? e - 1 : isa<InvokeInst>(I) ? e - 3 : isa<MultiRetCallInst>(I)? e - 1 : 0),
           "Cannot take the address of an intrinsic!", &I);
 #endif
       Assert(
@@ -4706,6 +4709,10 @@ void Verifier::visitInstruction(Instruction &I) {
               F->getIntrinsicID() == Intrinsic::seh_try_end ||
               F->getIntrinsicID() == Intrinsic::seh_scope_begin ||
               F->getIntrinsicID() == Intrinsic::seh_scope_end ||
+              F->getIntrinsicID() == Intrinsic::x86_uli_save_context_nosp ||
+              F->getIntrinsicID() == Intrinsic::x86_uli_save_callee_nosp ||
+              F->getIntrinsicID() == Intrinsic::x86_uli_save_context ||
+              F->getIntrinsicID() == Intrinsic::x86_uli_save_callee ||
               F->getIntrinsicID() == Intrinsic::coro_resume ||
               F->getIntrinsicID() == Intrinsic::coro_destroy ||
               F->getIntrinsicID() == Intrinsic::experimental_patchpoint_void ||
