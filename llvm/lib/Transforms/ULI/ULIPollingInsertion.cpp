@@ -108,6 +108,9 @@ bool ULIPollingInsertionPass::runImpl(Function &F,
   DT = DT_;
   LI = LI_;
 
+  // FIXME: Don't poll yet
+  return false;
+
   // Skip functions that do not require ULI polling.
   if (isNoPollingFunction(F))
     return false;
