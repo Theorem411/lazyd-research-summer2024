@@ -51,7 +51,9 @@ using namespace llvm;
 #define I_ADDRLOC  21 // The address in the stack that store the location of work
 #define I_DEQ_CMPLT 22
 #define I_SLOWPATH_DEQUE 23
-#define WORKCTX_SIZE I_SLOWPATH_DEQUE + 1
+#define I_EXECUTEDBY_OWNER 24
+#define WORKCTX_SIZE 64
+
 
 using unwind_poll_ty = int(void);
 using mylongwithoutjmp_callee_ty = void (void**);
@@ -405,7 +407,7 @@ namespace {
     B.CreateCall(preunwind_steal);
 
 
-    if(!EnableSaveRestoreCtx_2) {
+    if(EnableSaveRestoreCtx_2) {
       auto donothingFcn = Intrinsic::getDeclaration(&M, Intrinsic::donothing);
       auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);
       //B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(InitiateUnwind, 1)});
@@ -424,6 +426,14 @@ namespace {
 
     // return 1
     B.SetInsertPoint(StartUnwind);
+
+    // Save the ip
+    if(EnableSaveRestoreCtx_2) {
+      Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, I_RIP);
+      B.CreateStore(BlockAddress::get(ResumeParent), savedPc);
+    }
+
+
     B.CreateRet(ONE);
 
     // Call postunwind
@@ -669,11 +679,12 @@ namespace {
     Constant* preunwind_steal = Get_preunwind_steal(M);
     B.CreateCall(preunwind_steal);
 
-    if(!EnableSaveRestoreCtx_2) {
+    if(EnableSaveRestoreCtx_2) {
       auto donothingFcn = Intrinsic::getDeclaration(&M, Intrinsic::donothing);
       auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);
+      //auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_callee);
       //B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(InitiateUnwind, 1)});
-      B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(ResumeParent)});
+      B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(ResumeParent)});      
       B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), StartUnwind, ResumeParent, {});
 
     } else {
@@ -685,6 +696,13 @@ namespace {
 
     // return 1
     B.SetInsertPoint(StartUnwind);
+
+    // Save the ip
+    if(EnableSaveRestoreCtx_2) {
+      Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, I_RIP);
+      B.CreateStore(BlockAddress::get(ResumeParent), savedPc);
+    }
+
     B.CreateRet(ONE);
 
     // Call postunwind
@@ -897,6 +915,13 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
     // TODO:If unwindPathEntry is not found, just delete the builtin
 
     B.SetInsertPoint(startUnwindStack);
+
+    // TODO: Kill callee-saved register
+    using AsmTypeCallee = void (void);
+    FunctionType *reloadCaller = TypeBuilder<AsmTypeCallee, false>::get(C);
+    Value *Asm = InlineAsm::get(reloadCaller, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+    B.CreateCall(Asm);
+
     B.CreateBr(unwindPathEntry);
 
     // Remove the polling unwind
@@ -994,6 +1019,7 @@ bool HandleUnwindPollPass::runImpl(Function &F) {
       // Find unwind path entry
       changed |= handleUnwindPoll(BB, unwindPathEntry);
 
+    // TODO: handleSaveRestoreCtx is not used, could be removed
     changed |= handleSaveRestoreCtx(BB);
   }
   return changed;
