@@ -918,8 +918,8 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
 
     // TODO: Kill callee-saved register
     using AsmTypeCallee = void (void);
-    FunctionType *reloadCaller = TypeBuilder<AsmTypeCallee, false>::get(C);
-    Value *Asm = InlineAsm::get(reloadCaller, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+    FunctionType *killCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
+    Value *Asm = InlineAsm::get(killCallee, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     B.CreateCall(Asm);
 
     B.CreateBr(unwindPathEntry);
