@@ -167,24 +167,29 @@ in {
                       [(set GR64:$dst, (int_x86_uli_child_addressofreturnaddress))]>;
 
  // TODO: Is this "Defs" needed for allow pseudo? How this should affect the lowering of thses pseudos? 
- //let Defs = [R10, R11], Uses = [R10, R11], hasSideEffects = 1, mayStore =  1, SchedRW = [WriteSystem], isBarrier = 1, isTerminator = 1 in
+ //let Uses = [R10, R11], hasSideEffects = 1, mayStore =  1, SchedRW = [WriteSystem], isBarrier = 1, isTerminator = 1 in
  let Defs = [R10, R11, R12, R13, R14, R15, RBX], Uses = [R10, R11], hasSideEffects = 1, mayStore =  1, SchedRW = [WriteSystem], isBarrier = 1, isTerminator = 1 in
  {
    def ULI_SAVE_CONTEXT : PseudoI<(outs), (ins),
       [(int_x86_uli_save_context R10, R11)]>;
-   def ULI_SAVE_CALLEE : PseudoI<(outs), (ins),
-      [(int_x86_uli_save_callee R10, R11)]>;
-   def ULI_SAVE_CALLEE_NOSP : PseudoI<(outs), (ins),
-      [(int_x86_uli_save_callee_nosp R10, R11)]>;
    def ULI_SAVE_CONTEXT_NOSP : PseudoI<(outs), (ins),
       [(int_x86_uli_save_context_nosp R10, R11)]>;
  }
 
- let Defs = [R11], Uses = [R11], hasSideEffects = 1, mayStore =  1, SchedRW = [WriteFence], isBarrier = 1, isTerminator = 1 in
+ let Uses = [R10, R11], hasSideEffects = 1, mayStore =  1, SchedRW = [WriteSystem], isBarrier = 1 in
+ {
+   def ULI_SAVE_CALLEE : PseudoI<(outs), (ins),
+      [(int_x86_uli_save_callee R10, R11)]>;
+   def ULI_SAVE_CALLEE_NOSP : PseudoI<(outs), (ins),
+      [(int_x86_uli_save_callee_nosp R10, R11)]>;
+ }
+
+
+ let Defs = [R10], Uses = [R10], hasSideEffects = 1, mayStore =  1, SchedRW = [WriteFence], isBarrier = 1, isTerminator = 1 in
 
  {
      def ULI_RESTORE_CONTEXT : PseudoI<(outs), (ins),
-      [(int_x86_uli_restore_context R11)]>;
+      [(int_x86_uli_restore_context R10)]>;
  }
 
 }
