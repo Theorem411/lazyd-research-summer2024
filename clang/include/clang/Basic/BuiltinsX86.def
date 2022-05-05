@@ -2131,7 +2131,6 @@ BUILTIN(__builtin_uli_send0, "viiv*", "")
 BUILTIN(__builtin_uli_send0c, "vLLiv*", "")
 //BUILTIN(__builtin_uli_send0cN, "vLLiv*i", "")
 
-
 BUILTIN(__builtin_uli_reply, "vv*.", "")
 BUILTIN(__builtin_uli_reply0c, "vv*i", "")
 //BUILTIN(__builtin_uli_reply0cN, "vv*i", "")
@@ -2177,6 +2176,38 @@ BUILTIN(__builtin_uli_save_callee, "vv*v*", "")
 BUILTIN(__builtin_uli_save_context_nosp, "vv*v*", "")
 BUILTIN(__builtin_uli_restore_context, "vv*", "")
 
+// Builtin to expose multiretcall. Return void, first paramter: number of arguments, second paramater: number of indirect destination, third parameter: function name
+// Remaning args: arguments to function and indirect destination
+
+BUILTIN(__builtin_multiret_call, "viiv*.", "j")
+
+// TODO: Add different retpad_x, where x is the type returned by retpad
+BUILTIN(__builtin_retpadv, "v", "j")
+BUILTIN(__builtin_retpadi, "i", "")
+
+BUILTIN(__builtin_yield, "vv*v*.", "")
+BUILTIN(__builtin_next, "v.", "")
+
+// Similar to the following paper; Compiler Support for Lightweight Context Switching
+// Return void
+// First argument: ip
+// Second argument: (swapstack) void* (store the continuation, etc). Used as a call stack as well.
+// Remaining argument: argument for the target
+BUILTIN(__builtin_swapstackip, "vv*v*.", "")
+
+// Return void
+// First argument: ctx to resume
+// Second argument: (swapstack) void* (store the continuation, etc). Used as a call stack as well.
+// Remaining argument: argument for the target
+BUILTIN(__builtin_swapstackctx, "vv*v*.", "")
+
+// Jump to an inlined handler
+// Return void
+// First argument: Target continuation
+// Second argument: Return continuation
+// Third argument: Location of returning IP
+BUILTIN(__builtin_call_inlinedhandler, "vv*v*v**", "")
+
 // Return child's address of return address
 BUILTIN(__builtin_uli_child_addressofreturnaddress, "v*", "")
 
@@ -2186,7 +2217,7 @@ BUILTIN(__builtin_uli_retq, "v", "")
 // Turn on off atomic ULI (noninterruptable ULI)
 BUILTIN(__builtin_uli_atomic, "vULLi", "")
 
-// Return the special register 
+// Return the special register
 BUILTIN(__builtin_uli_rdrdi, "ULLi", "")
 BUILTIN(__builtin_uli_rdflags, "ULLi", "")
 BUILTIN(__builtin_uli_rdRA, "ULLi", "")
@@ -2195,7 +2226,6 @@ BUILTIN(__builtin_uli_rdRA, "ULLi", "")
 BUILTIN(__builtin_uli_wrrdi, "vULLi", "")
 BUILTIN(__builtin_uli_wrflags, "vULLi", "")
 BUILTIN(__builtin_uli_wrRA, "vULLi", "")
-
 
 
 

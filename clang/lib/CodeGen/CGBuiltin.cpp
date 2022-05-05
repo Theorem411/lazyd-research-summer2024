@@ -15403,7 +15403,111 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
     //arg_vector.push_back(llvm::ConstantInt::get(Int32Ty, E->getNumArgs()-1)); // store num args (don't count handler)
 
     return Builder.CreateCall(F, arg_vector);
+  }
 
+  case X86::BI__builtin_call_inlinedhandler: {
+
+    auto inspectedbb = Builder.GetInsertBlock();
+    auto returnbb = createBasicBlock("return.cont");
+    auto defaultbb = createBasicBlock("default.cont");
+    EmitBlock(returnbb);
+    EmitBlock(defaultbb);
+
+    LLVMContext& C = inspectedbb->getParent()->getContext();
+
+    Value* NULL8 = ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
+    auto donothingFcn = CGM.getIntrinsic(Intrinsic::donothing);
+    auto saveContext = CGM.getIntrinsic(Intrinsic::x86_uli_save_context);
+
+    auto br = inspectedbb->getTerminator();
+    br->eraseFromParent();
+    Builder.SetInsertPoint(inspectedbb);
+    // Save context
+
+    auto arg0 = EmitScalarExpr(E->getArg(0));
+    auto arg1 = EmitScalarExpr(E->getArg(1));
+
+    Builder.CreateCall(saveContext, {arg1, NULL8});
+    auto mrc = Builder.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), defaultbb, returnbb, {});
+    Builder.SetInsertPoint(defaultbb);
+    Builder.CreateStore(BlockAddress::get(inspectedbb, 1), EmitPointerWithAlignment(E->getArg(2)));
+
+    // Jump to the inlined handler
+    auto restoreContext = CGM.getIntrinsic(Intrinsic::x86_uli_restore_context);
+    Builder.CreateCall(restoreContext, {arg0});
+    Builder.CreateUnreachable();
+    Builder.SetInsertPoint(returnbb);
+
+    auto br2 = returnbb->getTerminator();
+    br2->eraseFromParent();
+
+    return mrc;
+  }
+
+  case X86::BI__builtin_multiret_call : {
+    // Create multiretcall along with the indirect destination
+    SmallVector<Value*, 4> arg_vector;
+    SmallVector<BasicBlock*, 4> indirectbb_vector;
+
+    auto nArgs = dyn_cast<ConstantInt>(EmitScalarExpr(E->getArg(0)));
+    Value* bitcastI = EmitScalarExpr(E->getArg(2));
+
+    Value *tmparg;
+    for (unsigned int i = 3; i < 3+nArgs->getSExtValue(); i++ ) {
+      tmparg = EmitScalarExpr(E->getArg(i));
+      arg_vector.push_back(tmparg);
+    }
+
+    auto inspectedbb = Builder.GetInsertBlock();
+    auto defaultbb = createBasicBlock("default.cont");
+    EmitBlock(defaultbb);
+
+    for (unsigned int i = 3+nArgs->getSExtValue(); i < E->getNumArgs() ; i++ ) {
+      tmparg = EmitScalarExpr(E->getArg(i));
+      auto tmpargBA = dyn_cast<BlockAddress>(tmparg);
+      assert(tmpargBA && "Blockaddress cannot be null");
+      tmpargBA->getBasicBlock()->dump();
+      indirectbb_vector.push_back(dyn_cast<BasicBlock>(tmpargBA->getBasicBlock()));
+    }
+    assert(dyn_cast<Constant>(bitcastI) && "FunctionType cannot be null");
+
+    Function* fcn = nullptr;
+
+    auto ce = dyn_cast<ConstantExpr>(bitcastI);
+    assert(ce && "bitcastI not a constant expression");
+    fcn = dyn_cast<Function>(ce->getOperand(0));
+    assert(fcn && "Function cannot be null");
+
+    auto br = inspectedbb->getTerminator();
+    br->eraseFromParent();
+    Builder.SetInsertPoint(inspectedbb);
+    auto val = Builder.CreateMultiRetCall(dyn_cast<Function>(fcn), defaultbb, indirectbb_vector, arg_vector);
+
+    inspectedbb->dump();
+    defaultbb->dump();
+
+    Builder.SetInsertPoint(defaultbb);
+    fcn->addFnAttr(Attribute::NoInline);
+
+    return val;
+  }
+  case X86::BI__builtin_retpadv: {
+    return Builder.CreateRetPad(Builder.getVoidTy());
+  }
+  case X86::BI__builtin_retpadi: {
+    return Builder.CreateRetPad(llvm::IntegerType::get(getLLVMContext(), 32));
+  }
+  case X86::BI__builtin_yield: {
+    assert(0 && "nyi");
+  }
+  case X86::BI__builtin_next: {
+    assert(0 && "nyi");
+  }
+  case X86::BI__builtin_swapstackip: {
+    assert(0 && "nyi");
+  }
+  case X86::BI__builtin_swapstackctx: {
+    assert(0 && "nyi");
   }
   }
 }
