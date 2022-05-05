@@ -126,6 +126,10 @@ DEFAULT_GET_LIB_FUNC(unwind_workexists)
 using POLL_ty = void (int, void*, void*) ;
 DEFAULT_GET_LIB_FUNC(POLL)
 
+using POLL2_ty = void (int, void*, void*, void*) ;
+DEFAULT_GET_LIB_FUNC(POLL2)
+
+
 using unwind_gosteal_ty = void (void );
 DEFAULT_GET_LIB_FUNC(unwind_gosteal)
 
@@ -299,7 +303,7 @@ namespace {
     BasicBlock* ResumeParent = BasicBlock::Create(Ctx, "resume.parent", Fn);
     //BasicBlock* WorkExists = BasicBlock::Create(Ctx, "work.already.exists", Fn);
     BasicBlock* InitiateUnwind = BasicBlock::Create(Ctx, "initiate.unwind", Fn);
-        
+
     BasicBlock* ReturnFromPoll = BasicBlock::Create(Ctx, "return.from.poll", Fn);
     BasicBlock* CheckForWork = BasicBlock::Create(Ctx, "check.for.work", Fn);
 
@@ -315,8 +319,8 @@ namespace {
     GlobalVariable* platestTime = GetGlobalVariable("latestTime", IntegerType::getInt64Ty(Ctx), M, true);
     GlobalVariable* pthresholdTime = GetGlobalVariable("thresholdTime", IntegerType::getInt64Ty(Ctx), M, true);
     GlobalVariable* prequestCell = GetGlobalVariable("request_cell", IntegerType::getInt64Ty(Ctx), M, true);
-    
-   
+
+
     if(EnablePollEpoch) {
       Constant* pollepoch = Get_pollepoch(M);
       B.CreateCall(pollepoch);
@@ -329,9 +333,9 @@ namespace {
 
     auto requestCell = B.CreateAlignedLoad(prequestCell, 8);
     auto latestTime = B.CreateAlignedLoad(platestTime, 8);
-#if 0    
+#if 0
     auto thresholdTime = B.CreateAlignedLoad(pthresholdTime, 8);
-#endif    
+#endif
     Constant* unwind_workexists = Get_unwind_workexists(M);
 
     //auto bWorkExists = B.CreateAlignedLoad(pbWorkExists, 4);
@@ -339,13 +343,13 @@ namespace {
     auto incCtr = B.CreateAdd(latestTime, B.getInt64(1));
 #else
     auto incCtr = B.CreateSub(latestTime, B.getInt64(1));
-#endif    
+#endif
     B.CreateAlignedStore(incCtr, platestTime, 8);
 #if 0
     auto cmpVal = B.CreateICmpSGE(incCtr, thresholdTime);
 #else
     auto cmpVal = B.CreateICmpSLE(incCtr, B.getInt64(0));
-#endif    
+#endif
     //auto cmpVal2 = B.CreateICmpEQ(bWorkExists, B.getInt32(0));
     //auto cmpAnd = B.CreateAnd(cmpVal, cmpVal2);
     //auto bWorkExists = B.CreateAlignedLoad(pbWorkExists, 4);
@@ -354,25 +358,25 @@ namespace {
 #if 0
     auto cmpReq = B.CreateICmpEQ(requestCell, B.getInt64(-1));
     B.CreateCondBr(cmpReq, JoinThreshold, ReduceThreshold);
-#else    
+#else
     auto cmpReq = B.CreateNot(B.CreateICmpEQ(requestCell, B.getInt64(-1)));
-    auto cmpReqOrVal = B.CreateOr(cmpReq, cmpVal); 
+    auto cmpReqOrVal = B.CreateOr(cmpReq, cmpVal);
     B.CreateCondBr(cmpReqOrVal, CheckForWork, ReturnFromPoll);
-#endif    
+#endif
     //B.CreateCondBr(cmpReq, JoinThreshold, CheckForWork);
     //B.CreateBr(JoinThreshold);
     B.SetInsertPoint(ReduceThreshold);
-    
+
     // Hopefully the compiler will optimize this instruction
 #if 1
-#if 0   
+#if 0
     auto halfThreshold = B.CreateMul(thresholdTime, B.getInt64(4));
-    halfThreshold = B.CreateSDiv(halfThreshold, B.getInt64(5));    
+    halfThreshold = B.CreateSDiv(halfThreshold, B.getInt64(5));
 
     B.CreateAlignedStore(halfThreshold, pthresholdTime, 8);
     B.CreateAlignedStore(B.getInt64(-1), prequestCell, 8);
 #endif
-#else    
+#else
     Constant* reduce_threshold = Get_reduce_threshold(M);
     B.CreateCall(reduce_threshold);
 #endif
@@ -393,7 +397,7 @@ namespace {
     Constant* check_workexists_and_modify_threshold = Get_check_workexists_and_modify_threshold(M);
     auto bWorkExists = B.CreateCall(check_workexists_and_modify_threshold);
     auto cmpVal2 = B.CreateICmpEQ(bWorkExists, B.getInt32(0));
-    B.CreateCondBr(cmpVal2, InitiateUnwind, ReturnFromPoll);    
+    B.CreateCondBr(cmpVal2, InitiateUnwind, ReturnFromPoll);
 #endif
 
     B.SetInsertPoint(InitiateUnwind);
@@ -640,7 +644,7 @@ namespace {
     Value* ONEBYTE = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
 
     Constant* unwind_gosteal = Get_unwind_gosteal(M);
-    
+
     if(EnablePollEpoch) {
       Constant* pollepoch = Get_pollepoch(M);
       B.CreateCall(pollepoch);
@@ -684,7 +688,7 @@ namespace {
       auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);
       //auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_callee);
       //B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(InitiateUnwind, 1)});
-      B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(ResumeParent)});      
+      B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(ResumeParent)});
       B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), StartUnwind, ResumeParent, {});
 
     } else {
@@ -740,7 +744,7 @@ namespace {
     Value* ONEBYTE = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
 
     Constant* unwind_gosteal = Get_unwind_gosteal(M);
-    
+
     if(EnablePollEpoch) {
       Constant* pollepoch = Get_pollepoch(M);
       B.CreateCall(pollepoch);
@@ -761,13 +765,13 @@ namespace {
     B.SetInsertPoint(CheckForWork);
     Constant* POLL = Get_POLL(M);
     //auto bWorkExists = B.CreateCall(POLL, B.getInt32(0));
-    
+
     // FIXME: can not refer to myself blockaddress(self, idx)
-    //auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(POLL), WorkExists, {InitiateUnwind}, 
+    //auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(POLL), WorkExists, {InitiateUnwind},
     //             {B.getInt32(0), BlockAddress::get(CheckForWork, 0), BlockAddress::get(CheckForWork, 1)});
 
-    auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(POLL), WorkExists, {InitiateUnwind}, 
-					    {B.getInt32(0), BlockAddress::get(WorkExists), BlockAddress::get(InitiateUnwind)});
+    auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(POLL), WorkExists, {InitiateUnwind},
+                                            {B.getInt32(0), BlockAddress::get(WorkExists), BlockAddress::get(InitiateUnwind)});
 
 
     B.SetInsertPoint(WorkExists);
@@ -815,7 +819,80 @@ namespace {
     return Fn;
   }
 
+  // Use for checking if there is a request for work
+  // This simply poll a function
+  Function* Get__unwindrts_unwind_ulifsim2(Module& M) {
+    Function* Fn = nullptr;
+    if (GetOrCreateFunction<unwind_poll_ty>("unwind_ulifsim_llvm", M, Fn))
+      return Fn;
+    LLVMContext& Ctx = M.getContext();
+    auto workcontext_ty = ArrayType::get(PointerType::getInt8PtrTy(Ctx), WorkCtxLen2);
+
+    BasicBlock* PollEntry = BasicBlock::Create(Ctx, "poll.entry", Fn);
+    BasicBlock* CheckForWork = BasicBlock::Create(Ctx, "check.for.work", Fn);
+    BasicBlock* ReturnFromPoll = BasicBlock::Create(Ctx, "return.from.poll", Fn);
+    IRBuilder<> B(PollEntry);
+
+    Value *ONE = B.getInt32(1);
+    Value *ZERO = B.getInt32(0);
+    Value* ONEBYTE = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
+
+    Constant* unwind_gosteal = Get_unwind_gosteal(M);
+
+    if(EnablePollEpoch) {
+      Constant* pollepoch = Get_pollepoch(M);
+      B.CreateCall(pollepoch);
+    }
+
+    GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
+    GlobalVariable* prequestCell = GetGlobalVariable("request_cell", IntegerType::getInt64Ty(Ctx), M, true);
+    //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
+
+    auto threadId = B.CreateAlignedLoad(pThreadId, 4);
+    auto requestCell = B.CreateAlignedLoad(prequestCell, 8);
+
+    // Check requirement
+    auto cmpVal = B.CreateICmpEQ(requestCell, B.getInt64(-1));
+    B.CreateCondBr(cmpVal, ReturnFromPoll, CheckForWork);
+
+    // Update latest time
+    B.SetInsertPoint(CheckForWork);
+    Constant* POLL2 = Get_POLL2(M);
+    //auto bWorkExists = B.CreateCall(POLL, B.getInt32(0));
+
+    // FIXME: can not refer to myself blockaddress(self, idx)
+    //auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(POLL), WorkExists, {InitiateUnwind},
+    //             {B.getInt32(0), BlockAddress::get(CheckForWork, 0), BlockAddress::get(CheckForWork, 1)});
+
+    Function* getSP = Intrinsic::getDeclaration(&M, Intrinsic::x86_read_sp);
+    Value* mySP = B.CreateCall(getSP);
+    mySP = B.CreateCast(Instruction::IntToPtr, mySP, IntegerType::getInt8Ty(Ctx)->getPointerTo());
+
+
+    // Get my base pointer
+    Value* EIGHT = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
+
+    auto addrOfRA = Intrinsic::getDeclaration(&M, Intrinsic::addressofreturnaddress);
+    Value* myRA = B.CreateCall(addrOfRA);
+    //myRA = B.CreateBitCast(myRA, IntegerType::getInt8Ty(Ctx)->getPointerTo());
+    myRA = B.CreateCast(Instruction::PtrToInt, myRA, IntegerType::getInt64Ty(Ctx));
+
+    Value* myBP = B.CreateSub(myRA, EIGHT);
+    myBP = B.CreateCast(Instruction::IntToPtr, myBP, IntegerType::getInt8Ty(Ctx)->getPointerTo());
+
+    auto insertPoint = B.CreateCall(dyn_cast<Function>(POLL2),
+                                    {B.getInt32(0), BlockAddress::get(CheckForWork), myBP, mySP});
+
+    B.CreateBr(ReturnFromPoll);
+
+    B.SetInsertPoint(ReturnFromPoll);
+    B.CreateRet(ZERO);
+
+    return Fn;
+  }
+
 }
+
 
 bool HandleUnwindPollPass::detachExists(Function& F) {
   Module* M = F.getParent();
@@ -876,7 +953,7 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
     if (!call) continue;
     auto fn = call->getCalledFunction();
     if (!fn) continue;
-    bool isFcnNotPoll = (fn->getIntrinsicID() != Intrinsic::x86_uli_unwind_poll) 
+    bool isFcnNotPoll = (fn->getIntrinsicID() != Intrinsic::x86_uli_unwind_poll)
       && (fn->getIntrinsicID() != Intrinsic::x86_uli_unwind_beat) ;
     if (isFcnNotPoll) continue;
 
@@ -889,7 +966,7 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
 
     BasicBlock * startUnwindStack = BasicBlock::Create(C, "start.unwind.stack", F);
     Constant* unwind_poll = nullptr;
-    if((!UnwindPollingType_2.compare("unwind-only")) || 
+    if((!UnwindPollingType_2.compare("unwind-only")) ||
        (fn->getIntrinsicID() == Intrinsic::x86_uli_unwind_beat)) {
       unwind_poll = Get__unwindrts_unwind_poll(*M);
     } else if(!UnwindPollingType_2.compare("unwind-suspend")) {
@@ -898,6 +975,8 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
       unwind_poll = Get__unwindrts_unwind_communicate(*M);
     } else if (!UnwindPollingType_2.compare("unwind-ulifsim")) {
       unwind_poll = Get__unwindrts_unwind_ulifsim(*M);
+    } else if (!UnwindPollingType_2.compare("unwind-ulifsim2")) {
+      unwind_poll = Get__unwindrts_unwind_ulifsim2(*M);
     } else {
       assert(0 && "Unknown unwind-polling-type value");
     }
