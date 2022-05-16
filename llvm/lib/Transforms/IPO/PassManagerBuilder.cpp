@@ -57,6 +57,7 @@
 // CNP : Added to transform potential jump immediately after Tapir Runtime transformation 
 #include "llvm/Transforms/ULI/HandleInlets.h"
 #include "llvm/Transforms/ULI/HandleUnwindPoll.h"
+#include "llvm/Transforms/ULI/LazyDTrans.h"
 #include "llvm/Transforms/Tapir/LoweringUtils.h"
 using namespace llvm;
 
@@ -208,10 +209,10 @@ static cl::opt<bool> DisableTapirOpts(
 static cl::opt<bool> VerifyTapir("verify-tapir", cl::init(false), cl::Hidden,
                                  cl::desc("Verify IR after Tapir passes"));
 
-// Allow to disable call site split for now since it interfere with the register allocator + EHPad
-static cl::opt<bool> DisableCallSiteSplit(
-    "disable-callsite-split", cl::init(false), cl::NotHidden,
-    cl::desc("Disable Call Site Splitting (default = off)"));
+static cl::opt<bool> EnableLazyDTransform(
+    "lazyd-trans", cl::init(false), cl::NotHidden,
+    cl::desc("Enable lazyD transformation (default = off). Tapir target must be serial. Flag will be ignored when optimization flag=-O0"));
+
 
 
 PassManagerBuilder::PassManagerBuilder() {
@@ -745,6 +746,7 @@ void PassManagerBuilder::populateModulePassManager(
     addExtensionsToPM(EP_TapirLate, MPM);
     addExtensionsToPM(EP_TapirLoopEnd, MPM);
 
+
     if (TapirTargetID::None != TapirTarget) {
       MPM.add(createTaskCanonicalizePass());
       MPM.add(createLowerTapirToTargetPass());
@@ -848,7 +850,7 @@ void PassManagerBuilder::populateModulePassManager(
 
   addExtensionsToPM(EP_ModuleOptimizerEarly, MPM);
 
-  if (OptLevel > 2 && !DisableCallSiteSplit)
+  if (OptLevel > 2)
     MPM.add(createCallSiteSplittingPass());
 
   // Propage constant function arguments by specializing the functions.
@@ -1101,8 +1103,8 @@ void PassManagerBuilder::populateModulePassManager(
     // Add passes to run just before Tapir lowering.
     addExtensionsToPM(EP_TapirLate, MPM);
 
-  if (!TapirHasBeenLowered) {
-    // First handle Tapir loops.  First, simplify their induction variables.
+  if (!TapirHasBeenLowered || EnableLazyDTransform) {
+    // First handle Tapir loops. First, simplify their induction variables.
     MPM.add(createIndVarSimplifyPass());
     // Re-rotate loops in all our loop nests. These may have fallout out of
     // rotated form due to GVN or other transformations, and loop spawning
@@ -1129,21 +1131,31 @@ void PassManagerBuilder::populateModulePassManager(
     MPM.add(createBarrierNoopPass());
     // addFunctionSimplificationPasses(MPM);
     addExtensionsToPM(EP_TapirLoopEnd, MPM);
-
-    // Now lower Tapir to Target runtime calls.
+    
     MPM.add(createTaskCanonicalizePass());
+    // Now lower Tapir to Target runtime calls.
     MPM.add(createLowerTapirToTargetPass());
     if (VerifyTapir)
       // Verify the IR produced by Tapir lowering
       MPM.add(createVerifierPass());
+
+    if(EnableLazyDTransform) {
+      assert(!tapirTarget && "Can only create lazyD when -ftapir=serial"); 
+      MPM.add(createLazyDTransPass());
+    }
+    
     // The lowering pass introduces new functions and may leave cruft around.
     // Clean it up.
-    MPM.add(createCFGSimplificationPass(
-        SimplifyCFGOptions().convertSwitchRangeToICmp(true)));
+    //MPM.add(createCFGSimplificationPass(
+    //    SimplifyCFGOptions().convertSwitchRangeToICmp(true)));
 
     MPM.add(createHandleInletsPass());
     MPM.add(createCFGSimplificationPass(
         SimplifyCFGOptions().convertSwitchRangeToICmp(true)));
+      //MPM.add(createInferFunctionAttrsLegacyPass());
+
+    // The lowering pass may leave cruft around.  Clean it up.
+    //MPM.add(createCFGSimplificationPass());
     MPM.add(createPostOrderFunctionAttrsLegacyPass());
     if (OptLevel > 2)
       MPM.add(createArgumentPromotionPass()); // Scalarize uninlined fn args
@@ -1255,7 +1267,7 @@ void PassManagerBuilder::addLTOOptimizationPasses(legacy::PassManagerBase &PM) {
   // Infer attributes about declarations if possible.
   PM.add(createInferFunctionAttrsLegacyPass());
 
-  if (OptLevel > 1 && !DisableCallSiteSplit) {
+  if (OptLevel > 1) {
     // Split call-site with more constrained arguments.
     PM.add(createCallSiteSplittingPass());
 
