@@ -60,6 +60,7 @@
 #include "llvm/Transforms/ULI/HandleUli.h"
 #include "llvm/Transforms/ULI/HandleInlets.h"
 #include "llvm/Transforms/ULI/HandleUnwindPoll.h"
+#include "llvm/Transforms/ULI/LazyDTrans.h"
 #include "llvm/Transforms/Tapir.h"
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
 #include "llvm/Transforms/Utils/UnifyFunctionExitNodes.h"
@@ -254,6 +255,13 @@ namespace {
 #if 0
       (void) llvm::createScalarizeMaskedMemIntrinPass();
 #endif
+      (void) llvm::createULIPollingInsertionPass();
+      (void) llvm::createULIIntrinsicToExternCallPass();
+      (void) llvm::createSendUliPass();
+      (void) llvm::createHandleUliPass();
+      (void) llvm::createHandleInletsPass();
+      (void) llvm::createHandleUnwindPollPass();
+      (void) llvm::createLazyDTransPass();
       (void) llvm::createSmallBlockPass();
       (void) llvm::createRedundantSpawnPass();
       (void) llvm::createSpawnRestructurePass();
@@ -262,11 +270,6 @@ namespace {
 #if 0
       (void) llvm::createTaskSimplifyPass();
 #endif
-      (void) llvm::createULIPollingInsertionPass();
-      (void) llvm::createULIIntrinsicToExternCallPass();
-      (void) llvm::createSendUliPass();
-      (void) llvm::createHandleUliPass();
-      (void) llvm::createHandleInletsPass();
       (void)new llvm::IntervalPartition();
       (void)new llvm::ScalarEvolutionWrapperPass();
       llvm::Function::Create(nullptr, llvm::GlobalValue::ExternalLinkage)->viewCFGOnly();
