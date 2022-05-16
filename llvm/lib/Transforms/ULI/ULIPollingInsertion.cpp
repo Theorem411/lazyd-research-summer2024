@@ -12,18 +12,31 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/Transforms/ULI/ULIPollingInsertion.h"
+
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/ULI/ULIPollingInsertion.h"
 
 using namespace llvm;
 
 #define SV_NAME "uli-pollinsert"
 #define DEBUG_TYPE "ULI"
+
+// Do not add the polling instrumentation
+static cl::opt<bool> DisableUnwindPoll(
+                                       "disable-unwind-polling2", cl::init(false), cl::NotHidden,
+                                       cl::desc("Do not insert any polling call (default = off)"));
+
+
+// Polling at prologue, epilogue, and inner loop
+static cl::opt<int> EnableProperPolling(
+                                        "enable-proper-polling2", cl::init(0), cl::NotHidden,
+                                        cl::desc("Enable polling at prologue, epilogue, and inner loop (default = 0)"));
+
 
 namespace {
 
@@ -75,6 +88,7 @@ bool ULIPollingInsertionPass::insertPollingAtFunction(Function &F) {
   return true;
 }
 
+#if 0
 bool ULIPollingInsertionPass::insertPollingAtLoop(Loop &L) {
   // Only insert at the inner most loop. Do DFS on nested loop.
   bool Changed = false;
@@ -101,6 +115,55 @@ bool ULIPollingInsertionPass::insertPollingAtLoop(Loop &L) {
   return Changed;
 }
 
+#else
+
+
+bool ULIPollingInsertionPass::instrumentLoop (Loop& L) {
+  Function *F = L.getHeader()->getParent();
+  Module *M = F->getParent();
+  LLVMContext& C = M->getContext();
+  IRBuilder<> B(M->getContext());
+
+  // Inner most loop, insert ULI polling.
+  BasicBlock *HeaderBlock = L.getHeader();
+  if (HeaderBlock) {
+    B.SetInsertPoint(HeaderBlock->getFirstNonPHIOrDbgOrLifetime());
+    Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll);
+    B.CreateCall(pollFcn);
+    DEBUG(dbgs() << F->getName() << ": Polling at outer most loop\n");
+  }
+  return true;
+}
+
+
+bool ULIPollingInsertionPass::insertPollingAtLoop(Loop &L) {
+  SmallVector<Loop *, 8> VisitStack = {&L};
+  Function *F = L.getHeader()->getParent();
+  
+  bool Changed = false;
+
+  instrumentLoop(L);
+
+  while (!VisitStack.empty()) {
+    Loop *CurrentLoop = VisitStack.pop_back_val();
+    auto &SubLoops    = CurrentLoop->getSubLoops();
+
+    if (!SubLoops.empty()) {
+#if 1
+      for (Loop *SubLoop : SubLoops)
+	VisitStack.push_back(SubLoop);
+#endif
+    } else {
+      //instrumentLoop(F, CurrentLoop, bHaveUnwindAlloc);
+    }
+  }
+
+  return Changed;
+}
+
+
+#endif
+
 bool ULIPollingInsertionPass::runImpl(Function &F,
                                       DominatorTree *DT_,
                                       LoopInfo *LI_) {
@@ -111,6 +174,7 @@ bool ULIPollingInsertionPass::runImpl(Function &F,
   // FIXME: Don't poll yet
   return false;
 
+#if 0
   // Skip functions that do not require ULI polling.
   if (isNoPollingFunction(F))
     return false;
@@ -121,7 +185,49 @@ bool ULIPollingInsertionPass::runImpl(Function &F,
   insertPollingAtFunction(F);
   for (Loop *L : *LI)
     insertPollingAtLoop(*L);
+#else  
+  //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  // Instrument prologue and epilogue to insert parallel runtime call  
+  IRBuilder<> B(F.getContext());
+  B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+  Module *M = F.getParent();
 
+  // Insert poling
+  // Polling @prologue
+  if( (!DisableUnwindPoll && !F.hasFnAttribute(Attribute::ULINoPolling)) ) {
+    Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll);
+    auto res = B.CreateCall(pollFcn);
+    DEBUG(dbgs() << F.getName() << " : Polling at prologue\n");
+  }
+
+  // Polling @epilogue
+  for (auto &BB : F){
+    Instruction * termInst = BB.getTerminator();
+    if(isa<ReturnInst>(termInst) ){
+      B.SetInsertPoint(termInst);
+
+      if( (!DisableUnwindPoll && !F.hasFnAttribute(Attribute::ULINoPolling)) ) {
+	Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll);
+	if(EnableProperPolling >= 1 ) {
+	  auto res = B.CreateCall(pollFcn);
+	  //res->setTailCall(true);
+	  DEBUG(dbgs() << F.getName() << " : Polling at epilogue\n");
+	}
+      }
+    }
+  }
+
+  // Polling @loop
+  if( (!DisableUnwindPoll && !F.hasFnAttribute(Attribute::ULINoPolling)) ) {
+    // Insert Poll in looping
+    for (auto *L : *LI) {
+      // Only insert at the inner most loop. Do DFS on nested loop.
+      if(EnableProperPolling >= 2 || F.getFnAttribute("poll-at-loop").getValueAsString()=="true") {
+	insertPollingAtLoop(*L);
+      }
+    }
+  }
+#endif
   return true;
 }
 

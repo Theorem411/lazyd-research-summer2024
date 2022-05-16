@@ -29,7 +29,7 @@ struct SendUliPass
 
  private:
   void showargs(const char* which, const CallInst *call_inst, Value* numargs);
-Value * handleArgs(Value * v, IRBuilder<>& builder, LLVMContext &ctx);
+  Value * handleArgs(Value * v, IRBuilder<>& builder, LLVMContext &ctx);
 
 public:
   /// \return Preserved analyses of function \p F after transformation.

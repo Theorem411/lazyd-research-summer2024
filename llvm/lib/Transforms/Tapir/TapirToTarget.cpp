@@ -470,7 +470,6 @@ bool TapirToTargetImpl::processFunction(
     return ChangedCFG;
   }
 
-
   // Traverse the tasks in this function in post order.
   SmallVector<Spindle *, 8> AllTaskFrames;
 

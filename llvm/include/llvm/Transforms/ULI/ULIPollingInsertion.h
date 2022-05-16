@@ -59,6 +59,9 @@ private:
     PollingArgs       = {CZero, CNull};
   }
 
+  ///  Add polling in loop
+  bool instrumentLoop(Loop& L);
+
   /// \return If we insert any ULI polling at the entry of function \p F.
   bool insertPollingAtFunction(Function &F);
 
