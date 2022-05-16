@@ -67,13 +67,13 @@ static cl::opt<int> WorkCtxLen2(
 
 // The type of polling used (ignored if DisableUnwindPoll = true)
 static cl::opt<std::string> UnwindPollingType_2(
-    "unwind-polling-type2", cl::init("unwind-only"), cl::NotHidden,
-    cl::desc("The type of polling used :unwind-steal, unwind-suspend, unwind-only. Ignored if DisableUnwindPoll is true (default = unwind-only)"));
+    "unwind-polling-type2", cl::init("unwind-steal"), cl::NotHidden,
+    cl::desc("The type of polling used :unwind-steal, unwind-suspend, unwind-only. Ignored if DisableUnwindPoll is true (default = unwind-steal)"));
 
 // Use builtin to save restore context
 static cl::opt<bool> EnableSaveRestoreCtx_2(
-    "enable-saverestore-ctx2", cl::init(false), cl::NotHidden,
-    cl::desc("Use builtin to save restore context (default = off)"));
+    "enable-saverestore-ctx2", cl::init(true), cl::NotHidden,
+    cl::desc("Use builtin to save restore context (default = on)"));
 
 // Enable poll epoch
 static cl::opt<bool> EnablePollEpoch(
@@ -985,11 +985,13 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
     BasicBlock* bb = pollLlvm->getParent();
     auto cond = B.CreateICmpEQ(pollLlvm, B.getInt32(1));
     auto afterBB = bb->splitBasicBlock(dyn_cast<Instruction>(cond)->getNextNode());
-
-    // Update terminator for bb
     auto terminator = bb->getTerminator();
-    auto branch = BranchInst::Create(startUnwindStack, afterBB, cond);
-    ReplaceInstWithInst(terminator, branch);
+    if (!UnwindPollingType_2.compare("unwind-ulifsim2")) {      
+    } else {            
+      // Update terminator for bb
+      auto branch = BranchInst::Create(startUnwindStack, afterBB, cond);
+      ReplaceInstWithInst(terminator, branch);    
+    }
 
     // TODO:If unwindPathEntry is not found, just delete the builtin
 
