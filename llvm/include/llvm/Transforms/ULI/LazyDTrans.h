@@ -43,9 +43,9 @@
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 // Custom Pass
-#include "llvm/Analysis/ReachingStoreReachableLoad.h"
-#include "llvm/Analysis/ReachingDetachInst.h"
-#include "llvm/Analysis/LiveVariable.h"
+#include "llvm/Transforms/ULI/LazyReachingStoreReachableLoad.h"
+#include "llvm/Transforms/ULI/LazyReachingDetachInst.h"
+#include "llvm/Transforms/ULI/LazyLiveVariable.h"
 
 
 #include <iostream>
