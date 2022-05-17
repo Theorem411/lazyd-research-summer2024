@@ -1895,8 +1895,14 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
 #endif
   Opts.ULIStackletOverflowCheckSize = getLastArgIntValue(Args, OPT_fuli_stacklet_overflow_size, 0);
   assert(Opts.ULIStackletOverflowCheckSize < 64);
-  Opts.PForSpawnStrategy = getLastArgIntValue(Args, OPT_fpfor_spawn_strategy, 0);
-  assert(Opts.PForSpawnStrategy < 3 && Opts.PForSpawnStrategy >= 0);  
+  Opts.PForSpawnStrategy = getLastArgIntValue(Args, OPT_fpfor_spawn_strategy, 1);
+  assert(Opts.PForSpawnStrategy < 3 && Opts.PForSpawnStrategy >= 0);
+  //auto fforkd_str = Args.getLastArgValue(OPT_fforkd_EQ);
+  //Opts.ForkDLowering = llvm::StringSwitch<char>(fforkd_str)
+  //  .Case("lazy", 1)
+  //  .Case("eager", 2)
+  //  .Default(0);
+
   Opts.EnableULITransform = Args.hasArg(OPT_fenable_uli_transform);
   Opts.EnableULIRewrite = Args.hasArg(OPT_fenable_uli_rewrite);
   Opts.DisableULIPollInsertion = Args.hasArg(OPT_fdisable_uli_poll_insertion);
@@ -4727,6 +4733,26 @@ bool CompilerInvocation::CreateFromArgsImpl(
                 Diags);
   if (Res.getFrontendOpts().ProgramAction == frontend::RewriteObjC)
     LangOpts.ObjCExceptions = 1;
+
+
+  LangOpts.Cilk = Args.hasArg(OPT_fcilkplus);
+  LangOpts.Detach = Args.hasArg(OPT_fdetach);
+  LangOpts.Rhino = Args.hasArg(OPT_frhino);
+  TapirTargetType TapirTarget = parseTapirTarget(Args);
+  if (TapirTarget == TapirTargetType::Last_TapirTargetType)
+    if (const Arg *A = Args.getLastArg(OPT_ftapir_EQ))
+      Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args)
+                                                << A->getValue();
+  LangOpts.TapirTarget = TapirTarget;
+
+  auto fforkd_str = Args.getLastArgValue(OPT_fforkd_EQ);
+  LangOpts.ForkDLowering = llvm::StringSwitch<char>(fforkd_str)
+    .Case("lazy", 1)
+    .Case("eager", 2)
+    .Default(0);
+
+  if (LangOpts.Cilk && (LangOpts.ObjC1 || LangOpts.ObjC2))
+    Diags.Report(diag::err_drv_cilk_objc);
 
   if (LangOpts.CUDA) {
     // During CUDA device-side compilation, the aux triple is the

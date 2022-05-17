@@ -2288,6 +2288,10 @@ def opencilk_abi_bitcode_EQ : Joined<["--"], "opencilk-abi-bitcode=">,
 def fopencilk_enable_pedigrees : Flag<["-"], "fopencilk-enable-pedigrees">,
   Group<f_Group>, Flags<[CC1Option]>, HelpText<"Enable OpenCilk pedigrees">;
 
+def fforkd_EQ : Joined<["-"], "fforkd=">, Group<f_Group>, Flags<[CC1Option]>,
+  HelpText<"Lower the tapir instruction to the lazy/eager-D runtime">,
+  Values<"lazy,eager">;
+
 def fmudflapth : Flag<["-"], "fmudflapth">, Group<f_Group>;
 def fmudflap : Flag<["-"], "fmudflap">, Group<f_Group>;
 def fnested_functions : Flag<["-"], "fnested-functions">, Group<f_Group>;

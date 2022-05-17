@@ -410,6 +410,12 @@ public:
   /// Set of enabled Cilk options.
   CilkOptionSet CilkOptions;
 
+  /// \brief Runtime target for Tapir.
+  TapirTargetType TapirTarget = TapirTargetType::Last_TapirTargetType;
+
+  /// \brief Tapir lowering to forkD library (lazy or eager).
+  char ForkDLowering;
+
   LangOptions();
 
   // Define accessors/mutators for language options of enumeration type.

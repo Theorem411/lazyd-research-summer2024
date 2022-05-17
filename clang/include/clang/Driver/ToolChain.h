@@ -762,6 +762,11 @@ public:
   /// given Tapir runtime library type.
   virtual void AddTapirRuntimeLibArgs(const llvm::opt::ArgList &Args,
                                       llvm::opt::ArgStringList &CmdArgs) const;
+
+  /// AddForkDRuntimeLibArgs - Add the specific linker arguments to use for the
+  /// given ForkD runtime library type.
+  virtual void AddForkDRuntimeLibArgs(const llvm::opt::ArgList &Args,
+                                      llvm::opt::ArgStringList &CmdArgs) const;
 };
 
 /// Set a ToolChain's effective triple. Reset it when the registration object

@@ -1899,6 +1899,12 @@ void CodeGenModule::getDefaultFunctionAttributes(StringRef Name,
     std::tie(Var, Value) = Attr.split('=');
     FuncAttrs.addAttribute(Var, Value);
   }
+
+  if(getLangOpts().ForkDLowering > 0) {
+    // Disable exceptions and always generate frame pointer when generating ForkD code
+    FuncAttrs.addAttribute(llvm::Attribute::NoUnwind);
+    FuncAttrs.addAttribute("no-frame-pointer-elim", "true");
+  }
 }
 
 void CodeGenModule::addDefaultFunctionDefinitionAttributes(llvm::Function &F) {

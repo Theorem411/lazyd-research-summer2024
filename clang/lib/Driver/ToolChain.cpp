@@ -1554,3 +1554,20 @@ void ToolChain::AddTapirRuntimeLibArgs(const ArgList &Args,
     break;
   }
 }
+
+void ToolChain::AddForkDRuntimeLibArgs(const ArgList &Args,
+                                       ArgStringList &CmdArgs) const {
+  auto fforkd_str = Args.getLastArgValue(options::OPT_fforkd_EQ);
+  char forkdLowering = llvm::StringSwitch<char>(fforkd_str)
+    .Case("lazy", 1)
+    .Case("eager", 2)
+    .Default(0);
+
+  if(forkdLowering > 0) {
+    CmdArgs.push_back("-lpthread");
+    CmdArgs.push_back("-lunwind_scheduler");
+    CmdArgs.push_back("-lnuma");
+    // -lm   -lunwind_scheduler -lpthread -ldl -lnuma
+  }
+  return;
+}

@@ -5967,6 +5967,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     }
   }
 
+  Args.AddLastArg(CmdArgs, options::OPT_fforkd_EQ);
+
   // Forward flags for OpenMP. We don't do this if the current action is an
   // device offloading action other than OpenMP.
   if (Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
