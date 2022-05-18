@@ -135,6 +135,9 @@ return F;
 using unwind_poll_ty = int(void);
 using mylongwithoutjmp_callee_ty = void (void**);
 
+using hashGnui_ty = unsigned (unsigned);
+DEFAULT_GET_LIB_FUNC(hashGnui)
+
 using mylongjmp_callee_ty = void (void**);
 DEFAULT_GET_LIB_FUNC(mylongjmp_callee)
 
@@ -470,8 +473,14 @@ namespace {
     auto loadRAi8 = B.CreateCast(Instruction::IntToPtr, args,
                                  IntegerType::getInt8Ty(C)->getPointerTo(), "returnaddrptr");
 
+#if 0
     Constant* gnuhash = UNWINDRTS_FUNC(unwind_gnuhash, M);
     Value* hashVal = B.CreateCall(gnuhash, {loadRAi8}, "hashVal");
+#else
+    auto args32 = B.CreateTrunc(args, IntegerType::getInt32Ty(C));
+    Constant* hashGnui = Get_hashGnui(M);
+    Value* hashVal = B.CreateCall(hashGnui, {args32});
+#endif
 
     auto rem = B.CreateURem(hashVal, nbucket, "rem");
     auto idxprom = B.CreateZExt(rem, IntegerType::getInt64Ty(C), "idxprom");
