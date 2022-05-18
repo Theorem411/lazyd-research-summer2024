@@ -2335,8 +2335,7 @@ void LazyDTransPass::updateSlowVariables_2(Function& F,
 
 		  SSAUpdate.AddAvailableValue(incomingInstSlow->getParent(), incomingInstSlow);
 		}
-
-		auto rematerialzeVal = SSAUpdate.GetValueAtEndOfBlock(syncBB2syncPred[continueBB]);
+		auto rematerialzeVal = SSAUpdate.GetValueInMiddleOfBlock(syncBB2syncPred[continueBB]);
 		phiInst->addIncoming(rematerialzeVal, syncBB2syncPred[continueBB]);
 	      }
 	    }
@@ -4513,7 +4512,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   // TODO: May not be needed since we use the PreHashTable to get the location of the unwind path
   instrumentPushPop(F, bb2clones);
 
-
   // Create the slow path (inserting phi node to capture data from fast path, renaming slow path variable with phi node or fast path variable if needed)
   DenseMap<BasicBlock*, BasicBlock*> syncBB2syncPred;
   if (!seqOrder.empty() || !loopOrder.empty()) {
@@ -4527,7 +4525,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     // Find the live varaible required in each slow path-continuation to construct the phi nodes needed
     // This done by intersecting all live IN instruction in the continuation with the
     // variables defined in basic block that can reach the continuation from any previous possible detach inst.
-
     findRequiredPhiNodes(RDIPath, RSIPath, MapBB2InVal, LVin, syncInsts, RequiredPhiNode);
 
     //-------------------------------------------------------------------------------------------------
@@ -4606,7 +4603,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 #endif
     //-------------------------------------------------------------------------------------------------
     // Create the gotstolen handler
-
     createGotStolenHandler(seqOrder, loopOrder, locAlloc, ownerAlloc, LVout, LVin, VMapSlowPath, VMapGotStolenPath,
 			   GotstolenSet, ReachingAllocSet, ReachingAllocToGotstolenSet, LatestStoreForDetach, LatestStoreForGotStolen);
 
