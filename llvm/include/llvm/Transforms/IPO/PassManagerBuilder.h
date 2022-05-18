@@ -202,6 +202,8 @@ public:
   std::string PGOInstrUse;
   /// Path of the sample Profile data file.
   std::string PGOSampleUse;
+  /// If ForkD lowering is enabled (0=disable, 1=lazyfork, 2=eagerfork(not yet implemented))
+  char ForkDLowering;
 
 private:
   /// ExtensionList - This is list of all of the extensions that are registered.

@@ -1820,8 +1820,8 @@ bool AsmPrinter::doFinalization(Module &M) {
     MCSection *PreHashSection = getObjFileLowering().getPreHashSection();
     OutStreamer->SwitchSection( PreHashSection);
     EmitAlignment(2);            
-
     Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());      
+#ifdef GLOBAL_TABLE
     M.getOrInsertGlobal("Pre_Hash_table", VoidPtrTy);
     GlobalVariable * preHashTable = M.getNamedGlobal("Pre_Hash_table");
     preHashTable->setLinkage(GlobalValue::ExternalLinkage);
@@ -1830,17 +1830,27 @@ bool AsmPrinter::doFinalization(Module &M) {
     EmitLinkage(preHashTable, PreHashSym);
     OutStreamer->EmitLabel(PreHashSym);
    
+#else
+    MCSymbol *PreHashSym = OutContext.getOrCreateSymbol(Twine("Pre_Hash_table"));
+    OutStreamer->EmitLabel(PreHashSym);
+#endif
+
     for(auto labelPair: OutContext.preHashTableEntry) {
       EmitLabelPlusOffset(labelPair.first, 0, 8, false);
       EmitLabelPlusOffset(labelPair.second, 0, 8, false);	
     }
  
+#ifdef GLOBAL_TABLE
     M.getOrInsertGlobal("Pre_Hash_table_end", VoidPtrTy);
     GlobalVariable * preHashTableEnd = M.getNamedGlobal("Pre_Hash_table_end");
     preHashTableEnd->setLinkage(GlobalValue::ExternalLinkage);
     MCSymbol *PreHashSymEnd = getSymbol(preHashTableEnd);
     EmitLinkage(preHashTableEnd, PreHashSymEnd);     
     OutStreamer->EmitLabel(PreHashSymEnd);
+#else
+    MCSymbol *PreHashSymEnd = OutContext.getOrCreateSymbol(Twine("Pre_Hash_table_end"));
+    OutStreamer->EmitLabel(PreHashSymEnd);
+#endif
   }
 
   /* Generate the Pre_BST_table in the elf binary
@@ -1856,6 +1866,7 @@ bool AsmPrinter::doFinalization(Module &M) {
     EmitAlignment(2);            
 
     Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());      
+#ifdef GLOBAL_TABLE
     M.getOrInsertGlobal("Pre_BST_table", VoidPtrTy);
     GlobalVariable * preBSTTable = M.getNamedGlobal("Pre_BST_table");
     preBSTTable->setLinkage(GlobalValue::ExternalLinkage);
@@ -1863,6 +1874,10 @@ bool AsmPrinter::doFinalization(Module &M) {
     // Seems to allow the user code to access the Pre_BST_Table or to used for global variable
     EmitLinkage(preBSTTable, PreBSTSym);
     OutStreamer->EmitLabel(PreBSTSym);
+#else
+    MCSymbol *PreBSTSym = OutContext.getOrCreateSymbol(Twine("Pre_BST_table"));
+    OutStreamer->EmitLabel(PreBSTSym);
+#endif
 
     for(auto labelTuple: OutContext.preBSTTableEntry) {
       EmitLabelPlusOffset(std::get<0>(labelTuple), 0, 8, false);
@@ -1870,12 +1885,17 @@ bool AsmPrinter::doFinalization(Module &M) {
       EmitLabelPlusOffset(std::get<2>(labelTuple), 0, 8, false);	
     }
  
+#ifdef GLOBAL_TABLE
     M.getOrInsertGlobal("Pre_BST_table_end", VoidPtrTy);
     GlobalVariable * preBSTTableEnd = M.getNamedGlobal("Pre_BST_table_end");
     preBSTTableEnd->setLinkage(GlobalValue::ExternalLinkage);
     MCSymbol *PreBSTSymEnd = getSymbol(preBSTTableEnd);
     EmitLinkage(preBSTTableEnd, PreBSTSymEnd);     
     OutStreamer->EmitLabel(PreBSTSymEnd);    
+#else
+    MCSymbol *PreBSTSymEnd = OutContext.getOrCreateSymbol(Twine("Pre_BST_table_end"));
+    OutStreamer->EmitLabel(PreBSTSymEnd);
+#endif
   }
 #endif
   

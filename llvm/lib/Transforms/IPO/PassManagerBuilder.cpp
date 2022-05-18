@@ -209,12 +209,6 @@ static cl::opt<bool> DisableTapirOpts(
 static cl::opt<bool> VerifyTapir("verify-tapir", cl::init(false), cl::Hidden,
                                  cl::desc("Verify IR after Tapir passes"));
 
-static cl::opt<bool> EnableLazyDTransform(
-    "lazyd-trans", cl::init(false), cl::NotHidden,
-    cl::desc("Enable lazyD transformation (default = off). Tapir target must be serial. Flag will be ignored when optimization flag=-O0"));
-
-
-
 PassManagerBuilder::PassManagerBuilder() {
     TapirTarget = TapirTargetID::None;
     OptLevel = 2;
@@ -246,6 +240,7 @@ PassManagerBuilder::PassManagerBuilder() {
     PerformThinLTO = EnablePerformThinLTO;
     DivergentTarget = false;
     CallGraphProfile = true;
+    ForkDLowering = 0;
 }
 
 PassManagerBuilder::~PassManagerBuilder() {
@@ -1139,7 +1134,7 @@ void PassManagerBuilder::populateModulePassManager(
       // Verify the IR produced by Tapir lowering
       MPM.add(createVerifierPass());
 
-    if(EnableLazyDTransform) {
+    if(ForkDLowering > 0) {
       assert(!tapirTarget && "Can only create lazyD when -ftapir=serial"); 
       MPM.add(createLazyDTransPass());
     }
