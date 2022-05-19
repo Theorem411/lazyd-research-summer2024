@@ -1368,7 +1368,7 @@ namespace llvm {
   struct LazyDTrans : public FunctionPass {
   public:
     static char ID;
-    explicit LazyDTrans() : FunctionPass(ID) { outs() << "Initialize 1\n"; initializeLazyDTransPass(*PassRegistry::getPassRegistry()); outs() << "Initialize 2\n"; }
+    explicit LazyDTrans() : FunctionPass(ID) { initializeLazyDTransPass(*PassRegistry::getPassRegistry()); }
     //~LazyDTrans() { }
 
     // We don't modify the program, so we preserve all analyses
@@ -1389,7 +1389,6 @@ namespace llvm {
 
     // Do some initialization
     virtual bool doInitialization(Module &M) override {
-      outs() << "Initializaion with module: " << &M <<"\n";
       return Impl.runInitialization(M);
     }
 
@@ -4244,9 +4243,6 @@ void LazyDTransPass::instrumentMainFcn(Function& F) {
 // Do some initialization
 bool LazyDTransPass::runInitialization(Module &M) {
   // Create a new function needed for this Module
-
-  outs() << "Initialize module\n";
-
   auto * fcn = UNWINDRTS_FUNC(mylongwithoutjmp_callee, M);
   fcn->addFnAttr(Attribute::NoUnwindPath);
   fcn = UNWINDRTS_FUNC(mylongjmp_callee, M);
@@ -4293,11 +4289,21 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     outs() << "Source filename: " << F.getParent()->getSourceFileName() << "\n";
     if(EnableMainInstrumentation)
       instrumentMainFcn(F);
-    F.addFnAttr(Attribute::NoUnwindPath);
+    //F.addFnAttr(Attribute::NoUnwindPath);
+    F.addFnAttr(Attribute::ULINoPolling);
+    for(auto &BB : F) {
+      for(auto &II : BB) {
+	if (isa<DetachInst>(&II)) {
+	  errs() << "Warning,detach inside main\n";
+	}
+      }
+    }
   }
 
+  // Why?
   // qsort will generate an error without this
   if(F.getName().contains(F.getParent()->getSourceFileName())) {
+    //errs() << "qsort will generate error here\n";
     F.addFnAttr(Attribute::NoUnwindPath);
   }
 
@@ -4859,20 +4865,27 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   // Convert DetachInst, ReattachInst, SyncInst to branch
   convertTapirIrToBr(F);
 
+  //-------------------------------------------------------------------------------------------------
+  // Post process: Simplify CFG and verify function
+  postProcessCfg(F, AM, DT, AllocaSet, GotstolenSet, ReachingAllocToGotstolenSet, LatestStoreForGotStolen);
+  
   // lower grainsize
+  SmallVector<IntrinsicInst*, 4 > ii2delete;
   for(auto &BB : F) {
     for(auto &II : BB) {
       if (IntrinsicInst *IntrinsicI = dyn_cast<IntrinsicInst>(&II)) {
-	if (Intrinsic::tapir_loop_grainsize == IntrinsicI->getIntrinsicID())
+	if (Intrinsic::tapir_loop_grainsize == IntrinsicI->getIntrinsicID()){
+	  ii2delete.push_back(IntrinsicI);
 	  lowerGrainsizeCall(IntrinsicI);
+	}
       }
     }
   }
 
-  //-------------------------------------------------------------------------------------------------
-  // Post process: Simplify CFG and verify function
+  for(auto ii : ii2delete) {
+    ii->eraseFromParent();
+  }
 
-  postProcessCfg(F, AM, DT, AllocaSet, GotstolenSet, ReachingAllocToGotstolenSet, LatestStoreForGotStolen);
   return true;
 }
 
