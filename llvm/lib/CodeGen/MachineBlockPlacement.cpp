@@ -717,14 +717,14 @@ BranchProbability MachineBlockPlacement::collectViableSuccessors(
     // If the "landing pad" is a gotstolen handler or slow path entry or unwind path, then consider 
     // it as a viable successor, otherwise it would generate the wrong control flow in backend
     bool bOnlyEHPad = Succ->isEHPad();
-    bOnlyEHPad = bOnlyEHPad &&( !( Succ->isGotstolenHandler()  || Succ->isSlowPathEntry() || Succ->isUnwindPathEntry() ));
+    bOnlyEHPad = bOnlyEHPad && ( !( Succ->isGotstolenHandler()  || Succ->isSlowPathEntry() || Succ->isUnwindPathEntry() ));
 
     if (bOnlyEHPad || (BlockFilter && !BlockFilter->count(Succ))) {
       SkipSucc = true;
     } else {
       BlockChain *SuccChain = BlockToChain[Succ];
       if (SuccChain == &Chain) {
-        SkipSucc = true;
+	SkipSucc = true;
       } else if (Succ != *SuccChain->begin()) {
         LLVM_DEBUG(dbgs() << "    " << getBlockName(Succ)
                           << " -> Mid chain!\n");
@@ -2141,8 +2141,11 @@ MachineBlockPlacement::findBestLoopTopHelper(
   // Walk backwards through any straight line of predecessors.
   while (BestPred->pred_size() == 1 &&
          (*BestPred->pred_begin())->succ_size() == 1 &&
-         *BestPred->pred_begin() != L.getHeader())
+         *BestPred->pred_begin() != L.getHeader()) {
+    if((*BestPred->pred_begin())->isMultiRetCallIndirectTarget())
+      break;
     BestPred = *BestPred->pred_begin();
+  }
 
   LLVM_DEBUG(dbgs() << "    final top: " << getBlockName(BestPred) << "\n");
   return BestPred;
