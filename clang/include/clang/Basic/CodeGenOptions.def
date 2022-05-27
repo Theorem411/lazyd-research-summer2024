@@ -77,6 +77,7 @@ CODEGENOPT(EnableDIPreservationVerify, 1, 0) ///< Enable di preservation verify
                                              ///< metadata preservation).
 CODEGENOPT(IndirectTlsSegRefs, 1, 0) ///< Set when -mno-tls-direct-seg-refs
                                      ///< is specified.
+CODEGENOPT(EnableUintr    , 1, 0) ///< Set when -muintr is enabled..
 CODEGENOPT(DisableTailCalls  , 1, 0) ///< Do not emit tail calls.
 CODEGENOPT(NoEscapingBlockTailCalls, 1, 0) ///< Do not emit tail calls from
                                            ///< escaping blocks.

@@ -1776,6 +1776,9 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
     Opts.DIBugsReportFilePath = "";
   }
 
+  // TODO: CNP check if this is needed
+  Opts.EnableUintr = Args.hasArg(OPT_muintr);
+
   Opts.NewStructPathTBAA = !Args.hasArg(OPT_no_struct_path_tbaa) &&
                            Args.hasArg(OPT_new_struct_path_tbaa);
   Opts.OptimizeSize = getOptimizationLevelSize(Args);

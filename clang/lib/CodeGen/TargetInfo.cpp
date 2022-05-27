@@ -2172,9 +2172,13 @@ void X86_32TargetCodeGenInfo::setTargetAttributes(
     }
     if (FD->hasAttr<AnyX86InterruptAttr>() || FD->hasAttr<UserLevelInterruptAttr>() || FD->hasAttr<ULINonAtomicAttr>() ) {
       llvm::Function *Fn = cast<llvm::Function>(GV);
-      Fn->setCallingConv(FD->hasAttr<AnyX86InterruptAttr>()
-          ? llvm::CallingConv::X86_INTR
-          : llvm::CallingConv::X86_ULI);
+      if(FD->hasAttr<AnyX86InterruptAttr>()) {
+	Fn->setCallingConv(CGM.getCodeGenOpts().EnableUintr
+          ? llvm::CallingConv::X86_UINTR
+          : llvm::CallingConv::X86_INTR);
+      } else {
+	Fn->setCallingConv(llvm::CallingConv::X86_ULI);
+      }
     }
 
     addX86InterruptAttrs(FD, GV, CGM);
@@ -2544,9 +2548,13 @@ public:
       }
       if (FD->hasAttr<AnyX86InterruptAttr>()  || FD->hasAttr<UserLevelInterruptAttr>()  || FD->hasAttr<ULINonAtomicAttr>() ) {
         llvm::Function *Fn = cast<llvm::Function>(GV);
-        Fn->setCallingConv(FD->hasAttr<AnyX86InterruptAttr>()
-            ? llvm::CallingConv::X86_INTR
-            : llvm::CallingConv::X86_ULI);
+	if(FD->hasAttr<AnyX86InterruptAttr>()) {
+	Fn->setCallingConv(CGM.getCodeGenOpts().EnableUintr
+          ? llvm::CallingConv::X86_UINTR
+          : llvm::CallingConv::X86_INTR);
+	} else {
+	  Fn->setCallingConv(llvm::CallingConv::X86_ULI);
+	}
       }
 
       addX86InterruptAttrs(FD, GV, CGM);
@@ -2761,9 +2769,13 @@ void WinX86_64TargetCodeGenInfo::setTargetAttributes(
     }
     if (FD->hasAttr<AnyX86InterruptAttr>()  || FD->hasAttr<UserLevelInterruptAttr>()  || FD->hasAttr<ULINonAtomicAttr>() ) {
       llvm::Function *Fn = cast<llvm::Function>(GV);
-      Fn->setCallingConv(FD->hasAttr<AnyX86InterruptAttr>()
-          ? llvm::CallingConv::X86_INTR
-          : llvm::CallingConv::X86_ULI);
+      if(FD->hasAttr<AnyX86InterruptAttr>()) {
+	Fn->setCallingConv(CGM.getCodeGenOpts().EnableUintr
+          ? llvm::CallingConv::X86_UINTR
+          : llvm::CallingConv::X86_INTR);
+      } else {
+	Fn->setCallingConv(llvm::CallingConv::X86_ULI);
+      }
     }
 
     addX86InterruptAttrs(FD, GV, CGM);
