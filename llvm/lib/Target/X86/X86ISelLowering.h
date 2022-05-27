@@ -178,6 +178,9 @@ namespace llvm {
       /// Return from interrupt. Operand 0 is the number of bytes to pop.
       IRET,
 
+      /// Return from user interrupt.
+      UIRET,
+
       /// Return from user-level interrupt. No operands
       ULIRET,
 

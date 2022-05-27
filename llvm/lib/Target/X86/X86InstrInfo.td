@@ -177,7 +177,11 @@ def X86cas16 : SDNode<"X86ISD::LCMPXCHG16_DAG", SDTX86cas16pair,
 
 def X86retflag : SDNode<"X86ISD::RET_FLAG", SDTX86Ret,
                         [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
+
 def X86iret : SDNode<"X86ISD::IRET", SDTX86Ret,
+                        [SDNPHasChain, SDNPOptInGlue]>;
+
+def X86uiret : SDNode<"X86ISD::UIRET", SDTX86Ret,
                         [SDNPHasChain, SDNPOptInGlue]>;
 
 def X86uliret : SDNode<"X86ISD::ULIRET", SDTX86Ret,
@@ -3286,6 +3290,7 @@ def : MnemonicAlias<"release", "xrelease", "intel">;
 // System instruction aliases.
 def : MnemonicAlias<"iret",    "iretw",    "att">, Requires<[In16BitMode]>;
 def : MnemonicAlias<"iret",    "iretl",    "att">, Requires<[Not16BitMode]>;
+def : MnemonicAlias<"uiret",    "uiretl",    "att">, Requires<[Not16BitMode]>;
 def : MnemonicAlias<"sysret",  "sysretl",  "att">;
 def : MnemonicAlias<"sysexit", "sysexitl", "att">;
 def : MnemonicAlias<"uliret",    "ULIRET",    "att">;

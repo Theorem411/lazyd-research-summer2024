@@ -11503,6 +11503,7 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
         // in the various CC lowering callbacks.
         Flags.setByVal();
       }
+
       if (Arg.hasAttribute(Attribute::Preallocated)) {
         Flags.setPreallocated();
         // Set the byval flag for CCAssignFn callbacks that don't know about
@@ -11511,6 +11512,12 @@ void SelectionDAGISel::LowerArguments(const Function &F) {
         // we port preallocated to more targets, we'll have to add custom
         // preallocated handling in the various CC lowering callbacks.
         Flags.setByVal();
+      }
+
+      if (F.getCallingConv() == CallingConv::X86_INTR || F.getCallingConv() == CallingConv::X86_UINTR) {
+        // IA Interrupt passes frame (1st parameter) by value in the stack.
+        if (ArgNo == 0)
+          Flags.setByVal();
       }
 
       // Certain targets (such as MIPS), may have a different ABI alignment

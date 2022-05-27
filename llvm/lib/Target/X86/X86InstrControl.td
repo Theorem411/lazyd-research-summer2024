@@ -52,6 +52,16 @@ let isTerminator = 1, isReturn = 1, isBarrier = 1,
   def ULIRET64   : I   <0x3F, RawFrm, (outs), (ins),
                     "uliretq", [(int_x86_uli_retq)], IIC_ULIRET>, TB, Requires<[In64BitMode]>;
 
+  // User interrupt return
+  // f3 0f 01 ec
+  // f3 0f  comes from XS
+  // 01 comes from <0x01
+  // ec comes from MRM_EC (Mod/RM byte)
+  def UIRET32   : I   <0x01, MRM_EC, (outs), (ins),
+                    "uiret{l|d}", [], IIC_UIRET>, XS,  OpSize32;
+  def UIRET64   : I   <0x01, MRM_EC, (outs), (ins),
+                    "uiretq", [], IIC_UIRET>, XS, Requires<[In64BitMode]>;
+
   // The machine return from interrupt instruction, but sometimes we need to
   // perform a post-epilogue stack adjustment. Codegen emits the pseudo form
   // which expands to include an SP adjustment if necessary.
@@ -61,8 +71,9 @@ let isTerminator = 1, isReturn = 1, isBarrier = 1,
   def IRET32 : I   <0xcf, RawFrm, (outs), (ins), "iret{l|d}", []>, OpSize32;
   def IRET64 : RI  <0xcf, RawFrm, (outs), (ins), "iretq", []>, Requires<[In64BitMode]>;
   let isCodeGenOnly = 1 in {
-    def IRET : PseudoI<(outs), (ins i32imm:$adj), [(X86iret timm:$adj)]>;
-    def ULIRET : PseudoI<(outs), (ins i32imm:$adj), [(X86uliret timm:$adj)]>;
+  def IRET : PseudoI<(outs), (ins i32imm:$adj), [(X86iret timm:$adj)]>;
+  def ULIRET : PseudoI<(outs), (ins i32imm:$adj), [(X86uliret timm:$adj)]>;
+  def UIRET : PseudoI<(outs), (ins i32imm:$adj), [(X86uiret timm:$adj)]>;
   }
   def RET  : PseudoI<(outs), (ins i32imm:$adj, variable_ops), [(X86retflag timm:$adj)]>;
 

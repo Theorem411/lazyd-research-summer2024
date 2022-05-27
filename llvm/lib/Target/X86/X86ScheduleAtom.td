@@ -405,6 +405,7 @@ def AtomItineraries : ProcessorItineraries<
   InstrItinData<IIC_INVD,  [InstrStage<1003, [Port0, Port1]>] >,
   InstrItinData<IIC_INVLPG, [InstrStage<71, [Port0, Port1]>] >,
   InstrItinData<IIC_IRET,  [InstrStage<109, [Port0, Port1]>] >,
+  InstrItinData<IIC_UIRET,  [InstrStage<109, [Port0, Port1]>] >,
   InstrItinData<IIC_ULIRET,  [InstrStage<109, [Port0, Port1]>] >,
   InstrItinData<IIC_HLT,   [InstrStage<121, [Port0, Port1]>] >,
   InstrItinData<IIC_LXS,   [InstrStage<10, [Port0, Port1]>] >,

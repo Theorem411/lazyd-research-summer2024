@@ -1955,6 +1955,7 @@ bool LLParser::parseOptionalCallingConv(unsigned &CC) {
   case lltok::kw_swiftcc:        CC = CallingConv::Swift; break;
   case lltok::kw_swifttailcc:    CC = CallingConv::SwiftTail; break;
   case lltok::kw_x86_intrcc:     CC = CallingConv::X86_INTR; break;
+  case lltok::kw_x86_uintrcc:    CC = CallingConv::X86_UINTR; break;
   case lltok::kw_x86_ulircc:     CC = CallingConv::X86_ULI; break;
   case lltok::kw_hhvmcc:         CC = CallingConv::HHVM; break;
   case lltok::kw_hhvm_ccc:       CC = CallingConv::HHVM_C; break;

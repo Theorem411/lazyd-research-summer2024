@@ -1075,6 +1075,7 @@ def IIC_INVD : InstrItinClass;
 def IIC_INVLPG : InstrItinClass;
 def IIC_INVPCID : InstrItinClass;
 def IIC_IRET : InstrItinClass;
+def IIC_UIRET : InstrItinClass;
 def IIC_ULIRET : InstrItinClass;
 def IIC_HLT : InstrItinClass;
 def IIC_LXS : InstrItinClass;

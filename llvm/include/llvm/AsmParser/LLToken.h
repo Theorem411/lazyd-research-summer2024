@@ -161,6 +161,7 @@ enum Kind {
   kw_preserve_allcc,
   kw_ghccc,
   kw_x86_intrcc,
+  kw_x86_uintrcc,
   kw_x86_ulircc,
   kw_hhvmcc,
   kw_hhvm_ccc,

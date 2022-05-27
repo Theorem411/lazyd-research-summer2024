@@ -2921,7 +2921,7 @@ X86TargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
       CallConv == CallingConv::X86_RegCall ||
       MF.getFunction().hasFnAttribute("no_caller_saved_registers");
 
-  if (((CallConv == CallingConv::X86_INTR)||(CallConv == CallingConv::X86_ULI)) && !Outs.empty())
+  if (((CallConv == CallingConv::X86_INTR)||(CallConv == CallingConv::X86_ULI)||(CallConv == CallingConv::X86_UINTR)) && !Outs.empty())
     report_fatal_error("X86 (user-level) interrupts may not return any value");
 
   SmallVector<CCValAssign, 16> RVLocs;
@@ -3109,6 +3109,8 @@ X86TargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
     opcode = X86ISD::IRET;
   else if (CallConv == CallingConv::X86_ULI)
     opcode = X86ISD::ULIRET;
+  else if (CallConv == CallingConv::X86_UINTR)
+    opcode = X86ISD::UIRET;
   return DAG.getNode(opcode, dl, MVT::Other, RetOps);
 }
 
@@ -3488,6 +3490,22 @@ X86TargetLowering::LowerMemArgument(SDValue Chain, CallingConv::ID CallConv,
   else
     ValVT = VA.getValVT();
 
+  // Calculate SP offset of interrupt parameter, re-arrange the slot normally
+  // taken by a return address.
+  int Offset = 0;
+  if (CallConv == CallingConv::X86_INTR || CallConv == CallingConv::X86_UINTR) {
+    // X86 interrupts may take one or two arguments.
+    // On the stack there will be no return address as in regular call.
+    // Offset of last argument need to be set to -4/-8 bytes.
+    // Where offset of the first argument out of two, should be set to 0 bytes.
+    Offset = (Subtarget.is64Bit() ? 8 : 4) * ((i + 1) % Ins.size() - 1);
+    if (Subtarget.is64Bit() && Ins.size() == 2) {
+      // The stack pointer needs to be realigned for 64 bit handlers with error
+      // code, so the argument offset changes by 8 bytes.
+      Offset += 8;
+    }
+  }
+
   // FIXME: For now, all byval parameter objects are marked mutable. This can be
   // changed with more analysis.
   // In case of tail call optimization mark all arguments mutable. Since they
@@ -3500,6 +3518,11 @@ X86TargetLowering::LowerMemArgument(SDValue Chain, CallingConv::ID CallConv,
     // can be improved with deeper analysis.
     int FI = MFI.CreateFixedObject(Bytes, VA.getLocMemOffset(), isImmutable,
                                    /*isAliased=*/true);
+
+    // Adjust SP offset of interrupt parameter.
+    if (CallConv == CallingConv::X86_INTR || CallConv == CallingConv::X86_UINTR) {
+      MFI.setObjectOffset(FI, Offset);
+    }
     return DAG.getFrameIndex(FI, PtrVT);
   }
 
@@ -3566,6 +3589,11 @@ X86TargetLowering::LowerMemArgument(SDValue Chain, CallingConv::ID CallConv,
     MFI.setObjectZExt(FI, true);
   } else if (VA.getLocInfo() == CCValAssign::SExt) {
     MFI.setObjectSExt(FI, true);
+  }
+
+  // Adjust SP offset of interrupt parameter.
+  if (CallConv == CallingConv::X86_INTR || CallConv == CallingConv::X86_UINTR) {
+    MFI.setObjectOffset(FI, Offset);
   }
 
   SDValue FIN = DAG.getFrameIndex(FI, PtrVT);
@@ -3859,6 +3887,15 @@ SDValue X86TargetLowering::LowerFormalArguments(
       !(IsVarArg && canGuaranteeTCO(CallConv)) &&
       "Var args not supported with calling conv' regcall, fastcc, ghc or hipe");
 
+
+  if (CallConv == CallingConv::X86_INTR || CallConv == CallingConv::X86_UINTR) {
+    bool isLegal = Ins.size() == 1 ||
+                   (Ins.size() == 2 && ((Is64Bit && Ins[1].VT == MVT::i64) ||
+                                        (!Is64Bit && Ins[1].VT == MVT::i32)));
+    if (!isLegal)
+      report_fatal_error("X86 interrupts may take one or two arguments");
+  }
+
   // Assign locations to all of the incoming arguments.
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, IsVarArg, MF, ArgLocs, *DAG.getContext());
@@ -4065,6 +4102,147 @@ SDValue X86TargetLowering::LowerFormalArguments(
       int PSPSymFI = MFI.CreateStackObject(8, Align(8), /*isSpillSlot=*/false);
       EHInfo->PSPSymFrameIdx = PSPSymFI;
     }
+	  // TODO: CNP check if this is needed
+#if 0
+    if (IsWin64) {
+      // Get to the caller-allocated home save location.  Add 8 to account
+      // for the return address.
+      int HomeOffset = TFI.getOffsetOfLocalArea() + 8;
+      FuncInfo->setRegSaveFrameIndex(
+          MFI.CreateFixedObject(1, NumIntRegs * 8 + HomeOffset, false));
+      // Fixup to set vararg frame on shadow area (4 x i64).
+      if (NumIntRegs < 4)
+        FuncInfo->setVarArgsFrameIndex(FuncInfo->getRegSaveFrameIndex());
+    } else {
+      // For X86-64, if there are vararg parameters that are passed via
+      // registers, then we must store them to their spots on the stack so
+      // they may be loaded by dereferencing the result of va_next.
+      FuncInfo->setVarArgsGPOffset(NumIntRegs * 8);
+      FuncInfo->setVarArgsFPOffset(ArgGPRs.size() * 8 + NumXMMRegs * 16);
+      FuncInfo->setRegSaveFrameIndex(MFI.CreateStackObject(
+          ArgGPRs.size() * 8 + ArgXMMs.size() * 16, 16, false));
+    }
+
+    // Store the integer parameter registers.
+    SmallVector<SDValue, 8> MemOps;
+    SDValue RSFIN = DAG.getFrameIndex(FuncInfo->getRegSaveFrameIndex(),
+                                      getPointerTy(DAG.getDataLayout()));
+    unsigned Offset = FuncInfo->getVarArgsGPOffset();
+    for (SDValue Val : LiveGPRs) {
+      SDValue FIN = DAG.getNode(ISD::ADD, dl, getPointerTy(DAG.getDataLayout()),
+                                RSFIN, DAG.getIntPtrConstant(Offset, dl));
+      SDValue Store =
+          DAG.getStore(Val.getValue(1), dl, Val, FIN,
+                       MachinePointerInfo::getFixedStack(
+                           DAG.getMachineFunction(),
+                           FuncInfo->getRegSaveFrameIndex(), Offset));
+      MemOps.push_back(Store);
+      Offset += 8;
+    }
+
+    if (!ArgXMMs.empty() && NumXMMRegs != ArgXMMs.size()) {
+      // Now store the XMM (fp + vector) parameter registers.
+      SmallVector<SDValue, 12> SaveXMMOps;
+      SaveXMMOps.push_back(Chain);
+      SaveXMMOps.push_back(ALVal);
+      SaveXMMOps.push_back(DAG.getIntPtrConstant(
+                             FuncInfo->getRegSaveFrameIndex(), dl));
+      SaveXMMOps.push_back(DAG.getIntPtrConstant(
+                             FuncInfo->getVarArgsFPOffset(), dl));
+      SaveXMMOps.insert(SaveXMMOps.end(), LiveXMMRegs.begin(),
+                        LiveXMMRegs.end());
+      MemOps.push_back(DAG.getNode(X86ISD::VASTART_SAVE_XMM_REGS, dl,
+                                   MVT::Other, SaveXMMOps));
+    }
+
+    if (!MemOps.empty())
+      Chain = DAG.getNode(ISD::TokenFactor, dl, MVT::Other, MemOps);
+  }
+
+  if (isVarArg && MFI.hasMustTailInVarArgFunc()) {
+    // Find the largest legal vector type.
+    MVT VecVT = MVT::Other;
+    // FIXME: Only some x86_32 calling conventions support AVX512.
+    if (Subtarget.hasAVX512() &&
+        (Is64Bit || (CallConv == CallingConv::X86_VectorCall ||
+                     CallConv == CallingConv::Intel_OCL_BI)))
+      VecVT = MVT::v16f32;
+    else if (Subtarget.hasAVX())
+      VecVT = MVT::v8f32;
+    else if (Subtarget.hasSSE2())
+      VecVT = MVT::v4f32;
+
+    // We forward some GPRs and some vector types.
+    SmallVector<MVT, 2> RegParmTypes;
+    MVT IntVT = Is64Bit ? MVT::i64 : MVT::i32;
+    RegParmTypes.push_back(IntVT);
+    if (VecVT != MVT::Other)
+      RegParmTypes.push_back(VecVT);
+
+    // Compute the set of forwarded registers. The rest are scratch.
+    SmallVectorImpl<ForwardedRegister> &Forwards =
+        FuncInfo->getForwardedMustTailRegParms();
+    CCInfo.analyzeMustTailForwardedRegisters(Forwards, RegParmTypes, CC_X86);
+
+    // Conservatively forward AL on x86_64, since it might be used for varargs.
+    if (Is64Bit && !CCInfo.isAllocated(X86::AL)) {
+      unsigned ALVReg = MF.addLiveIn(X86::AL, &X86::GR8RegClass);
+      Forwards.push_back(ForwardedRegister(ALVReg, X86::AL, MVT::i8));
+    }
+
+    // Copy all forwards from physical to virtual registers.
+    for (ForwardedRegister &F : Forwards) {
+      // FIXME: Can we use a less constrained schedule?
+      SDValue RegVal = DAG.getCopyFromReg(Chain, dl, F.VReg, F.VT);
+      F.VReg = MF.getRegInfo().createVirtualRegister(getRegClassFor(F.VT));
+      Chain = DAG.getCopyToReg(Chain, dl, F.VReg, RegVal);
+    }
+  }
+
+  // Some CCs need callee pop.
+  if (X86::isCalleePop(CallConv, Is64Bit, isVarArg,
+                       MF.getTarget().Options.GuaranteedTailCallOpt)) {
+    FuncInfo->setBytesToPopOnReturn(StackSize); // Callee pops everything.
+  } else if ( (CallConv == CallingConv::X86_INTR || CallConv == CallingConv::X86_UINTR)  && Ins.size() == 2) {
+    // X86 interrupts must pop the error code (and the alignment padding) if
+    // present.
+    FuncInfo->setBytesToPopOnReturn(Is64Bit ? 16 : 4);
+  } else {
+    FuncInfo->setBytesToPopOnReturn(0); // Callee pops nothing.
+    // If this is an sret function, the return should pop the hidden pointer.
+    if (!Is64Bit && !canGuaranteeTCO(CallConv) &&
+        !Subtarget.getTargetTriple().isOSMSVCRT() &&
+        argsAreStructReturn(Ins, Subtarget.isTargetMCU()) == StackStructReturn)
+      FuncInfo->setBytesToPopOnReturn(4);
+  }
+
+  if (!Is64Bit) {
+    // RegSaveFrameIndex is X86-64 only.
+    FuncInfo->setRegSaveFrameIndex(0xAAAAAAA);
+    if (CallConv == CallingConv::X86_FastCall ||
+        CallConv == CallingConv::X86_ThisCall)
+      // fastcc functions can't have varargs.
+      FuncInfo->setVarArgsFrameIndex(0xAAAAAAA);
+  }
+
+  FuncInfo->setArgumentStackSize(StackSize);
+
+  if (WinEHFuncInfo *EHInfo = MF.getWinEHFuncInfo()) {
+    EHPersonality Personality = classifyEHPersonality(F.getPersonalityFn());
+    if (Personality == EHPersonality::CoreCLR) {
+      assert(Is64Bit);
+      // TODO: Add a mechanism to frame lowering that will allow us to indicate
+      // that we'd prefer this slot be allocated towards the bottom of the frame
+      // (i.e. near the stack pointer after allocating the frame).  Every
+      // funclet needs a copy of this slot in its (mostly empty) frame, and the
+      // offset from the bottom of this and each funclet's frame must be the
+      // same, so the size of funclets' (mostly empty) frames is dictated by
+      // how far this slot is from the bottom (since they allocate just enough
+      // space to accommodate holding this slot at the correct offset).
+      int PSPSymFI = MFI.CreateStackObject(8, 8, /*isSS=*/false);
+      EHInfo->PSPSymFrameIdx = PSPSymFI;
+    }
+#endif
   }
 
   if (CallConv == CallingConv::X86_RegCall ||
@@ -4181,7 +4359,7 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     (Fn && Fn->hasFnAttribute("no_caller_saved_registers")) ||
     (Fn && Fn->hasFnAttribute("user_level_interrupt"));
 
-  if (CallConv == CallingConv::X86_INTR)
+  if (CallConv == CallingConv::X86_INTR || CallConv == CallingConv::X86_UINTR)
     report_fatal_error("X86 interrupts may not be called directly");
   else if (CallConv == CallingConv::X86_ULI)
     report_fatal_error("X86 user-level interrupts may not be called directly");
@@ -4759,7 +4937,7 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
                  (Fn && Fn->hasFnAttribute("user_level_interrupt"));
 
 
-  if (CallConv == CallingConv::X86_INTR)
+  if (CallConv == CallingConv::X86_INTR || CallConv == CallingConv::X86_UINTR)
     report_fatal_error("X86 interrupts may not be called directly");
   else if (CallConv == CallingConv::X86_ULI)
     report_fatal_error("X86 user-level interrupts may not be called directly");
@@ -5402,7 +5580,7 @@ X86TargetLowering::LowerMultiRetCallEpilogue(TargetLowering::CallLoweringInfo &C
                  (Fn && Fn->hasFnAttribute("user_level_interrupt"));
 
 
-  if (CallConv == CallingConv::X86_INTR)
+  if (CallConv == CallingConv::X86_INTR || CallConv == CallingConv::X86_UINTR)
     report_fatal_error("X86 interrupts may not be called directly");
   else if (CallConv == CallingConv::X86_ULI)
     report_fatal_error("X86 user-level interrupts may not be called directly");
@@ -39458,6 +39636,7 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case X86ISD::BRCOND:             return "X86ISD::BRCOND";
   case X86ISD::RET_FLAG:           return "X86ISD::RET_FLAG";
   case X86ISD::IRET:               return "X86ISD::IRET";
+  case X86ISD::UIRET:               return "X86ISD::UIRET";
   case X86ISD::ULIRET:             return "X86ISD::ULIRET";
   case X86ISD::REP_STOS:           return "X86ISD::REP_STOS";
   case X86ISD::REP_MOVS:           return "X86ISD::REP_MOVS";

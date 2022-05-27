@@ -1478,6 +1478,14 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     emitSPUpdate(MBB, MBBI, DL, -8, /*InEpilogue=*/false);
   }
 
+  if (Fn.getCallingConv() == CallingConv::X86_UINTR && Is64Bit &&
+      Fn.arg_size() == 2) {
+    StackSize += 8;
+    MFI.setStackSize(StackSize);
+    emitSPUpdate(MBB, MBBI, -8, /*InEpilogue=*/false);
+  }
+
+
   // If this is x86-64 and the Red Zone is not disabled, if we are a leaf
   // function, and use up to 128 bytes of stack space, don't have a frame
   // pointer, calls, or dynamic alloca then we do not need to adjust the
@@ -2247,6 +2255,11 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
   if (Fn.getCallingConv() == CallingConv::X86_INTR)
     BuildMI(MBB, MBBI, DL, TII.get(X86::CLD))
         .setMIFlag(MachineInstr::FrameSetup);
+
+  if (Fn.getCallingConv() == CallingConv::X86_UINTR)
+    BuildMI(MBB, MBBI, DL, TII.get(X86::CLD))
+        .setMIFlag(MachineInstr::FrameSetup);
+
 
   // At this point we know if the function has WinCFI or not.
   MF.setHasWinCFI(HasWinCFI);

@@ -394,6 +394,25 @@ X86RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
         return CSR_32_AllRegs_SSE_SaveList;
       return CSR_32_AllRegs_SaveList;
     }
+  case CallingConv::X86_UINTR:
+    if (Is64Bit) {
+      if (HasAVX512)
+        return CSR_64_AllRegs_AVX512_SaveList;
+      if (HasAVX)
+        return CSR_64_AllRegs_AVX_SaveList;
+      if (HasSSE)
+        return CSR_64_AllRegs_SaveList;
+      return CSR_64_AllRegs_NoSSE_SaveList;
+    } else {
+      if (HasAVX512)
+        return CSR_32_AllRegs_AVX512_SaveList;
+      if (HasAVX)
+        return CSR_32_AllRegs_AVX_SaveList;
+      if (HasSSE)
+        return CSR_32_AllRegs_SSE_SaveList;
+      return CSR_32_AllRegs_SaveList;
+    }
+
   default:
     break;
   }
@@ -495,6 +514,24 @@ X86RegisterInfo::getCallPreservedMask(const MachineFunction &MF,
   case CallingConv::X86_64_SysV:
     return CSR_64_RegMask;
   case CallingConv::X86_INTR:
+    if (Is64Bit) {
+      if (HasAVX512)
+        return CSR_64_AllRegs_AVX512_RegMask;
+      if (HasAVX)
+        return CSR_64_AllRegs_AVX_RegMask;
+      if (HasSSE)
+        return CSR_64_AllRegs_RegMask;
+      return CSR_64_AllRegs_NoSSE_RegMask;
+    } else {
+      if (HasAVX512)
+        return CSR_32_AllRegs_AVX512_RegMask;
+      if (HasAVX)
+        return CSR_32_AllRegs_AVX_RegMask;
+      if (HasSSE)
+        return CSR_32_AllRegs_SSE_RegMask;
+      return CSR_32_AllRegs_RegMask;
+    }
+  case CallingConv::X86_UINTR:
     if (Is64Bit) {
       if (HasAVX512)
         return CSR_64_AllRegs_AVX512_RegMask;

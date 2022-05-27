@@ -427,6 +427,16 @@ bool X86ExpandPseudo::ExpandMI(MachineBasicBlock &MBB,
     MBB.erase(MBBI);
     return true;
   }
+  case X86::UIRET: {
+    // Adjust stack to erase error code
+    int64_t StackAdj = MBBI->getOperand(0).getImm();
+    X86FL->emitSPUpdate(MBB, MBBI, StackAdj, true);
+    // Replace pseudo with machine iret
+    BuildMI(MBB, MBBI, DL,
+            TII->get(STI->is64Bit() ? X86::UIRET64 : X86::UIRET32));
+    MBB.erase(MBBI);
+    return true;
+  }
   case X86::RET: {
     // Adjust stack to erase error code
     int64_t StackAdj = MBBI->getOperand(0).getImm();
