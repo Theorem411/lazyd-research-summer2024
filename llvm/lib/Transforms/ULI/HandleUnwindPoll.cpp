@@ -66,9 +66,9 @@ static cl::opt<int> WorkCtxLen2(
     cl::desc("Size of work context length (default = WORKCTX_SIZE)"));
 
 // The type of polling used (ignored if DisableUnwindPoll = true)
-static cl::opt<std::string> UnwindPollingType_2(
-    "unwind-polling-type2", cl::init("unwind-steal"), cl::NotHidden,
-    cl::desc("The type of polling used :unwind-steal, unwind-suspend, unwind-only. Ignored if DisableUnwindPoll is true (default = unwind-steal)"));
+static cl::opt<std::string> UnwindPollingType(
+    "lazy-poll-lowering", cl::init("unwind-steal"), cl::NotHidden,
+    cl::desc("The type of polling used :unwind-steal, unwind-suspend, unwind-only, unwind-ulifsim, nop. Ignored if DisableUnwindPoll is true (default = unwind-steal)"));
 
 // Use builtin to save restore context
 static cl::opt<bool> EnableSaveRestoreCtx_2(
@@ -957,7 +957,7 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
       && (fn->getIntrinsicID() != Intrinsic::x86_uli_unwind_beat) ;
     if (isFcnNotPoll) continue;
 
-    if(!unwindPathEntry) {
+    if(!unwindPathEntry || !UnwindPollingType.compare("nop")) {
       inst2delete.push_back(&instr);
       continue;
     }
@@ -966,27 +966,28 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
 
     BasicBlock * startUnwindStack = BasicBlock::Create(C, "start.unwind.stack", F);
     Constant* unwind_poll = nullptr;
-    if((!UnwindPollingType_2.compare("unwind-only")) ||
+    if((!UnwindPollingType.compare("unwind-only")) ||
        (fn->getIntrinsicID() == Intrinsic::x86_uli_unwind_beat)) {
       unwind_poll = Get__unwindrts_unwind_poll(*M);
-    } else if(!UnwindPollingType_2.compare("unwind-suspend")) {
+    } else if(!UnwindPollingType.compare("unwind-suspend")) {
       unwind_poll = Get__unwindrts_unwind_suspend(*M);
-    } else if(!UnwindPollingType_2.compare("unwind-steal")) {
+    } else if(!UnwindPollingType.compare("unwind-steal")) {
       unwind_poll = Get__unwindrts_unwind_communicate(*M);
-    } else if (!UnwindPollingType_2.compare("unwind-ulifsim")) {
+    } else if (!UnwindPollingType.compare("unwind-ulifsim-dontuse")) {
       unwind_poll = Get__unwindrts_unwind_ulifsim(*M);
-    } else if (!UnwindPollingType_2.compare("unwind-ulifsim2")) {
+    } else if (!UnwindPollingType.compare("unwind-ulifsim")) {
       unwind_poll = Get__unwindrts_unwind_ulifsim2(*M);
     } else {
       assert(0 && "Unknown unwind-polling-type value");
     }
+
 
     auto pollLlvm = B.CreateCall(unwind_poll);
     BasicBlock* bb = pollLlvm->getParent();
     auto cond = B.CreateICmpEQ(pollLlvm, B.getInt32(1));
     auto afterBB = bb->splitBasicBlock(dyn_cast<Instruction>(cond)->getNextNode());
     auto terminator = bb->getTerminator();
-    if (!UnwindPollingType_2.compare("unwind-ulifsim2")) {      
+    if (!UnwindPollingType.compare("unwind-ulifsim")) {      
     } else {            
       // Update terminator for bb
       auto branch = BranchInst::Create(startUnwindStack, afterBB, cond);

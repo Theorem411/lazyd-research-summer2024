@@ -9,6 +9,8 @@ add_llvm_library(LLVMUserLevelInterrupt
   LazyLiveVariable.cpp
   LazyReachingDetachInst.cpp
   LazyReachingStoreReachableLoad.cpp
+  InsertLazyDPolling.cpp
+  InsertLazyDEnDisUI.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/Transforms

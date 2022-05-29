@@ -58,6 +58,8 @@
 #include "llvm/Transforms/ULI/HandleInlets.h"
 #include "llvm/Transforms/ULI/HandleUnwindPoll.h"
 #include "llvm/Transforms/ULI/LazyDTrans.h"
+#include "llvm/Transforms/ULI/InsertLazyDPolling.h"
+#include "llvm/Transforms/ULI/InsertLazyDEnDisUI.h"
 #include "llvm/Transforms/Tapir/LoweringUtils.h"
 using namespace llvm;
 
@@ -1134,8 +1136,21 @@ void PassManagerBuilder::populateModulePassManager(
       // Verify the IR produced by Tapir lowering
       MPM.add(createVerifierPass());
 
+#if 0
+    if(ForkDLowering == 1) {
+      // If optimized
+      MPM.add(createInsertLazyDPollingPass());
+    } 
+#endif
+
+    if (ForkDLowering == 2) {
+      // If using ULI: insert TLS variable to "disable/enable" interrupt  
+      MPM.add(createInsertLazyDEnDisUIPass());
+    }
+
     if(ForkDLowering > 0) {
       assert(!tapirTarget && "Can only create lazyD when -ftapir=serial"); 
+      // TODO: Separate polling from codegen
       MPM.add(createLazyDTransPass());
     }
     
