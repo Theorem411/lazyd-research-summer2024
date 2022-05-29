@@ -67,11 +67,6 @@ static cl::opt<bool> EnableStoreLoadForkStorage(
 "lazy-enable-storeload-forkstorage", cl::init(true), cl::NotHidden,
   cl::desc("Remove store/load to/from fork storage (default = on)"));
 
-// The type of polling used (ignored if DisableUnwindPoll = true)
-static cl::opt<std::string> UnwindPollingType(
-"lazy-unwind-polling-type", cl::init("unwind-steal"), cl::NotHidden,
-  cl::desc("The type of polling used :unwind-steal, unwind-suspend, unwind-only. Ignored if DisableUnwindPoll is true (default = unwind-steal)"));
-
 // Support only unwinding the same frame once
 static cl::opt<bool> EnableUnwindOnce(
 "lazy-enable-unwind-once", cl::init(true), cl::NotHidden,
@@ -4802,7 +4797,10 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     B.CreateCall(potentialJump, {BlockAddress::get( unwindPathEntry )});
     handlePotentialJump(F.getEntryBlock());
   }
-#if 1
+
+
+#define LAZYD_POLL
+#ifdef LAZYD_POLL
   //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // Instrument prologue and epilogue to insert parallel runtime call
   Constant* push_ss  = Get_push_ss(*M);
