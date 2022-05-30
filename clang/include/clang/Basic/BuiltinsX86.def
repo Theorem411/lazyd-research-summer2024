@@ -2176,6 +2176,12 @@ BUILTIN(__builtin_uli_save_callee, "vv*v*", "")
 BUILTIN(__builtin_uli_save_context_nosp, "vv*v*", "")
 BUILTIN(__builtin_uli_restore_context, "vv*", "")
 
+// Builtin to support UI
+BUILTIN(__builtin_ui_stui, "v", "")
+BUILTIN(__builtin_ui_clui, "v", "")
+BUILTIN(__builtin_ui_testui, "v", "")
+BUILTIN(__builtin_ui_senduipi, "vULLi", "")
+
 // Builtin to expose multiretcall. Return void, first paramter: number of arguments, second paramater: number of indirect destination, third parameter: function name
 // Remaning args: arguments to function and indirect destination
 
