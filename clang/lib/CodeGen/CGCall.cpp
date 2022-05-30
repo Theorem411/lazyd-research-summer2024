@@ -39,6 +39,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Transforms/ULI/ForkDTypes.h"
 #include "llvm/Transforms/Utils/Local.h"
 using namespace clang;
 using namespace CodeGen;
@@ -1900,7 +1901,7 @@ void CodeGenModule::getDefaultFunctionAttributes(StringRef Name,
     FuncAttrs.addAttribute(Var, Value);
   }
 
-  if(getLangOpts().ForkDLowering > 0) {
+  if(getLangOpts().ForkDLowering > llvm::ForkDTargetType::None) {
     // Disable exceptions and always generate frame pointer when generating ForkD code
     FuncAttrs.addAttribute(llvm::Attribute::NoUnwind);
     FuncAttrs.addAttribute("no-frame-pointer-elim", "true");

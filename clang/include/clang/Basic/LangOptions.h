@@ -25,6 +25,7 @@
 #include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/Transforms/ULI/ForkDTypes.h"
 #include <string>
 #include <vector>
 
@@ -414,7 +415,7 @@ public:
   TapirTargetType TapirTarget = TapirTargetType::Last_TapirTargetType;
 
   /// \brief Tapir lowering to forkD library (lazy or eager).
-  char ForkDLowering;
+  llvm::ForkDTargetType ForkDLowering;
 
   LangOptions();
 

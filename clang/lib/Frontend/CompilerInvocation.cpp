@@ -91,6 +91,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Transforms/Tapir/TapirTargetIDs.h"
+#include "llvm/Transforms/ULI/ForkDTypes.h"
 #include "llvm/Support/ScopedPrinter.h"
 #include <algorithm>
 #include <atomic>
@@ -1901,12 +1902,12 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
   Opts.PForSpawnStrategy = getLastArgIntValue(Args, OPT_fpfor_spawn_strategy, 1);
   assert(Opts.PForSpawnStrategy < 3 && Opts.PForSpawnStrategy >= 0);
   //auto fforkd_str = Args.getLastArgValue(OPT_fforkd_EQ);
-  //Opts.ForkDLowering = llvm::StringSwitch<char>(fforkd_str)
-  //  .Case("lazy", 1)
-  //  .Case("uli", 2)
-  //  .Case("sigusr", 3)
-  //  .Case("eager", 4)
-  //  .Default(0);
+  //Opts.ForkDLowering = llvm::StringSwitch<llvm::ForkDTargetType>(fforkd_str)
+  //  .Case("lazy", llvm::ForkDTargetType::LazyD)
+  //  .Case("uli", llvm::ForkDTargetType::ULID)
+  //  .Case("sigusr", llvm::ForkDTargetType::SIGUSRD)
+  //  .Case("eager", llvm::ForkDTargetType::EagerD)
+  //  .Default(llvm::ForkDTargetType::None);
 
   Opts.EnableULITransform = Args.hasArg(OPT_fenable_uli_transform);
   Opts.EnableULIRewrite = Args.hasArg(OPT_fenable_uli_rewrite);
@@ -4751,12 +4752,12 @@ bool CompilerInvocation::CreateFromArgsImpl(
   LangOpts.TapirTarget = TapirTarget;
 
   auto fforkd_str = Args.getLastArgValue(OPT_fforkd_EQ);
-  LangOpts.ForkDLowering = llvm::StringSwitch<char>(fforkd_str)
-    .Case("lazy", 1)
-    .Case("uli", 2)
-    .Case("sigusr", 3)
-    .Case("eager", 4)
-    .Default(0);
+  LangOpts.ForkDLowering = llvm::StringSwitch<llvm::ForkDTargetType>(fforkd_str)
+    .Case("lazy", llvm::ForkDTargetType::LazyD)
+    .Case("uli", llvm::ForkDTargetType::ULID)
+    .Case("sigusr", llvm::ForkDTargetType::SIGUSRD)
+    .Case("eager", llvm::ForkDTargetType::EagerD)
+    .Default(llvm::ForkDTargetType::None);
 
   if (LangOpts.Cilk && (LangOpts.ObjC1 || LangOpts.ObjC2))
     Diags.Report(diag::err_drv_cilk_objc);

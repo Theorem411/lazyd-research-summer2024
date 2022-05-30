@@ -38,6 +38,9 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Transforms/ULI/ForkDTypes.h"
+#include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/Support/TargetParser.h"
 #include "llvm/Support/VersionTuple.h"
 #include "llvm/Support/VirtualFileSystem.h"
@@ -1558,36 +1561,35 @@ void ToolChain::AddTapirRuntimeLibArgs(const ArgList &Args,
 void ToolChain::AddForkDRuntimeLibArgs(const ArgList &Args,
                                        ArgStringList &CmdArgs) const {
   auto fforkd_str = Args.getLastArgValue(options::OPT_fforkd_EQ);
-  char forkdLowering = llvm::StringSwitch<char>(fforkd_str)
-    .Case("lazy", 1)
-    .Case("uli", 2)
-    .Case("sigusr", 3)
-    .Case("eager", 4)
-    .Default(0);
+  llvm::ForkDTargetType forkdLowering = llvm::StringSwitch<llvm::ForkDTargetType>(fforkd_str)
+    .Case("lazy", llvm::ForkDTargetType::LazyD)
+    .Case("uli", llvm::ForkDTargetType::ULID)
+    .Case("sigusr", llvm::ForkDTargetType::SIGUSRD)
+    .Case("eager", llvm::ForkDTargetType::EagerD)
+    .Default(llvm::ForkDTargetType::None);
 
-  if(forkdLowering == 1 ) {
+  if(forkdLowering == llvm::ForkDTargetType::LazyD) {
     CmdArgs.push_back("-lpthread");
     CmdArgs.push_back("-lunwind_scheduler");
     CmdArgs.push_back("-lnuma");
     // -lm   -lunwind_scheduler -lpthread -ldl -lnuma
   }
 
-  if(forkdLowering == 2 ) {
+  if(forkdLowering == llvm::ForkDTargetType::ULID) {
     CmdArgs.push_back("-lpthread");
     CmdArgs.push_back("-luipi_scheduler");
     CmdArgs.push_back("-lnuma");
     // -lm   -lunwind_scheduler -lpthread -ldl -lnuma
   }
   
-  if(forkdLowering == 3 ) {
+  if(forkdLowering == llvm::ForkDTargetType::SIGUSRD) {
     CmdArgs.push_back("-lpthread");
     CmdArgs.push_back("-lsigusr_scheduler");
     CmdArgs.push_back("-lnuma");
     // -lm   -lunwind_scheduler -lpthread -ldl -lnuma
   }
-
-  
-  if(forkdLowering == 4) {
+ 
+  if(forkdLowering == llvm::ForkDTargetType::EagerD) {
     CmdArgs.push_back("-lpthread");
     CmdArgs.push_back("-leager_scheduler");
     CmdArgs.push_back("-lnuma");
