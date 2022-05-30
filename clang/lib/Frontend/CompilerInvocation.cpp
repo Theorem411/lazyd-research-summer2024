@@ -1903,7 +1903,8 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
   //auto fforkd_str = Args.getLastArgValue(OPT_fforkd_EQ);
   //Opts.ForkDLowering = llvm::StringSwitch<char>(fforkd_str)
   //  .Case("lazy", 1)
-  //  .Case("eager", 2)
+  //  .Case("uli", 2)
+  //  .Case("eager", 3)
   //  .Default(0);
 
   Opts.EnableULITransform = Args.hasArg(OPT_fenable_uli_transform);
@@ -4751,7 +4752,8 @@ bool CompilerInvocation::CreateFromArgsImpl(
   auto fforkd_str = Args.getLastArgValue(OPT_fforkd_EQ);
   LangOpts.ForkDLowering = llvm::StringSwitch<char>(fforkd_str)
     .Case("lazy", 1)
-    .Case("eager", 2)
+    .Case("uli", 2)
+    .Case("eager", 3)
     .Default(0);
 
   if (LangOpts.Cilk && (LangOpts.ObjC1 || LangOpts.ObjC2))
