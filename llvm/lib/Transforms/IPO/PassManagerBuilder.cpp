@@ -50,18 +50,21 @@
 #include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/Tapir.h"
 #include "llvm/Transforms/Tapir/LoopStripMinePass.h"
+// TODO: CNP is this needed
+//#include "llvm/Transforms/Tapir/LoweringUtils.h"
 #include "llvm/Transforms/Vectorize.h"
 #include "llvm/Transforms/Vectorize/LoopVectorize.h"
 #include "llvm/Transforms/Vectorize/SLPVectorizer.h"
 #include "llvm/Transforms/Vectorize/VectorCombine.h"
 // CNP : Added to transform potential jump immediately after Tapir Runtime transformation 
+#include "llvm/Transforms/ULI/EagerDTrans.h"
+#include "llvm/Transforms/ULI/ForkDTypes.h"
 #include "llvm/Transforms/ULI/HandleInlets.h"
 #include "llvm/Transforms/ULI/HandleUnwindPoll.h"
-#include "llvm/Transforms/ULI/LazyDTrans.h"
-#include "llvm/Transforms/ULI/EagerDTrans.h"
-#include "llvm/Transforms/ULI/InsertLazyDPolling.h"
 #include "llvm/Transforms/ULI/InsertLazyDEnDisUI.h"
-#include "llvm/Transforms/Tapir/LoweringUtils.h"
+#include "llvm/Transforms/ULI/InsertLazyDPolling.h"
+#include "llvm/Transforms/ULI/LazyDTrans.h"
+
 using namespace llvm;
 
 namespace llvm {
@@ -243,7 +246,7 @@ PassManagerBuilder::PassManagerBuilder() {
     PerformThinLTO = EnablePerformThinLTO;
     DivergentTarget = false;
     CallGraphProfile = true;
-    ForkDLowering = 0;
+    ForkDLowering = llvm::ForkDTargetType::None;
 }
 
 PassManagerBuilder::~PassManagerBuilder() {
@@ -1101,7 +1104,7 @@ void PassManagerBuilder::populateModulePassManager(
     // Add passes to run just before Tapir lowering.
     addExtensionsToPM(EP_TapirLate, MPM);
 
-  if (!TapirHasBeenLowered || EnableLazyDTransform) {
+  if (!TapirHasBeenLowered || ForkDLowering > llvm::ForkDTargetType::None) {
     // First handle Tapir loops. First, simplify their induction variables.
     MPM.add(createIndVarSimplifyPass());
     // Re-rotate loops in all our loop nests. These may have fallout out of
@@ -1138,22 +1141,22 @@ void PassManagerBuilder::populateModulePassManager(
       MPM.add(createVerifierPass());
 
 #if 0
-    if(ForkDLowering == 1) {
+    if(ForkDLowering == llvm::ForkDTargetType::LazyD) {
       // If optimized
       MPM.add(createInsertLazyDPollingPass());
     } 
 #endif
 
-    if (ForkDLowering == 2 || ForkDLowering == 3) {
+    if (ForkDLowering == llvm::ForkDTargetType::ULID || ForkDLowering == llvm::ForkDTargetType::SIGUSRD) {
       // If using ULI: insert TLS variable to "disable/enable" interrupt  
       MPM.add(createInsertLazyDEnDisUIPass());
     }
 
     // TODO: Separate polling from codegen
-    if(ForkDLowering == 1 || ForkDLowering == 2 || ForkDLowering == 3) {
+    if(ForkDLowering == llvm::ForkDTargetType::LazyD || ForkDLowering == llvm::ForkDTargetType::ULID || ForkDLowering == llvm::ForkDTargetType::SIGUSRD) {
       assert(!tapirTarget && "Can only create lazyD / uliD when -ftapir=serial"); 
       MPM.add(createLazyDTransPass());
-    } else if (ForkDLowering == 4) {
+    } else if (ForkDLowering == llvm::ForkDTargetType::EagerD) {
       assert(!tapirTarget && "Can only create eagerD when -ftapir=serial"); 
       MPM.add(createEagerDTransPass());
     }

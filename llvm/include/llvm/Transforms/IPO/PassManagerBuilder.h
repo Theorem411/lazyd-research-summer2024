@@ -16,6 +16,7 @@
 
 #include "llvm-c/Transforms/PassManagerBuilder.h"
 #include "llvm/Transforms/Tapir/TapirTargetIDs.h"
+#include "llvm/Transforms/ULI/ForkDTypes.h"
 #include <functional>
 #include <memory>
 #include <string>
@@ -203,7 +204,7 @@ public:
   /// Path of the sample Profile data file.
   std::string PGOSampleUse;
   /// If ForkD lowering is enabled (0=disable, 1=lazyfork, 2=eagerfork(not yet implemented))
-  char ForkDLowering;
+  ForkDTargetType ForkDLowering;
 
 private:
   /// ExtensionList - This is list of all of the extensions that are registered.
