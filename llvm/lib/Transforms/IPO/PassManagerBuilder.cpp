@@ -1144,16 +1144,16 @@ void PassManagerBuilder::populateModulePassManager(
     } 
 #endif
 
-    if (ForkDLowering == 2) {
+    if (ForkDLowering == 2 || ForkDLowering == 3) {
       // If using ULI: insert TLS variable to "disable/enable" interrupt  
       MPM.add(createInsertLazyDEnDisUIPass());
     }
 
     // TODO: Separate polling from codegen
-    if(ForkDLowering == 1 || ForkDLowering == 2) {
+    if(ForkDLowering == 1 || ForkDLowering == 2 || ForkDLowering == 3) {
       assert(!tapirTarget && "Can only create lazyD / uliD when -ftapir=serial"); 
       MPM.add(createLazyDTransPass());
-    } else if (ForkDLowering == 3) {
+    } else if (ForkDLowering == 4) {
       assert(!tapirTarget && "Can only create eagerD when -ftapir=serial"); 
       MPM.add(createEagerDTransPass());
     }
