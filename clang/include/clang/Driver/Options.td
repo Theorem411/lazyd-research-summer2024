@@ -2289,8 +2289,8 @@ def fopencilk_enable_pedigrees : Flag<["-"], "fopencilk-enable-pedigrees">,
   Group<f_Group>, Flags<[CC1Option]>, HelpText<"Enable OpenCilk pedigrees">;
 
 def fforkd_EQ : Joined<["-"], "fforkd=">, Group<f_Group>, Flags<[CC1Option]>,
-  HelpText<"Lower the tapir instruction to the lazy,uli,eager-D runtime (options: lazy, uli, eager)">,
-  Values<"lazy,uli,eager">;
+  HelpText<"Lower the tapir instruction to the lazy,uli,sigusr,eager-D runtime (options: lazy, uli, eager)">,
+  Values<"lazy,uli,sigusr,eager">;
 
 def fmudflapth : Flag<["-"], "fmudflapth">, Group<f_Group>;
 def fmudflap : Flag<["-"], "fmudflap">, Group<f_Group>;

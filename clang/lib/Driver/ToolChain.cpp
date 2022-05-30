@@ -1561,17 +1561,33 @@ void ToolChain::AddForkDRuntimeLibArgs(const ArgList &Args,
   char forkdLowering = llvm::StringSwitch<char>(fforkd_str)
     .Case("lazy", 1)
     .Case("uli", 2)
-    .Case("eager", 3)
+    .Case("sigusr", 3)
+    .Case("eager", 4)
     .Default(0);
 
-  if(forkdLowering == 1 || forkdLowering == 2) {
+  if(forkdLowering == 1 ) {
     CmdArgs.push_back("-lpthread");
     CmdArgs.push_back("-lunwind_scheduler");
     CmdArgs.push_back("-lnuma");
     // -lm   -lunwind_scheduler -lpthread -ldl -lnuma
   }
+
+  if(forkdLowering == 2 ) {
+    CmdArgs.push_back("-lpthread");
+    CmdArgs.push_back("-luipi_scheduler");
+    CmdArgs.push_back("-lnuma");
+    // -lm   -lunwind_scheduler -lpthread -ldl -lnuma
+  }
   
-  if(forkdLowering == 3) {
+  if(forkdLowering == 3 ) {
+    CmdArgs.push_back("-lpthread");
+    CmdArgs.push_back("-lsigusr_scheduler");
+    CmdArgs.push_back("-lnuma");
+    // -lm   -lunwind_scheduler -lpthread -ldl -lnuma
+  }
+
+  
+  if(forkdLowering == 4) {
     CmdArgs.push_back("-lpthread");
     CmdArgs.push_back("-leager_scheduler");
     CmdArgs.push_back("-lnuma");
