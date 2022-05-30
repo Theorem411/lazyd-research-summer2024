@@ -851,8 +851,6 @@ Value* EagerDTransPass::lowerGrainsizeCall(CallInst *GrainsizeCall) {
   Value *Cmp = Builder.CreateICmpULT(LargeLoopVal, SmallLoopVal);
   Value *Grainsize = Builder.CreateSelect(Cmp, LargeLoopVal, SmallLoopVal);
 
-
-
   // Replace uses of grainsize intrinsic call with this grainsize value.
   GrainsizeCall->replaceAllUsesWith(Grainsize);
   return Grainsize;
@@ -1323,11 +1321,11 @@ void EagerDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4
 	if(isa<PHINode>(&ii)) {
 	  PHINode* phiN = dyn_cast<PHINode>(&ii);
 	  unsigned incomingPair = phiN->getNumIncomingValues();
-	  Instruction * inst2copy = nullptr;
+	  Value * inst2copy = nullptr;
 	  for(unsigned i = 0; i<incomingPair; i++)  {
 	    BasicBlock* incomingBB = phiN->getIncomingBlock(i);
 	    if ( incomingBB == detachedSlowPath ) {
-	      inst2copy = dyn_cast<Instruction>(phiN->getIncomingValue(i));
+	      inst2copy = (phiN->getIncomingValue(i));
 	    }
 	  }
 	  if(inst2copy) {
@@ -1395,11 +1393,11 @@ void EagerDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4
       if(isa<PHINode>(&ii)) {
 	PHINode* phiN = dyn_cast<PHINode>(&ii);
 	unsigned incomingPair = phiN->getNumIncomingValues();	    
-	Instruction * inst2copy = nullptr;
+	Value * inst2copy = nullptr;
 	for(unsigned i = 0; i<incomingPair; i++)  {
 	  BasicBlock* incomingBB = phiN->getIncomingBlock(i);
 	  if ( incomingBB == syncBBSlowPath ) {
-	    inst2copy = dyn_cast<Instruction>(phiN->getIncomingValue(i));
+	    inst2copy = (phiN->getIncomingValue(i));
 	  }
 	}
 	if(inst2copy) {
