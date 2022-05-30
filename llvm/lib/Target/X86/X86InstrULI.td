@@ -140,6 +140,23 @@ def ULIWRRETADDR : I <0x2F, MRM2r, (outs), (ins GR64:$src0),
                  [(int_x86_uli_wrRA GR64:$src0)],
                  IIC_ALU_NONMEM>, OpSize32, Requires<[In64BitMode]>;
 
+// Support for Intel's UI
+// Clear User Interrupt flag
+// f3 0f 01 ec
+// f3 0f  comes from XS
+// 01 comes from <0x01
+// ee comes from MRM_EC (Mod/RM byte)
+def CLUI   : I   <0x01, MRM_EE, (outs), (ins),
+                    "clui\t", [(int_x86_ui_clui)], IIC_ALU_NONMEM>, XS, Requires<[In64BitMode]>;
+
+def STUI   : I   <0x01, MRM_EF, (outs), (ins),
+                    "stui\t", [(int_x86_ui_stui)], IIC_ALU_NONMEM>, XS, Requires<[In64BitMode]>;
+
+def TESTUI  : I  <0x01, MRM_ED, (outs), (ins),
+                    "testui\t", [(int_x86_ui_testui)], IIC_ALU_NONMEM>, XS, Requires<[In64BitMode]>;
+
+def SENDUIPI  : I <0xC7, MRM6r, (outs), (ins GR64:$src0),
+                    "senduipi\t{$src0} ", [(int_x86_ui_senduipi GR64:$src0)], IIC_ALU_NONMEM>, XS, Requires<[In64BitMode]>;
 
 //===----------------------------------------------------------------------===//
 // Help stuff for stacklets

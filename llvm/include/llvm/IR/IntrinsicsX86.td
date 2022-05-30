@@ -5939,7 +5939,20 @@ let TargetPrefix = "x86" in {
     Intrinsic<[], [llvm_i64_ty], []>;
 
   def int_x86_uli_wrRA : GCCBuiltin<"__builtin_uli_wrRA">,
-    Intrinsic<[], [llvm_i64_ty], []>;
+    Intrinsic<[], [llvm_i64_ty], []>;    
+}
+
+//===----------------------------------------------------------------------===//
+// Intel's UI management functions
+let TargetPrefix = "x86" in {
+  def int_x86_ui_stui : GCCBuiltin<"__builtin_ui_stui">,
+       Intrinsic<[], [], []>;
+  def int_x86_ui_clui : GCCBuiltin<"__builtin_ui_clui">,
+       Intrinsic<[], [], []>;
+  def int_x86_ui_testui : GCCBuiltin<"__builtin_ui_testui">,
+       Intrinsic<[], [], []>;
+  def int_x86_ui_senduipi : GCCBuiltin<"__builtin_ui_senduipi">,
+       Intrinsic<[], [llvm_i64_ty], []>;
 }
 
 //===----------------------------------------------------------------------===//
