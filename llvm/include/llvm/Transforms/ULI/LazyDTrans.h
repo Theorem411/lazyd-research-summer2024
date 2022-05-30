@@ -15,9 +15,6 @@
 #ifndef LLVM_TRANSFORMS_LAZYD_TRANS_H
 #define LLVM_TRANSFORMS_LAZYD_TRANS_H
 
-
-#define DEBUG_TYPE "lazyd-trans"
-
 #include "llvm/Pass.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/DominanceFrontier.h"

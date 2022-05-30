@@ -6,6 +6,7 @@ add_llvm_library(LLVMUserLevelInterrupt
   HandleInlets.cpp
   HandleUnwindPoll.cpp
   LazyDTrans.cpp
+  EagerDTrans.cpp
   LazyLiveVariable.cpp
   LazyReachingDetachInst.cpp
   LazyReachingStoreReachableLoad.cpp

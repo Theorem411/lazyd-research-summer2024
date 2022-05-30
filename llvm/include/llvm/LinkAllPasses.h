@@ -61,6 +61,7 @@
 #include "llvm/Transforms/ULI/HandleInlets.h"
 #include "llvm/Transforms/ULI/HandleUnwindPoll.h"
 #include "llvm/Transforms/ULI/LazyDTrans.h"
+#include "llvm/Transforms/ULI/EagerDTrans.h"
 #include "llvm/Transforms/Tapir.h"
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
 #include "llvm/Transforms/Utils/UnifyFunctionExitNodes.h"
@@ -262,6 +263,7 @@ namespace {
       (void) llvm::createHandleInletsPass();
       (void) llvm::createHandleUnwindPollPass();
       (void) llvm::createLazyDTransPass();
+      (void) llvm::createEagerDTransPass();
       (void) llvm::createSmallBlockPass();
       (void) llvm::createRedundantSpawnPass();
       (void) llvm::createSpawnRestructurePass();

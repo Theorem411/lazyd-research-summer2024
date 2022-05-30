@@ -473,6 +473,7 @@ void initializeHandleUliPass(PassRegistry&);
 void initializeHandleInletsPass(PassRegistry&);
 void initializeHandleUnwindPollPass(PassRegistry&);
 void initializeLazyDTransPass(PassRegistry&);
+void initializeEagerDTransPass(PassRegistry&);
 void initializeUnifyFunctionExitNodesPass(PassRegistry&);
 void initializeUnpackMachineBundlesPass(PassRegistry&);
 void initializeUnreachableBlockElimLegacyPassPass(PassRegistry&);

@@ -58,6 +58,7 @@
 #include "llvm/Transforms/ULI/HandleInlets.h"
 #include "llvm/Transforms/ULI/HandleUnwindPoll.h"
 #include "llvm/Transforms/ULI/LazyDTrans.h"
+#include "llvm/Transforms/ULI/EagerDTrans.h"
 #include "llvm/Transforms/ULI/InsertLazyDPolling.h"
 #include "llvm/Transforms/ULI/InsertLazyDEnDisUI.h"
 #include "llvm/Transforms/Tapir/LoweringUtils.h"
@@ -1148,10 +1149,13 @@ void PassManagerBuilder::populateModulePassManager(
       MPM.add(createInsertLazyDEnDisUIPass());
     }
 
-    if(ForkDLowering > 0) {
-      assert(!tapirTarget && "Can only create lazyD when -ftapir=serial"); 
-      // TODO: Separate polling from codegen
+    // TODO: Separate polling from codegen
+    if(ForkDLowering == 1 || ForkDLowering == 2) {
+      assert(!tapirTarget && "Can only create lazyD / uliD when -ftapir=serial"); 
       MPM.add(createLazyDTransPass());
+    } else if (ForkDLowering == 3) {
+      assert(!tapirTarget && "Can only create eagerD when -ftapir=serial"); 
+      MPM.add(createEagerDTransPass());
     }
     
     // The lowering pass introduces new functions and may leave cruft around.

@@ -28,6 +28,8 @@
 
 #include <iostream>
 
+#define DEBUG_TYPE "lazyd-trans"
+
 using namespace llvm;
 
 // Set the size of the work context length
@@ -45,7 +47,6 @@ static cl::opt<bool> DisableUnwindPoll(
 "lazy-disable-unwind-polling", cl::init(false), cl::NotHidden,
   cl::desc("Do not insert any polling call (default = off)"));
 
-
 // Instrument main function
 static cl::opt<bool> EnableMainInstrumentation(
 "lazy-enable-main-instrumentation", cl::init(true), cl::NotHidden,
@@ -55,7 +56,6 @@ static cl::opt<bool> EnableMainInstrumentation(
 static cl::opt<bool> EnableSaveRestoreCtx(
 "lazy-enable-saverestore-ctx", cl::init(true), cl::NotHidden,
   cl::desc("Use builtin to save restore context (default = on)"));
-
 
 // Do not add the push and pop of the seed
 static cl::opt<bool> DisablePushPopSeed(
@@ -1372,9 +1372,6 @@ namespace llvm {
       AU.addRequired<LoopInfoWrapperPass>();
       AU.addRequired<DominatorTreeWrapperPass>();
       AU.addRequired<DominanceFrontierWrapperPass>();
-      //AU.addRequired<ReachingDetachInstWrapperPass>();
-      //AU.addRequired<ReachingStoreReachableLoadWrapperPass>();    
-      //AU.addRequired<LiveVariableWrapperPass>();
     }
 
     StringRef getPassName() const override {
@@ -1408,29 +1405,6 @@ namespace llvm {
 // initialization value is unimportant.
 char LazyDTrans::ID = 0;
 
-#if 0
-INITIALIZE_PASS_BEGIN(LazyDTrans, "LazyDTrans",
-                      "Lower Tapir to LazyDTrans", false, false)
-
-INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass);
-//INITIALIZE_PASS_DEPENDENCY(TargetTransformInfoWrapperPass);
-//INITIALIZE_PASS_DEPENDENCY(ReachingDetachInstWrapperPass)
-//INITIALIZE_PASS_DEPENDENCY(LiveVariableWrapperPass)
-//INITIALIZE_PASS_DEPENDENCY(ReachingStoreReachableLoadWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-//INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
-//INITIALIZE_PASS_DEPENDENCY(OptimizationRemarkEmitterWrapperPass)
-//INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass);
-INITIALIZE_PASS_DEPENDENCY(DominanceFrontierWrapperPass);
-//INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker);
-//INITIALIZE_PASS_DEPENDENCY(MemoryDependenceWrapperPass);
-
-
-INITIALIZE_PASS_END(LazyDTrans, "LazyDTrans",
-                    "Lower Tapir to LazyDTrans", false, false)
-
-#else
-
 INITIALIZE_PASS_BEGIN(LazyDTrans, "LazyDTrans",
                       "Lower Tapir to LazyDTrans", false, false)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass);
@@ -1438,10 +1412,6 @@ INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominanceFrontierWrapperPass);
 INITIALIZE_PASS_END(LazyDTrans, "LazyDTrans",
                     "Lower Tapir to LazyDTrans", false, false)
-
-
-#endif
-
 
 // Create the multiretcall from fast path to slow path
 void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder, ValueToValueMapTy& VMapSlowPath, Value* fromSlowPathAlloc, SSAUpdater& SSAUpdateWorkContext, DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet) {
@@ -4265,17 +4235,8 @@ bool LazyDTransPass::runInitialization(Module &M) {
 // We don't modify the program, so we preserve all analyses
 void LazyDTransPass::runAnalysisUsage(AnalysisUsage &AU) const  {
   AU.addRequired<LoopInfoWrapperPass>();
-  //AU.addRequired<TargetTransformInfoWrapperPass>();
-  //AU.addRequired<LiveVariableWrapperPass>();
-  //AU.addRequired<ReachingDetachInstWrapperPass>();
-  //AU.addRequired<ReachingStoreReachableLoadWrapperPass>();
   AU.addRequired<DominatorTreeWrapperPass>();
-  //AU.addRequired<TargetLibraryInfoWrapperPass>();
-  //AU.addRequired<OptimizationRemarkEmitterWrapperPass>();
-  //AU.addRequired<AAResultsWrapperPass>();
   AU.addRequired<DominanceFrontierWrapperPass>();
-  //AU.addRequired<AssumptionCacheTracker>();
-  //AU.addRequired<MemoryDependenceWrapperPass>();
 }
 
 
