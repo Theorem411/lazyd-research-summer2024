@@ -2106,6 +2106,7 @@ void LazyDTransPass::mergeSlowPathToFastPath(Function& F, SmallVector<SyncInst*,
 	for(auto val : elem2.second) {
 	  Instruction * liveVar = dyn_cast<Instruction>(val);
 	  auto slowLiveVarVal = (VMapSlowPath[liveVar]);
+	  DenseMap <PHINode*, std::pair<Value*, BasicBlock*>> phiNode2Update;
 	  if(slowLiveVarVal) {
 	    // If liveVar is used in a phi node in the fast path, make sure to update the incoming edge from the slow path
 	    // Since there is only one entry point, look for the other variable, rematerialze it in the preSync
@@ -2139,9 +2140,16 @@ void LazyDTransPass::mergeSlowPathToFastPath(Function& F, SmallVector<SyncInst*,
 
 		}
 		auto rematerialzeVal = SSAUpdate.GetValueAtEndOfBlock(syncBB2syncPred[syncSucc]);
-		phiInst->addIncoming(rematerialzeVal, syncBB2syncPred[syncSucc]);
+		//phiInst->addIncoming(rematerialzeVal, syncBB2syncPred[syncSucc]);
+		phiNode2Update[phiInst]  = std::pair<Value*, BasicBlock*>(rematerialzeVal, syncBB2syncPred[syncSucc]);
 	      }
 	    }
+
+	    for(auto elem: phiNode2Update) {
+	      PHINode* phiNode = elem.first;
+	      phiNode->addIncoming(elem.second.first, elem.second.second);
+	    }
+	    
 	  }
 	}
       }
@@ -2242,7 +2250,7 @@ void LazyDTransPass::updateSlowVariables_2(Function& F,
 	for(auto val : elem2.second) {
 	  Instruction * liveVar = dyn_cast<Instruction>(val);
 	  auto slowLiveVarVal = (VMapSlowPath[liveVar]);
-
+	  DenseMap <PHINode*, std::pair<Value*, BasicBlock*>> phiNode2Update;
 	  if(slowLiveVarVal) {
 	    // If liveVar is used in a phi node in the fast path, make sure to update the incoming edge from the slow path
 	    // Since there is only one entry point, look for the other variable, rematerialze it in the preSync
@@ -2300,16 +2308,24 @@ void LazyDTransPass::updateSlowVariables_2(Function& F,
 		  SSAUpdate.AddAvailableValue(incomingInstSlow->getParent(), incomingInstSlow);
 		}
 		auto rematerialzeVal = SSAUpdate.GetValueInMiddleOfBlock(syncBB2syncPred[continueBB]);
-		phiInst->addIncoming(rematerialzeVal, syncBB2syncPred[continueBB]);
+		//phiInst->addIncoming(rematerialzeVal, syncBB2syncPred[continueBB]);
+		phiNode2Update[phiInst]  = std::pair<Value*, BasicBlock*>(rematerialzeVal, syncBB2syncPred[continueBB]);
 	      }
 	    }
+
+	    for(auto elem: phiNode2Update) {
+	      PHINode* phiNode = elem.first;
+	      phiNode->addIncoming(elem.second.first, elem.second.second);
+	    }
+
+	    
 	  }
 	}
       }
     }
   }
 
-  // Loop over the sync's parent
+  // Loop over the sync's parent. Only update non-phinode uses
   for (auto syncInst: syncInsts) {
     BasicBlock* pBB = syncInst->getParent();
     assert(pBB);
