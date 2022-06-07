@@ -63,6 +63,7 @@
 #include "llvm/Transforms/ULI/HandleUnwindPoll.h"
 #include "llvm/Transforms/ULI/InsertLazyDEnDisUI.h"
 #include "llvm/Transforms/ULI/InsertLazyDPolling.h"
+#include "llvm/Transforms/ULI/InstrumentPfor.h"
 #include "llvm/Transforms/ULI/LazyDTrans.h"
 
 using namespace llvm;
@@ -1135,6 +1136,16 @@ void PassManagerBuilder::populateModulePassManager(
     
     MPM.add(createTaskCanonicalizePass());
     // Now lower Tapir to Target runtime calls.
+    //
+    // TODO: Make this sequence of passes check the library info for the target
+    // parallel RTS.
+
+
+    // If loop spawn strategy is hybrid, instrument pfor
+    MPM.add(createInstrumentPforPass());
+
+    MPM.add(createInferFunctionAttrsLegacyPass());
+
     MPM.add(createLowerTapirToTargetPass());
     if (VerifyTapir)
       // Verify the IR produced by Tapir lowering

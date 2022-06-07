@@ -33,6 +33,9 @@ using namespace llvm;
 static cl::opt<bool> DisableLazyDEnDisUI("disable-lazy-endisui", cl::init(false), cl::NotHidden,
                                        cl::desc("Do not insert any polling call (default = off)"));
 
+static cl::opt<bool> EnableStuiClui("enable-lazy-stuiclui", cl::init(false), cl::NotHidden,
+                                       cl::desc("Enable/disable UI using stui and clui instead"));
+
 
 namespace {
 
@@ -108,15 +111,25 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F,
 
   Value* ONE = B.getInt8(1);
   Value* ZERO = B.getInt8(0);
+
+  auto clui = Intrinsic::getDeclaration(M, Intrinsic::x86_ui_stui);
+  auto stui = Intrinsic::getDeclaration(M, Intrinsic::x86_ui_clui);
+
   // Insert enable after prologue and function call
-  B.CreateStore(ONE, guiOn, true);
+  if(EnableStuiClui)
+    B.CreateCall(stui);
+  else
+    B.CreateStore(ONE, guiOn, true);
 
   // Insert disable before epilogue and function call
   for (auto &BB : F){
     Instruction * termInst = BB.getTerminator();
     if(isa<ReturnInst>(termInst) ){
-      B.SetInsertPoint(termInst);      
-      B.CreateStore(ZERO, guiOn, true);
+      B.SetInsertPoint(termInst);
+      if(EnableStuiClui)
+	B.CreateCall(clui);
+      else
+	B.CreateStore(ZERO, guiOn, true);
     }
   }
 
@@ -130,10 +143,17 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F,
 
       if(isa<CallInst>(&II)) {
 	B.SetInsertPoint(&II);
-	B.CreateStore(ZERO, guiOn, true);
+	if(EnableStuiClui)
+	  B.CreateCall(clui);
+	else
+	  B.CreateStore(ZERO, guiOn, true);
 	
 	B.SetInsertPoint(II.getNextNode());
-	B.CreateStore(ONE, guiOn, true);
+	
+	if(EnableStuiClui)
+	  B.CreateCall(stui);
+	else
+	  B.CreateStore(ONE, guiOn, true);
 		
       } else if(isa<InvokeInst>(&II)) {
 	assert(0 && "Not supported yet");
@@ -145,12 +165,20 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F,
 	  continue;
 
 	B.SetInsertPoint(&II);
-	B.CreateStore(ZERO, guiOn, true);
+	
+	if(EnableStuiClui)
+	  B.CreateCall(clui);
+	else
+	  B.CreateStore(ZERO, guiOn, true);
 	
 	auto bb0 = mrc->getDefaultDest();
 
 	B.SetInsertPoint(bb0->getFirstNonPHIOrDbgOrLifetime()->getNextNode());	
-	B.CreateStore(ONE, guiOn, true);
+	
+	if(EnableStuiClui)
+	  B.CreateCall(stui);
+	else
+	  B.CreateStore(ONE, guiOn, true);
       }
     }
   }  
