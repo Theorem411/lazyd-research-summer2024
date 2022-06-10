@@ -318,7 +318,10 @@ namespace {
 
     GlobalVariable* platestTime = GetGlobalVariable("latestTime", IntegerType::getInt64Ty(Ctx), M, true);
     GlobalVariable* pthresholdTime = GetGlobalVariable("thresholdTime", IntegerType::getInt64Ty(Ctx), M, true);
-    GlobalVariable* prequestCell = GetGlobalVariable("request_cell", IntegerType::getInt64Ty(Ctx), M, true);
+
+    GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
+    auto prequestCell = B.CreateConstInBoundsGEP2_64(prequestCellG, 0, 0 ); 
+
 
 
     if(EnablePollEpoch) {
@@ -410,7 +413,6 @@ namespace {
     Constant* preunwind_steal = Get_preunwind_steal(M);
     B.CreateCall(preunwind_steal);
 
-
     if(EnableSaveRestoreCtx_2) {
       auto donothingFcn = Intrinsic::getDeclaration(&M, Intrinsic::donothing);
       auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::x86_uli_save_context);
@@ -436,7 +438,6 @@ namespace {
       Value* savedPc = B.CreateConstGEP1_32(gunwind_ctx, I_RIP);
       B.CreateStore(BlockAddress::get(ResumeParent), savedPc);
     }
-
 
     B.CreateRet(ONE);
 
@@ -651,7 +652,9 @@ namespace {
     }
 
     GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
-    GlobalVariable* prequestCell = GetGlobalVariable("request_cell", IntegerType::getInt64Ty(Ctx), M, true);
+    GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
+    auto prequestCell = B.CreateConstInBoundsGEP2_64(prequestCellG, 0, 0 ); 
+
     //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
 
     auto threadId = B.CreateAlignedLoad(pThreadId, 4);
@@ -751,7 +754,9 @@ namespace {
     }
 
     GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
-    GlobalVariable* prequestCell = GetGlobalVariable("request_cell", IntegerType::getInt64Ty(Ctx), M, true);
+    GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
+    auto prequestCell = B.CreateConstInBoundsGEP2_64(prequestCellG, 0, 0 ); 
+
     //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
 
     auto threadId = B.CreateAlignedLoad(pThreadId, 4);
@@ -845,7 +850,9 @@ namespace {
     }
 
     GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
-    GlobalVariable* prequestCell = GetGlobalVariable("request_cell", IntegerType::getInt64Ty(Ctx), M, true);
+    GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
+    auto prequestCell = B.CreateConstInBoundsGEP2_64(prequestCellG, 0, 0 ); 
+
     //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
 
     auto threadId = B.CreateAlignedLoad(pThreadId, 4);
@@ -916,7 +923,6 @@ BasicBlock* HandleUnwindPollPass::findUnwindPathEntry(Function& F) {
 
     for (auto it = BB.begin(); it != BB.end(); ++it) {
       auto &instr = *it;
-
 
       auto call = dyn_cast<CallInst>(&instr);
       if (!call) continue;

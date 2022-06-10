@@ -96,6 +96,34 @@ namespace {
     }
     return nullptr;
   }
+
+  GlobalVariable* GetGlobalVariable(const char* GlobalName, Type* GlobalType, Module& M, bool localThread=false){
+    GlobalVariable* globalVar = M.getNamedGlobal(GlobalName);
+    if(globalVar){
+      return globalVar;
+    }
+    globalVar = dyn_cast<GlobalVariable>(M.getOrInsertGlobal(GlobalName, GlobalType));
+    globalVar->setLinkage(GlobalValue::ExternalLinkage);
+    if(localThread)
+      globalVar->setThreadLocal(true);
+    return globalVar;
+  }
+
+
+  bool detachExists(Function& F) {
+    for (auto &BB : F) {
+      for (auto it = BB.begin(); it != BB.end(); ++it) {
+	auto &instr = *it;
+	  
+	if(isa<DetachInst>(&instr)) {
+	  instr.dump();
+	  return true;
+	}
+      }
+    }
+    return false;
+  }  
+  
 }
 
 void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* L) {
@@ -151,9 +179,26 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
 
 
 bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)  {
-  if(!(F.getFnAttribute("poll-at-loop").getValueAsString()=="true")) return false;
   auto M = F.getParent();
   const DataLayout &DL = M->getDataLayout();
+  LLVMContext& C = M->getContext();
+
+  GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(C), 32), *M, true);
+  IRBuilder<> B(F.getContext());
+  Value* L_ONE = B.getInt64(1);
+  //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  // If Detach exists, set request_cell[0] to 1
+  bool bDetachExists= detachExists(F);
+  if(bDetachExists) {
+    outs() << "Function: " << F.getName() << " has detach\n";
+    B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+    auto workExists = B.CreateConstInBoundsGEP2_64(prequestcell, 0, 1 );
+    B.CreateStore(L_ONE, workExists);
+  } else {
+    outs() << "Function: " << F.getName() << " does not have detach\n";
+  }
+
+  if(!(F.getFnAttribute("poll-at-loop").getValueAsString()=="true")) return false;
 
   outs() << "Analyzed function: " << F.getName() << "\n";
   for (Loop *L : LI) {
