@@ -1142,7 +1142,9 @@ void PassManagerBuilder::populateModulePassManager(
 
 
     // If loop spawn strategy is hybrid, instrument pfor
-    MPM.add(createInstrumentPforPass());
+    if(ForkDLowering == llvm::ForkDTargetType::LazyD || ForkDLowering == llvm::ForkDTargetType::ULID || ForkDLowering == llvm::ForkDTargetType::SIGUSRD) {
+      MPM.add(createInstrumentPforPass());
+    }
 
     MPM.add(createInferFunctionAttrsLegacyPass());
 

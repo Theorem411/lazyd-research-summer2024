@@ -32,15 +32,9 @@ public:
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
 
   /// \return If we insert any polling in function \p F.
-  bool runImpl(Function &F, DominatorTree *DT_, LoopInfo *LI_);
+  bool runImpl(Function &F);
 
 private:
-  /// LLVM dominator tree.
-  DominatorTree *DT = nullptr;
-
-  /// LLVM loop info.
-  LoopInfo *LI = nullptr;
-
   /// Hold the arguments of polling function.
   SmallVector<Value *, 2> PollingArgs;
 };

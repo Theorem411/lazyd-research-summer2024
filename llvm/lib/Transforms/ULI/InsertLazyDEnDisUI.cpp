@@ -51,18 +51,12 @@ struct InsertLazyDEnDisUI : public FunctionPass {
 
   /// \return If we change anything in function \p F.
   virtual bool runOnFunction(Function &F) override {
-    // Get required analysis.
-    auto *DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
-    auto *LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
-
-    return Impl.runImpl(F, DT, LI);
+    return Impl.runImpl(F);
   }
 
   /// \brief Specify required analysis and preserve analysis that is not
   /// affected by this pass.
   virtual void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<DominatorTreeWrapperPass>();
-    AU.addRequired<LoopInfoWrapperPass>();
     AU.setPreservesCFG();
   }
 
@@ -89,13 +83,7 @@ namespace {
   }
 }
 
-bool InsertLazyDEnDisUIPass::runImpl(Function &F,
-                                      DominatorTree *DT_,
-                                      LoopInfo *LI_) {
-  // Get required analysis.
-  DT = DT_;
-  LI = LI_;
-
+bool InsertLazyDEnDisUIPass::runImpl(Function &F) {
   if( DisableLazyDEnDisUI ) return false;
 
   Module *M = F.getParent();
@@ -103,17 +91,16 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F,
 
   // Get the global variable
   GlobalVariable* guiOn = GetGlobalVariable("uiOn", TypeBuilder<char, false>::get(C), *M, true);
-
-  //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // Instrument prologue and epilogue to insert parallel runtime call  
   IRBuilder<> B(F.getContext());
-  B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
-
   Value* ONE = B.getInt8(1);
-  Value* ZERO = B.getInt8(0);
+  Value* ZERO = B.getInt8(0);  
 
   auto clui = Intrinsic::getDeclaration(M, Intrinsic::x86_ui_stui);
   auto stui = Intrinsic::getDeclaration(M, Intrinsic::x86_ui_clui);
+  
+  //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  // Instrument prologue and epilogue to insert parallel runtime call  
+  B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
 
   // Insert enable after prologue and function call
   if(EnableStuiClui)
@@ -122,18 +109,25 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F,
     B.CreateStore(ONE, guiOn, true);
 
   // Insert disable before epilogue and function call
+  SmallVector<ReturnInst*, 4> instrumentedRet;
   for (auto &BB : F){
     Instruction * termInst = BB.getTerminator();
     if(isa<ReturnInst>(termInst) ){
-      B.SetInsertPoint(termInst);
-      if(EnableStuiClui)
-	B.CreateCall(clui);
-      else
-	B.CreateStore(ZERO, guiOn, true);
+      instrumentedRet.push_back(dyn_cast<ReturnInst>(termInst));
     }
   }
 
+  for(auto termInst: instrumentedRet) {
+    B.SetInsertPoint(termInst);
+    if(EnableStuiClui)
+      B.CreateCall(clui);
+    else
+      B.CreateStore(ZERO, guiOn, true);   
+  }
+
   // Insert disable before epilogue and function call
+  SmallVector<CallInst* , 4> instrumentedCall;
+  SmallVector<MultiRetCallInst*, 4> instrumentedMrc;
   for (auto &BB : F){
     for(auto &II : BB) {
 
@@ -142,18 +136,7 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F,
       }
 
       if(isa<CallInst>(&II)) {
-	B.SetInsertPoint(&II);
-	if(EnableStuiClui)
-	  B.CreateCall(clui);
-	else
-	  B.CreateStore(ZERO, guiOn, true);
-	
-	B.SetInsertPoint(II.getNextNode());
-	
-	if(EnableStuiClui)
-	  B.CreateCall(stui);
-	else
-	  B.CreateStore(ONE, guiOn, true);
+	instrumentedCall.push_back(dyn_cast<CallInst>(&II));
 		
       } else if(isa<InvokeInst>(&II)) {
 	assert(0 && "Not supported yet");
@@ -163,43 +146,57 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F,
 
 	if (isa<IntrinsicInst>(mrc->getCalledFunction()))
 	  continue;
-
-	B.SetInsertPoint(&II);
 	
-	if(EnableStuiClui)
-	  B.CreateCall(clui);
-	else
-	  B.CreateStore(ZERO, guiOn, true);
-	
-	auto bb0 = mrc->getDefaultDest();
-
-	B.SetInsertPoint(bb0->getFirstNonPHIOrDbgOrLifetime()->getNextNode());	
-	
-	if(EnableStuiClui)
-	  B.CreateCall(stui);
-	else
-	  B.CreateStore(ONE, guiOn, true);
+	//instrumentedMrc.push_back(mrc);
       }
     }
-  }  
+  }
+
+  for(auto ci: instrumentedCall) {
+    B.SetInsertPoint(ci);
+    if(EnableStuiClui)
+      B.CreateCall(clui);
+    else
+      B.CreateStore(ZERO, guiOn, true);
+	
+    B.SetInsertPoint(ci->getNextNode());
+	
+    if(EnableStuiClui)
+      B.CreateCall(stui);
+    else
+      B.CreateStore(ONE, guiOn, true);
+  }
+
+  for(auto mrc: instrumentedMrc) {
+    B.SetInsertPoint(mrc);
+    
+    if(EnableStuiClui)
+      B.CreateCall(clui);
+    else
+      B.CreateStore(ZERO, guiOn, true);
+	
+    auto bb0 = mrc->getDefaultDest();
+
+    B.SetInsertPoint(bb0->getFirstNonPHIOrDbgOrLifetime()->getNextNode());	
+	
+    if(EnableStuiClui)
+      B.CreateCall(stui);
+    else
+      B.CreateStore(ONE, guiOn, true);
+  }
 
   return true;
 }
 
 PreservedAnalyses InsertLazyDEnDisUIPass::run(Function &F,
                                                FunctionAnalysisManager &AM) {
-  // Get required analysis.
-  auto *DT = &AM.getResult<DominatorTreeAnalysis>(F);
-  auto *LI = &AM.getResult<LoopAnalysis>(F);
 
   // Run on function.
-  bool Changed = runImpl(F, DT, LI);
+  bool Changed = runImpl(F);
   if (!Changed)
     return PreservedAnalyses::all();
 
   PreservedAnalyses PA;
-  PA.preserve<LoopAnalysis>();
-  PA.preserveSet<CFGAnalyses>();
   return PA;
 }
 
