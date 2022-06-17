@@ -116,7 +116,6 @@ namespace {
 	auto &instr = *it;
 	  
 	if(isa<DetachInst>(&instr)) {
-	  instr.dump();
 	  return true;
 	}
       }
@@ -189,14 +188,11 @@ bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)
   //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // If Detach exists, set request_cell[0] to 1
   bool bDetachExists= detachExists(F);
-  if(bDetachExists) {
-    outs() << "Function: " << F.getName() << " has detach\n";
+  if(bDetachExists) {    
     B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
     auto workExists = B.CreateConstInBoundsGEP2_64(prequestcell, 0, 1 );
     B.CreateStore(L_ONE, workExists);
-  } else {
-    outs() << "Function: " << F.getName() << " does not have detach\n";
-  }
+  } 
 
   if(!(F.getFnAttribute("poll-at-loop").getValueAsString()=="true")) return false;
 

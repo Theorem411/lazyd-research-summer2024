@@ -830,7 +830,8 @@ void PassManagerBuilder::populateModulePassManager(
     DisableUnrollLoops = true;
 
   bool RerunAfterTapirLowering = false;
-  bool TapirHasBeenLowered = (TapirTargetID::None == TapirTarget);
+  bool TapirHasBeenLowered = (TapirTargetID::None == TapirTarget) && (ForkDLowering == llvm::ForkDTargetType::None);
+
 
   if (DisableTapirOpts && (TapirTargetID::None != TapirTarget)) {
     MPM.add(createTaskCanonicalizePass());
@@ -840,8 +841,7 @@ void PassManagerBuilder::populateModulePassManager(
 
   do {
     RerunAfterTapirLowering =
-      !TapirHasBeenLowered && (TapirTargetID::None != TapirTarget) &&
-      !PrepareForThinLTO;
+      !TapirHasBeenLowered && (TapirTargetID::None != TapirTarget || ForkDLowering > llvm::ForkDTargetType::None) && !PrepareForThinLTO;
 
   // Infer attributes about declarations if possible.
   MPM.add(createInferFunctionAttrsLegacyPass());
@@ -1142,7 +1142,7 @@ void PassManagerBuilder::populateModulePassManager(
 
 
     // If loop spawn strategy is hybrid, instrument pfor
-    if(ForkDLowering == llvm::ForkDTargetType::LazyD || ForkDLowering == llvm::ForkDTargetType::ULID || ForkDLowering == llvm::ForkDTargetType::SIGUSRD) {
+    if((ForkDLowering == llvm::ForkDTargetType::LazyD || ForkDLowering == llvm::ForkDTargetType::ULID || ForkDLowering == llvm::ForkDTargetType::SIGUSRD) && !TapirHasBeenLowered){
       MPM.add(createInstrumentPforPass());
     }
 
@@ -1160,16 +1160,16 @@ void PassManagerBuilder::populateModulePassManager(
     } 
 #endif
 
-    if (ForkDLowering == llvm::ForkDTargetType::ULID || ForkDLowering == llvm::ForkDTargetType::SIGUSRD) {
+    if ((ForkDLowering == llvm::ForkDTargetType::ULID || ForkDLowering == llvm::ForkDTargetType::SIGUSRD) && !TapirHasBeenLowered) {
       // If using ULI: insert TLS variable to "disable/enable" interrupt  
       MPM.add(createInsertLazyDEnDisUIPass());
     }
 
     // TODO: Separate polling from codegen
-    if(ForkDLowering == llvm::ForkDTargetType::LazyD || ForkDLowering == llvm::ForkDTargetType::ULID || ForkDLowering == llvm::ForkDTargetType::SIGUSRD) {
+    if((ForkDLowering == llvm::ForkDTargetType::LazyD || ForkDLowering == llvm::ForkDTargetType::ULID || ForkDLowering == llvm::ForkDTargetType::SIGUSRD) && !TapirHasBeenLowered) {
       assert(!tapirTarget && "Can only create lazyD / uliD when -ftapir=serial"); 
       MPM.add(createLazyDTransPass());
-    } else if (ForkDLowering == llvm::ForkDTargetType::EagerD) {
+    } else if ((ForkDLowering == llvm::ForkDTargetType::EagerD) && !TapirHasBeenLowered) {
       assert(!tapirTarget && "Can only create eagerD when -ftapir=serial"); 
       MPM.add(createEagerDTransPass());
     }
