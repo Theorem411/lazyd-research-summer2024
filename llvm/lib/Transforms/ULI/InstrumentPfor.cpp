@@ -186,9 +186,9 @@ bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)
   IRBuilder<> B(F.getContext());
   Value* L_ONE = B.getInt64(1);
   //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // If Detach exists, set request_cell[0] to 1
+  // If Detach exists or is a function that contains parallel loop, set request_cell[0] to 1
   bool bDetachExists= detachExists(F);
-  if(bDetachExists) {    
+  if(bDetachExists || F.getFnAttribute("poll-at-loop").getValueAsString()=="true") {
     B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
     auto workExists = B.CreateConstInBoundsGEP2_64(prequestcell, 0, 1 );
     B.CreateStore(L_ONE, workExists);
