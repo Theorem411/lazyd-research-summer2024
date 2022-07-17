@@ -126,6 +126,10 @@ namespace {
 }
 
 void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* L) {
+  auto M = F.getParent();
+  const DataLayout &DL = M->getDataLayout();
+  LLVMContext& C = M->getContext();
+
   BasicBlock *Header = L->getHeader();
   BasicBlock *Preheader = L->getLoopPreheader();
   BasicBlock *Latch = L->getLoopLatch();
@@ -137,7 +141,6 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
 
   const SCEV *Limit = SE.getExitCount(L, Latch);
   outs() << "LS Loop limit: " << *Limit << "\n";
-
 
   PHINode *CanonicalIV = getInductionVariable(L, &SE);//Exp.getOrInsertCanonicalInductionVariable(L, CanonicalIVTy);
   assert(CanonicalIV && "Canonical Ind. variable cannot be nulled\n");
@@ -165,15 +168,30 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
 
   args = F.arg_begin();
   Value* argsStart = &*args; 
-      
-  auto nextIteration = B.CreateAdd(CanonicalIV, constStep->getValue());      
-      
+
+  GlobalVariable* guiOn = GetGlobalVariable("uiOn", TypeBuilder<char, false>::get(C), *M, true);
+  Value* ONE = B.getInt8(1);
+  Value* ZERO = B.getInt8(0);  
+
+  auto nextIteration = B.CreateAdd(CanonicalIV, constStep->getValue());
+
   // If iv starts at zero, add the first argument (start variable)
   if(PNSCEV->getStart()->isZero()) 
     nextIteration = B.CreateAdd(nextIteration, argsStart);
 
   B.CreateStore(nextIteration, argsCtx, true);
+  B.CreateStore(ONE, guiOn, true);
 
+  B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
+  B.CreateStore(ZERO, guiOn, true);
+
+  B.SetInsertPoint(Latch->getFirstNonPHIOrDbgOrLifetime());
+  B.CreateStore(ZERO, guiOn, true);
+
+  GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(C), 32), *M, true);
+  Value* L_ONE = B.getInt64(1);
+  auto workExists = B.CreateConstInBoundsGEP2_64(prequestcell, 0, 1 );
+  B.CreateStore(L_ONE, workExists);
 }
 
 
@@ -186,9 +204,10 @@ bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)
   IRBuilder<> B(F.getContext());
   Value* L_ONE = B.getInt64(1);
   //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // If Detach exists or is a function that contains parallel loop, set request_cell[0] to 1
+  // If Detach exists, set request_cell[0] to 1
   bool bDetachExists= detachExists(F);
-  if(bDetachExists || F.getFnAttribute("poll-at-loop").getValueAsString()=="true") {
+  //if(bDetachExists || F.getFnAttribute("poll-at-loop").getValueAsString()=="true") {
+  if(bDetachExists) {
     B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
     auto workExists = B.CreateConstInBoundsGEP2_64(prequestcell, 0, 1 );
     B.CreateStore(L_ONE, workExists);
