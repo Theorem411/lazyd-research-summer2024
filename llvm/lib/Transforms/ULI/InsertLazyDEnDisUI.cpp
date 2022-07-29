@@ -37,12 +37,12 @@ static cl::opt<bool> EnableStuiClui("enable-lazy-stuiclui", cl::init(false), cl:
                                        cl::desc("Enable/disable UI using stui and clui instead"));
 
 
-#define DEFAULT_GET_CILKRTS_FUNC(name)                                  \
-  static Function *Get__cilkrts_##name(Module& M) {                     \
-						   return cast<Function>(M.getOrInsertFunction(	\
-											       "__cilkrts_"#name, \
-												 TypeBuilder<__cilkrts_##name, false>::get(M.getContext()) \
-												 )); \
+#define DEFAULT_GET_LIB_FUNC(name)                                      \
+  static Constant *Get_##name(Module& M) {                              \
+					  return M.getOrInsertFunction( #name, \
+									  TypeBuilder< name##_ty, false>::get(M.getContext()) \
+									); \
+  }
 
 using overhead_ty = void (void);
 DEFAULT_GET_LIB_FUNC(overhead);
