@@ -37,6 +37,16 @@ static cl::opt<bool> EnableStuiClui("enable-lazy-stuiclui", cl::init(false), cl:
                                        cl::desc("Enable/disable UI using stui and clui instead"));
 
 
+#define DEFAULT_GET_CILKRTS_FUNC(name)                                  \
+  static Function *Get__cilkrts_##name(Module& M) {                     \
+						   return cast<Function>(M.getOrInsertFunction(	\
+											       "__cilkrts_"#name, \
+												 TypeBuilder<__cilkrts_##name, false>::get(M.getContext()) \
+												 )); \
+
+using overhead_ty = void (void);
+DEFAULT_GET_LIB_FUNC(overhead);
+
 namespace {
 
 /// The ULI polling insertion pass (legacy)
@@ -95,9 +105,43 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F) {
   Value* ONE = B.getInt8(1);
   Value* ZERO = B.getInt8(0);  
 
-  auto clui = Intrinsic::getDeclaration(M, Intrinsic::x86_ui_stui);
-  auto stui = Intrinsic::getDeclaration(M, Intrinsic::x86_ui_clui);
+  auto stui = Intrinsic::getDeclaration(M, Intrinsic::x86_ui_stui);
+  auto clui = Intrinsic::getDeclaration(M, Intrinsic::x86_ui_clui);
   
+  // Overhead to inflate the cost of storing uiOn
+  Constant* OVERHEAD = Get_overhead(*M);
+
+  // Find the fork, detach, reattach inst
+  SmallPtrSet<CallInst*, 4> forkCallInsts;
+  for (auto& BB: F) {
+    if (DetachInst* DI = dyn_cast<DetachInst>(BB.getTerminator())) {
+      // Insert clui before detach
+      B.SetInsertPoint(DI);
+      
+      if(EnableStuiClui) {
+	B.CreateCall(clui);
+      } else {
+	B.CreateStore(ZERO, guiOn, true);   
+      }
+      
+      BasicBlock* detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
+      for ( Instruction &II : *detachBlock) {
+	if( CallInst* CI = dyn_cast<CallInst>(&II) ) {
+	  forkCallInsts.insert(CI);
+	}
+      }
+    } else if (ReattachInst* RI = dyn_cast<ReattachInst>(BB.getTerminator())) {
+      // Insert stui after reattach
+      BasicBlock* contBB = RI->getDetachContinue();
+      B.SetInsertPoint(contBB->getFirstNonPHIOrDbgOrLifetime());
+
+      if(EnableStuiClui)
+	B.CreateCall(stui);
+      else
+	B.CreateStore(ONE, guiOn, true);
+    }
+  }
+
   //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // Instrument prologue and epilogue to insert parallel runtime call  
   B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
@@ -135,7 +179,7 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F) {
 	continue;
       }
 
-      if(isa<CallInst>(&II)) {
+      if(isa<CallInst>(&II) && forkCallInsts.find(dyn_cast<CallInst>(&II)) == forkCallInsts.end()) {
 	instrumentedCall.push_back(dyn_cast<CallInst>(&II));
 		
       } else if(isa<InvokeInst>(&II)) {
