@@ -414,6 +414,9 @@ void MCObjectFileInfo::initELFMCObjectFileInfo(const Triple &T, bool Large) {
   PreBSTSection = Ctx->getELFSection(".pre_bst_table", ELF::SHT_PROGBITS,
                                    ELF::SHF_ALLOC);
 
+  PrePrologEpilogSection = Ctx->getELFSection(".pre_prologepilog_table", ELF::SHT_PROGBITS,
+				   ELF::SHF_ALLOC);
+
   COFFDebugSymbolsSection = nullptr;
   COFFDebugTypesSection = nullptr;
 

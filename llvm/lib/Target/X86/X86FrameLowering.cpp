@@ -875,6 +875,7 @@ void X86FrameLowering::emitStackProbeInlineWindowsCoreCLR64(
   int64_t RDXShadowSlot = 0;
 
   // If inlining in the prolog, save RCX and RDX.
+  // Future optimization: don't save or restore if not live in.
   if (InProlog) {
     // Compute the offsets. We need to account for things already
     // pushed onto the stack at this point: return address, frame
@@ -1424,6 +1425,10 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
   Register BasePtr = TRI->getBaseRegister();
   bool HasWinCFI = false;
 
+  // Mark the start and end of prolog, used for LazyD
+  MCSymbol* startLabel = nullptr;
+  MCSymbol* endLabel = nullptr;
+
   // Debug location must be unknown since the first debug location is used
   // to determine the end of the prologue.
   DebugLoc DL;
@@ -1466,6 +1471,20 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     case SwiftAsyncFramePointerMode::Never:
       break;
     }
+  }
+
+  bool unwindPathExists = false;
+  for( auto mb = MF.begin(); mb != MF.end(); ++mb ) {
+    if( mb->isUnwindPathEntry() ) {
+      unwindPathExists = true;
+      break;
+    }
+  }
+
+  // If there is an unwind path in the function, emit label at start of the prolog
+  if(unwindPathExists && !MF.getFunction().hasFnAttribute(Attribute::NoUnwindPath)){
+    startLabel = MF.getLabel();
+    BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::EH_LABEL)).addSym(startLabel);
   }
 
   // Re-align the stack on 64-bit if the x86-interrupt calling convention is
@@ -1592,33 +1611,33 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
       if(nextMBB) {
 	const BasicBlock * nextBB = nextMBB->getBasicBlock();
 	if(nextBB) {
-	  const BlockAddress* ba = BlockAddress::lookup (nextBB);	  
-	  MCSymbol *Label = MF.getLabel();             
-	  const MCInstrDesc &II = TII.get(TargetOpcode::EH_LABEL);        
-	  BuildMI(MBB, MBBI, DL, II).addSym(Label).setMIFlag(MachineInstr::FrameSetup);     
-      
+	  const BlockAddress* ba = BlockAddress::lookup (nextBB);
+	  MCSymbol *Label = MF.getLabel();
+	  const MCInstrDesc &II = TII.get(TargetOpcode::EH_LABEL);
+	  BuildMI(MBB, MBBI, DL, II).addSym(Label).setMIFlag(MachineInstr::FrameSetup);
+
 	  if (Label) {
 	    // Save the entry of the unwind path if exists
 	    auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
-	      .addSym(Label).setMIFlag(MachineInstr::FrameSetup);	        
+	      .addSym(Label).setMIFlag(MachineInstr::FrameSetup);
 	  } else {
 	    auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
-	      .addImm(0).setMIFlag(MachineInstr::FrameSetup);       
-	  }      
+	      .addImm(0).setMIFlag(MachineInstr::FrameSetup);
+	  }
 	} else {
 	  // Save the entry of the unwind path if exists
 	  auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
-	    .addImm(0).setMIFlag(MachineInstr::FrameSetup);       
+	    .addImm(0).setMIFlag(MachineInstr::FrameSetup);
 	}
       } else {
 	// Save the entry of the unwind path if exists
 	auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
 	  .addImm(0).setMIFlag(MachineInstr::FrameSetup);
-      } 
-      
+      }
+
       // Save the entry of the unwind path if exists (for stack alignment purpose)
       auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
-      	.addImm(0).setMIFlag(MachineInstr::FrameSetup);           
+      	.addImm(0).setMIFlag(MachineInstr::FrameSetup);
     }
 #endif
 
@@ -1626,7 +1645,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64r : X86::PUSH32r))
       .addReg(MachineFramePtr, RegState::Kill)
       .setMIFlag(MachineInstr::FrameSetup);
-    
+
     if (NeedsDwarfCFI) {
       // Mark the place where EBP/RBP was saved.
       // Define the current CFA rule to use the provided offset.
@@ -1839,7 +1858,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
         addRegOffset(BuildMI(*mb, inst, DL, TII.get(X86::LEA64r), inst->getOperand(0).getReg()), SrcReg,
             false, offset);
         instructions_to_delete.push_back(inst);
-      } 
+      }
     }
   }
 
@@ -1909,7 +1928,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     }
   } else if (FrameSize) {
     uint64_t stacklet_size_log2 = MF.getTarget().Options.ULIStackletOverflowCheckSize;
-    
+
     // Fail during: llc -start-after=dead-mi-elimination fib.clone.mir -O3 -o fib.clone.s
     //if(false) {
     if (stacklet_size_log2 && !MF.getFunction().hasFnAttribute(Attribute::NoStackletCheck)) {
@@ -1939,9 +1958,9 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
       //   newrsp = (newrsp ^ rsp) >> alignment
       //   jz MBB
       // OverflowMBB:
-      //   callee_reg = &&.L_cont;   
-      //   call __allocate_stacklet 
-      //   call MBB   
+      //   callee_reg = &&.L_cont;
+      //   call __allocate_stacklet
+      //   call MBB
       //   call __deallocate_stacklet
       //.L_cont:
       //   retq
@@ -2003,7 +2022,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
       // Call the main function (LabelCall)
       BuildMI(OverflowMBB, DL, TII.get(X86::CALL64pcrel32))
 	.addSym(LabelCall);
-      
+
       // Deallocate stacklet (it will jump back to __allocate_stacklet and then return to LabelRet)
       BuildMI(OverflowMBB, DL, TII.get(X86::CALL64pcrel32))
         // TODO: hardcoded
@@ -2213,21 +2232,6 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     }
   }
 
-
-  if (((!HasFP && NumBytes) || PushedRegs) && NeedsDwarfCFI) {
-    // Mark end of stack pointer adjustment.
-    if (!HasFP && NumBytes) {
-      // Define the current CFA rule to use the provided offset.
-      assert(StackSize);
-      BuildCFI(
-          MBB, MBBI, DL,
-          MCCFIInstruction::cfiDefCfaOffset(nullptr, StackSize - stackGrowth));
-    }
-
-    // Emit DWARF info specifying the offsets of the callee-saved registers.
-    emitCalleeSavedFrameMoves(MBB, MBBI, DL, true);
-  }
-
   if (!Fn.hasFnAttribute(Attribute::UserLevelInterrupt)){ 
       if (((!HasFP && NumBytes) || PushedRegs) && NeedsDwarfCFI) {
           // Mark end of stack pointer adjustment.
@@ -2265,6 +2269,14 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
   MF.setHasWinCFI(HasWinCFI);
 
 end:
+  // If there is an unwind path, insert an end of prolog label
+  if(unwindPathExists && !MF.getFunction().hasFnAttribute(Attribute::NoUnwindPath)){
+    endLabel = MF.getLabel();
+    BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::EH_LABEL)).addSym(endLabel);
+    // Push start and end into prolog epilog table
+    MF.getContext().prePrologEpilogEntry.push_back(std::make_pair(startLabel,endLabel));
+  }
+
   for (auto &it : instructions_to_delete) {
     it->eraseFromParent();
   }
@@ -2360,6 +2372,11 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
   X86MachineFunctionInfo *X86FI = MF.getInfo<X86MachineFunctionInfo>();
   MachineBasicBlock::iterator Terminator = MBB.getFirstTerminator();
   MachineBasicBlock::iterator MBBI = Terminator;
+
+  // Mark the start and end of epilog, used for LazyD
+  MCSymbol* startLabel = nullptr;
+  MCSymbol* endLabel = nullptr;
+
   DebugLoc DL;
   if (MBBI != MBB.end())
     DL = MBBI->getDebugLoc();
@@ -2402,7 +2419,7 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
     NumBytes = StackSize - CSSize - TailCallArgReserveSize;
   }
   uint64_t SEHStackAllocAmt = NumBytes;
-  
+
   const auto &Fn = MF.getFunction();
 
   // AfterPop is the position to insert .cfi_restore.
@@ -2442,6 +2459,21 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
       }
       --MBBI;
     }
+  }
+
+  bool unwindPathExists = false;
+  for( auto mb = MF.begin(); mb != MF.end(); ++mb ) {
+    if( mb->isUnwindPathEntry() ) {
+      unwindPathExists = true;
+      break;
+    }
+  }
+
+  // If there is an unwind path in the function, emit label at start of the epilog
+  if(unwindPathExists && !Fn.hasFnAttribute(Attribute::NoUnwindPath)){
+    endLabel = MF.getLabel();
+    BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::EH_LABEL)).addSym(endLabel);
+    --MBBI;
   }
 
   // Undo the user level interrupt frame adjustment to avoid red zone on linux
@@ -2568,9 +2600,19 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
     }
   }
 
+
   // Emit tilerelease for AMX kernel.
   if (X86FI->hasVirtualTileReg())
     BuildMI(MBB, Terminator, DL, TII.get(X86::TILERELEASE));
+
+  // If there is an unwind path, insert an end of prolog label
+  if(unwindPathExists && !MF.getFunction().hasFnAttribute(Attribute::NoUnwindPath)){
+    startLabel = MF.getLabel();
+    BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::EH_LABEL)).addSym(startLabel);
+    // Push start and end into prolog epilog table
+    MF.getContext().prePrologEpilogEntry.push_back(std::make_pair(startLabel,endLabel));
+    --MBBI;
+  }
 }
 
 StackOffset X86FrameLowering::getFrameIndexReference(const MachineFunction &MF,
@@ -3606,12 +3648,12 @@ eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
   // Get the Adjupstack if exists after function call
   // Copy that instruction into gotstolen handler to fix up rsp
   bool bSpawnBB = false;
-  MachineBasicBlock::iterator gotStolen; 
+  MachineBasicBlock::iterator gotStolen;
   if(MBB.mapAdjToGotStolen.count(&*I)  ) {
     bSpawnBB = true;
     gotStolen = MBB.mapAdjToGotStolen[&*I];
   }
-  
+
   bool reserveCallFrame = hasReservedCallFrame(MF);
   unsigned Opcode = I->getOpcode();
   bool isDestroy = Opcode == TII.getCallFrameDestroyOpcode();
@@ -3686,7 +3728,7 @@ eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
                                /*InEpilogue=*/false);
 
 
-	// If the corresponding call instr. related to ADJUPSTACK is a spawn function, copy the translation of stack adjustment instr. 
+	// If the corresponding call instr. related to ADJUPSTACK is a spawn function, copy the translation of stack adjustment instr.
 	// to the gotstolen handler (for example, if after call inst, there is an "addq 8, rsp", then copy the "addq 8, rsp"
 	// to the gotstolen handler
 	if(bSpawnBB) {

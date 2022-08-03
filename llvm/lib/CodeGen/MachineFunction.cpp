@@ -711,6 +711,7 @@ MCSymbol * MachineFunction::getLabel(){
     return Label;
 }
 
+#if 0
 /// Map steal handler basic block's name to its entry label
 void MachineFunction::addStealHandler2LabelMap(StringRef name, MCSymbol * label){
     Ctx.StealHandler2LabelMap[ name ]  = label;
@@ -725,6 +726,7 @@ void MachineFunction::addStolenHandler2LabelMap(StringRef name, MCSymbol * label
 void MachineFunction::addReturnAddr2LabelMap  (StringRef name, MCSymbol * label){
     Ctx.ReturnAddr2LabelMap[ name ]  = label;
 }
+#endif
 
 /// \}
 

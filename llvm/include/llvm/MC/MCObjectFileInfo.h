@@ -78,10 +78,13 @@ protected:
 
 
   /// Section used to create the hash table in linker / runtime
-  /// Contains label representing return addr of forkable function , the callsite's gotstolen and steal request handler basic block
+  /// Contains label representing return addr of forkable function and its associated unwind path address
   MCSection *PreHashSection;
+  /// Contains label representing ip range its associated unwind path address
   MCSection *PreBSTSection;
-  
+  /// Contains label representing ip range of prolog and epilog
+  MCSection *PrePrologEpilogSection;
+
   // Dwarf sections for debug info.  If a target supports debug info, these must
   // be set.
   MCSection *DwarfAbbrevSection = nullptr;
@@ -282,10 +285,11 @@ public:
   MCSection *getDwarfFrameSection() const { return DwarfFrameSection; }
   MCSection *getDwarfPubNamesSection() const { return DwarfPubNamesSection; }
   MCSection *getDwarfPubTypesSection() const { return DwarfPubTypesSection; }
-   
+
   MCSection *getPreHashSection() const { return PreHashSection;}
   MCSection *getPreBSTSection() const { return PreBSTSection;}
-  
+  MCSection *getPrePrologEpilogSection() const { return PrePrologEpilogSection;}
+
   MCSection *getDwarfGnuPubNamesSection() const {
     return DwarfGnuPubNamesSection;
   }

@@ -1534,13 +1534,13 @@ void AsmPrinter::emitFunctionBody() {
   OutStreamer->AddBlankLine();
 
   // Populate preBSTTableEntry
-  // If unwind function exists 
-  for( auto mb = MF->begin(); mb != MF->end(); ++mb ) {      
+  // If unwind function exists
+  for( auto mb = MF->begin(); mb != MF->end(); ++mb ) {
     // Add label to unwind path entry
     if( mb->isUnwindPathEntry() ) {
       assert(CurrentFnEnd && "Label end does not exists");
       assert(CurrentFnSym && "Label fn sym does not exists");
-      
+
       OutContext.preBSTTableEntry.push_back(std::make_tuple(CurrentFnSym, CurrentFnEnd, mb->getSymbol()));
     }
   }
@@ -1759,15 +1759,15 @@ bool AsmPrinter::doFinalization(Module &M) {
   // we can conditionalize accesses based on whether or not it is nullptr.
   MF = nullptr;
 
-#if 0           
+#if 0
   // Create the PreHash Section
   if (!M.CallStealMap.empty()){
     MCSection *PreHashSection = getObjFileLowering().getPreHashSection();
     if (PreHashSection){
       OutStreamer->SwitchSection( PreHashSection);
       EmitAlignment(2);
-            
-      Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());      
+
+      Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());
       M.getOrInsertGlobal("Pre_Hash_table", VoidPtrTy);
       GlobalVariable * preHashTable = M.getNamedGlobal("Pre_Hash_table");
       preHashTable->setLinkage(GlobalValue::ExternalLinkage);
@@ -1778,22 +1778,22 @@ bool AsmPrinter::doFinalization(Module &M) {
 
        // Populate the content of PreHash table
 
-      for(auto &KV :M.CallStealMap){                 
+      for(auto &KV :M.CallStealMap){
 	MCSymbol * raStartLabel = OutContext.ReturnAddr2LabelMap[(KV.first->getName() + "_start").str()];
 	MCSymbol * raEndLabel = OutContext.ReturnAddr2LabelMap[(KV.first->getName() + "_end").str()];
 	MCSymbol * stealLabel = OutContext.StealHandler2LabelMap[KV.second.stealHandler->getName()];
 	MCSymbol * stolenLabel = OutContext.StolenHandler2LabelMap[KV.second.stolenHandler->getName()];
-        
+
 	assert(raStartLabel != NULL);
 	assert(raEndLabel != NULL);
 	assert(stealLabel  != NULL);
 	assert(stolenLabel  != NULL);
-              
+
 	EmitLabelPlusOffset(raStartLabel, 0, 8, false);
 	EmitLabelPlusOffset(raEndLabel, 0, 8, false);
 	EmitLabelPlusOffset(stealLabel, 0, 8, false);
 	EmitLabelPlusOffset(stolenLabel, 0, 8, false);
-	      
+
 	// Only used when using the unwinding method
 	if(KV.second.unwindHandler){
 	  MCSymbol * unwindLabel = OutContext.StealHandler2LabelMap[KV.second.unwindHandler->getName()];
@@ -1806,7 +1806,7 @@ bool AsmPrinter::doFinalization(Module &M) {
       GlobalVariable * preHashTableEnd = M.getNamedGlobal("Pre_Hash_table_end");
       preHashTableEnd->setLinkage(GlobalValue::ExternalLinkage);
       MCSymbol *PreHashSymEnd = getSymbol(preHashTableEnd);
-      EmitLinkage(preHashTableEnd, PreHashSymEnd);     
+      EmitLinkage(preHashTableEnd, PreHashSymEnd);
       OutStreamer->EmitLabel(PreHashSymEnd);
     }
   }
@@ -1819,8 +1819,8 @@ bool AsmPrinter::doFinalization(Module &M) {
   if(!OutContext.preHashTableEntry.empty()) {
     MCSection *PreHashSection = getObjFileLowering().getPreHashSection();
     OutStreamer->SwitchSection( PreHashSection);
-    EmitAlignment(2);            
-    Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());      
+    EmitAlignment(2);
+    Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());
 #ifdef GLOBAL_TABLE
     M.getOrInsertGlobal("Pre_Hash_table", VoidPtrTy);
     GlobalVariable * preHashTable = M.getNamedGlobal("Pre_Hash_table");
@@ -1829,7 +1829,7 @@ bool AsmPrinter::doFinalization(Module &M) {
     // Seems to allow the user code to access the Pre_Hash_Table or to used for global variable
     EmitLinkage(preHashTable, PreHashSym);
     OutStreamer->EmitLabel(PreHashSym);
-   
+
 #else
     MCSymbol *PreHashSym = OutContext.getOrCreateSymbol(Twine("Pre_Hash_table"));
     OutStreamer->EmitLabel(PreHashSym);
@@ -1837,15 +1837,15 @@ bool AsmPrinter::doFinalization(Module &M) {
 
     for(auto labelPair: OutContext.preHashTableEntry) {
       EmitLabelPlusOffset(labelPair.first, 0, 8, false);
-      EmitLabelPlusOffset(labelPair.second, 0, 8, false);	
+      EmitLabelPlusOffset(labelPair.second, 0, 8, false);
     }
- 
+
 #ifdef GLOBAL_TABLE
     M.getOrInsertGlobal("Pre_Hash_table_end", VoidPtrTy);
     GlobalVariable * preHashTableEnd = M.getNamedGlobal("Pre_Hash_table_end");
     preHashTableEnd->setLinkage(GlobalValue::ExternalLinkage);
     MCSymbol *PreHashSymEnd = getSymbol(preHashTableEnd);
-    EmitLinkage(preHashTableEnd, PreHashSymEnd);     
+    EmitLinkage(preHashTableEnd, PreHashSymEnd);
     OutStreamer->EmitLabel(PreHashSymEnd);
 #else
     MCSymbol *PreHashSymEnd = OutContext.getOrCreateSymbol(Twine("Pre_Hash_table_end"));
@@ -1860,12 +1860,12 @@ bool AsmPrinter::doFinalization(Module &M) {
     - Unwind Path entry
   */
 
-  if(!OutContext.preBSTTableEntry.empty()) {    
+  if(!OutContext.preBSTTableEntry.empty()) {
     MCSection *PreBSTSection = getObjFileLowering().getPreBSTSection();
     OutStreamer->SwitchSection( PreBSTSection);
-    EmitAlignment(2);            
+    EmitAlignment(2);
 
-    Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());      
+    Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());
 #ifdef GLOBAL_TABLE
     M.getOrInsertGlobal("Pre_BST_table", VoidPtrTy);
     GlobalVariable * preBSTTable = M.getNamedGlobal("Pre_BST_table");
@@ -1881,24 +1881,65 @@ bool AsmPrinter::doFinalization(Module &M) {
 
     for(auto labelTuple: OutContext.preBSTTableEntry) {
       EmitLabelPlusOffset(std::get<0>(labelTuple), 0, 8, false);
-      EmitLabelPlusOffset(std::get<1>(labelTuple), 0, 8, false);	
-      EmitLabelPlusOffset(std::get<2>(labelTuple), 0, 8, false);	
+      EmitLabelPlusOffset(std::get<1>(labelTuple), 0, 8, false);
+      EmitLabelPlusOffset(std::get<2>(labelTuple), 0, 8, false);
     }
- 
+
 #ifdef GLOBAL_TABLE
     M.getOrInsertGlobal("Pre_BST_table_end", VoidPtrTy);
     GlobalVariable * preBSTTableEnd = M.getNamedGlobal("Pre_BST_table_end");
     preBSTTableEnd->setLinkage(GlobalValue::ExternalLinkage);
     MCSymbol *PreBSTSymEnd = getSymbol(preBSTTableEnd);
-    EmitLinkage(preBSTTableEnd, PreBSTSymEnd);     
-    OutStreamer->EmitLabel(PreBSTSymEnd);    
+    EmitLinkage(preBSTTableEnd, PreBSTSymEnd);
+    OutStreamer->EmitLabel(PreBSTSymEnd);
 #else
     MCSymbol *PreBSTSymEnd = OutContext.getOrCreateSymbol(Twine("Pre_BST_table_end"));
     OutStreamer->EmitLabel(PreBSTSymEnd);
 #endif
   }
+
+  /* Generate the Pre_PrologEpilog_table in the elf binary
+     Entry:
+     - Start of prolog/epilog
+     - End of prolog/epilog
+  */
+
+  if(!OutContext.prePrologEpilogEntry.empty()) {
+    MCSection *PrePrologEpilogSection = getObjFileLowering().getPrePrologEpilogSection();
+    OutStreamer->SwitchSection( PrePrologEpilogSection);
+    EmitAlignment(2);
+
+    Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());
+#ifdef GLOBAL_TABLE
+    M.getOrInsertGlobal("Pre_PrologEpilog_table", VoidPtrTy);
+    GlobalVariable * prePrologEpilogTable = M.getNamedGlobal("Pre_PrologEpilog_table");
+    prePrologEpilogTable->setLinkage(GlobalValue::ExternalLinkage);
+    MCSymbol *PrePrologEpilogSym = getSymbol(prePrologEpilogTable);
+    // Seems to allow the user code to access the Pre_PrologEpilog_Table or to used for global variable
+    EmitLinkage(prePrologEpilogTable, PrePrologEpilogSym);
+    OutStreamer->EmitLabel(PrePrologEpilogSym);
+#else
+    MCSymbol *PrePrologEpilogSym = OutContext.getOrCreateSymbol(Twine("Pre_PrologEpilog_table"));
+    OutStreamer->EmitLabel(PrePrologEpilogSym);
 #endif
-  
+    for(auto labelTuple: OutContext.prePrologEpilogEntry) {
+      EmitLabelPlusOffset(std::get<0>(labelTuple), 0, 8, false);
+      EmitLabelPlusOffset(std::get<1>(labelTuple), 0, 8, false);
+    }
+#ifdef GLOBAL_TABLE
+    M.getOrInsertGlobal("Pre_PrologEpilog_table_end", VoidPtrTy);
+    GlobalVariable * prePrologEpilogTableEnd = M.getNamedGlobal("Pre_PrologEpilog_table_end");
+    prePrologEpilogTableEnd->setLinkage(GlobalValue::ExternalLinkage);
+    MCSymbol *PrePrologEpilogSymEnd = getSymbol(prePrologEpilogTableEnd);
+    EmitLinkage(prePrologEpilogTableEnd, PrePrologEpilogSymEnd);
+    OutStreamer->EmitLabel(PrePrologEpilogSymEnd);
+#else
+    MCSymbol *PrePrologEpilogSymEnd = OutContext.getOrCreateSymbol(Twine("Pre_PrologEpilog_table_end"));
+    OutStreamer->EmitLabel(PrePrologEpilogSymEnd);
+#endif
+  }
+#endif
+
   // Gather all GOT equivalent globals in the module. We really need two
   // passes over the globals: one to compute and another to avoid its emission
   // in EmitGlobalVariable, otherwise we would not be able to handle cases
@@ -2681,7 +2722,7 @@ const MCExpr *AsmPrinter::lowerConstant(const Constant *CV) {
   if (const GlobalValue *GV = dyn_cast<GlobalValue>(CV))
     return MCSymbolRefExpr::create(getSymbol(GV), Ctx);
 
-  if (const BlockAddress *BA = dyn_cast<BlockAddress>(CV)) 
+  if (const BlockAddress *BA = dyn_cast<BlockAddress>(CV))
     return MCSymbolRefExpr::create(GetBlockAddressSymbol(BA), Ctx);
 
   if (const auto *Equiv = dyn_cast<DSOLocalEquivalent>(CV))
@@ -3321,7 +3362,7 @@ MCSymbol *AsmPrinter::GetBlockAddressSymbol(const BlockAddress *BA) const {
   BasicBlock* bb = BA->getBasicBlockorSuccessor();
   // getBasicBlock may return successor of basic block?
   return MMI->getAddrLabelSymbol(bb);
-#else  
+#else
   return MMI->getAddrLabelSymbol(BA->getBasicBlock());
 #endif
 
@@ -3483,7 +3524,7 @@ void AsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
   if (MBB.hasAddressTaken()) {
     if (isVerbose())
       OutStreamer->AddComment("Block address taken");
-    
+
     // MBBs can have their address taken as part of CodeGen without having
     // their corresponding BB's address taken in IR
     if (BB && BB->hasAddressTaken())

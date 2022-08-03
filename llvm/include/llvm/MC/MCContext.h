@@ -77,16 +77,20 @@ namespace llvm {
                            std::vector<const MDNode *> &)>;
     enum Environment { IsMachO, IsELF, IsGOFF, IsCOFF, IsWasm, IsXCOFF };
 
+#if 0
     //TODO: To delete
-    StringMap<MCSymbol *> StolenHandler2LabelMap; /// Map Got Stolen handler basic block's name to its entry's MC Symbol (label)  
-    StringMap<MCSymbol *> StealHandler2LabelMap; /// Map Steal handler basic block's name to its entry's MC Symbol (label)  
+    StringMap<MCSymbol *> StolenHandler2LabelMap; /// Map Got Stolen handler basic block's name to its entry's MC Symbol (label)
+    StringMap<MCSymbol *> StealHandler2LabelMap; /// Map Steal handler basic block's name to its entry's MC Symbol (label)
     StringMap<MCSymbol *> ReturnAddr2LabelMap;   /// Map Call instruction's name to its return address' MC Symbol (label)
+#endif
 
-    // TODO: Refactor 
-    // Used to create the pre hash table. 
+    // TODO: Refactor?
     // Store the return address and the associated unwind path address
     SmallVector<std::pair<MCSymbol *, MCSymbol *>, 10> preHashTableEntry;
+    // Store the start and end address and its associated unwind path address
     SmallVector<std::tuple<MCSymbol *, MCSymbol *, MCSymbol *>, 10> preBSTTableEntry;
+    // Store the start and end address of prolog and epilog
+    SmallVector<std::pair<MCSymbol *, MCSymbol *>, 10> prePrologEpilogEntry;
 
   private:
     Environment Env;
