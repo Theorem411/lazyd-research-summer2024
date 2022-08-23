@@ -85,11 +85,11 @@ namespace llvm {
 #endif
 
     // TODO: Refactor?
-    // Store the return address and the associated unwind path address
+    // Used to create the prehash table
     SmallVector<std::pair<MCSymbol *, MCSymbol *>, 10> preHashTableEntry;
-    // Store the start and end address and its associated unwind path address
+    // Store the range of ip for a function and the associated unwind path
     SmallVector<std::tuple<MCSymbol *, MCSymbol *, MCSymbol *>, 10> preBSTTableEntry;
-    // Store the start and end address of prolog and epilog
+    // Store the range of ip for prolog and epilog
     SmallVector<std::pair<MCSymbol *, MCSymbol *>, 10> prePrologEpilogEntry;
 
   private:

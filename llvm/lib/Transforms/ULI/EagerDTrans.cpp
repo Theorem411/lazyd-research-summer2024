@@ -30,8 +30,13 @@ using namespace llvm;
 
 // Set the size of the work context length
 static cl::opt<int> WorkCtxLen(
-"eager-set-workctx-len", cl::init(WORKCTX_SIZE), cl::NotHidden,
+  "eager-set-workctx-len", cl::init(WORKCTX_SIZE), cl::NotHidden,
   cl::desc("Size of work context length (default=WORKCTX_SIZE)"));
+
+// Set the size of maximum grain size
+static cl::opt<int> MaxGrainSize(
+  "eager-set-maxgrainsize", cl::init(128), cl::NotHidden,
+  cl::desc("Maximum grain size for parallel for"));
 
 // Polling at prologue, epilogue, and inner loop
 static cl::opt<int> EnableProperPolling(
@@ -320,7 +325,7 @@ namespace {
 
 #if 1
   // Create helper function
-  Function* GenerateWrapperFunc(CallInst* CI, Value* Storage, SmallVector<Instruction *, 4>& insts2clone, Type* workCtxType, Type* storeType){
+  Function* GenerateWrapperFunc(CallInst* CI, SmallPtrSet<Value*, 8> storageVec, SmallVector<Instruction *, 4>& insts2clone, Type* workCtxType) {
     Function& F = *CI->getCalledFunction();
     Module* M = F.getParent();
     LLVMContext& C = M->getContext();
@@ -345,17 +350,23 @@ namespace {
 
     SmallVector<Type *, 8> WrapperParamTys(FTy->param_begin(), FTy->param_end());
     WrapperParamTys.push_back(workCtxType);
-    if(!RetType->isVoidTy())
-      WrapperParamTys.push_back(storeType);
+    
+    if(!RetType->isVoidTy()) {
+      for(auto storage: storageVec) {
+	WrapperParamTys.push_back(storage->getType());
+      }
+    }
 
     FunctionType *WrapperFTy = FunctionType::get(VoidTy, WrapperParamTys, /*isVarArg=*/false);
 
     Function *Wrapper = Function::Create(WrapperFTy, InternalLinkage, Name, M);
     BasicBlock *Entry = BasicBlock::Create(C, "entry", Wrapper);
 
+    unsigned sizeOfOutput = storageVec.size();
+
     unsigned endIdx = 1;
     if(!RetType->isVoidTy())
-      endIdx = 2;
+      endIdx = endIdx + sizeOfOutput;
 
     IRBuilder<> B(Entry);
     SmallVector<Value*, 8> Args;
@@ -403,16 +414,22 @@ namespace {
               U->set(Result);
             }
 
-          } else if( v == Storage) {
-            SmallVector< Use*, 4 >  useNeed2Update;
-            for (auto &use : v->uses()) {
-              auto * user = dyn_cast<Instruction>(use.getUser());
-              if(user->getParent() == Entry)
-                useNeed2Update.push_back(&use);
-            }
-            for( auto U : useNeed2Update ){
-              U->set(pointerArg);
-            }
+          } else {
+	    unsigned argLoc = sizeOfOutput+1;
+	    for(auto Storage : storageVec) {
+	      argLoc--;
+	      if(v == Storage) {
+		SmallVector< Use*, 4 >  useNeed2Update;
+		for (auto &use : v->uses()) {
+		  auto * user = dyn_cast<Instruction>(use.getUser());
+		  if(user->getParent() == Entry)
+		    useNeed2Update.push_back(&use);
+		}
+		for( auto U : useNeed2Update ){
+		  U->set(Wrapper->arg_end() - argLoc);
+		}
+	      }
+	    }
           }
         }
 
@@ -847,7 +864,7 @@ Value* EagerDTransPass::lowerGrainsizeCall(CallInst *GrainsizeCall) {
 					 ConstantInt::get(Limit->getType(), 1)),
 		       WorkersX8);
   // Compute min
-  Value *LargeLoopVal = ConstantInt::get(Limit->getType(), 2048);
+  Value *LargeLoopVal = ConstantInt::get(Limit->getType(), MaxGrainSize);
   Value *Cmp = Builder.CreateICmpULT(LargeLoopVal, SmallLoopVal);
   Value *Grainsize = Builder.CreateSelect(Cmp, LargeLoopVal, SmallLoopVal);
 
@@ -1243,22 +1260,22 @@ void EagerDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4
 
     bool bStartClone = false;
     SmallVector<Instruction *, 4> insts2clone;
+    SmallPtrSet<Instruction *, 4> insts2cloneSet;
 
     //----------------------------------------------------------------------------------------------------
     // Generate wrapper function
     // Find the call inst and store inst
     CallInst* ci = nullptr;
-    StoreInst* si = nullptr;
+    SmallPtrSet<Value*, 8> storageVec;
     for(auto &ii : *detachedSlowPath) {
       if(bStartClone) {
-	insts2clone.push_back(&ii);
-	if(isa<StoreInst>(&ii)) {
-	  si = dyn_cast<StoreInst>(&ii);
+	if(isa<ReattachInst>(&ii) || isa<BranchInst>(&ii)) {
 	  break;
 	}
+	insts2clone.push_back(&ii);
+	insts2cloneSet.insert(&ii);
       }
-      if(!bStartClone && isa<CallInst>(&ii)) {
-	//ii.dump();
+      if(!bStartClone && isa<CallInst>(&ii) && !isa<IntrinsicInst>(&ii)) {
 	ci = dyn_cast<CallInst>(&ii);
 	bStartClone = true;
 	if(ci->getCalledFunction()->getReturnType()->isVoidTy()) {
@@ -1268,16 +1285,30 @@ void EagerDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4
     }
     assert(ci && "No call inst found in slowpath");
 	
+    // Find variables used by clone function but defined outside
+    for(auto ii : insts2clone) {
+      for (Use &U : ii->operands()) {
+	Value *v = U.get();
+	if(v && isa<Instruction>(v) ) {
+	  auto instV = dyn_cast<Instruction>(v);
+	  if(insts2cloneSet.find(instV) == insts2cloneSet.end() && instV  != ci)
+	    storageVec.insert(v);
+	} else if (v && isa<Argument>(v)) {
+	  storageVec.insert(v);
+	}
+      }
+    }
+
     // Epilogue for the slow path
     B.SetInsertPoint(detachedSlowPath->getTerminator());
 
     //workCtx = B.CreateCall(GetHeadCtxFcnCall);
 
     Function* wrapperFcn = nullptr;
-    if(si)
-      wrapperFcn = GenerateWrapperFunc(ci, si->getPointerOperand(), insts2clone, workCtx->getType(), si->getPointerOperand()->getType());
+    if(!ci->getCalledFunction()->getReturnType()->isVoidTy())
+      wrapperFcn = GenerateWrapperFunc(ci, storageVec, insts2clone, workCtx->getType());
     else
-      wrapperFcn = GenerateWrapperFunc(ci, nullptr, insts2clone, workCtx->getType(), nullptr);
+      wrapperFcn = GenerateWrapperFunc(ci, storageVec, insts2clone, workCtx->getType());
 
     wrapperFcn->addFnAttr("no-frame-pointer-elim", "true");
     wrapperFcn->addFnAttr(Attribute::NoUnwindPath);
@@ -1290,8 +1321,11 @@ void EagerDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4
     }
     args.push_back(workCtx);
     if(!ci->getCalledFunction()->getReturnType()->isVoidTy()) {
-      args.push_back(si->getPointerOperand());
+      for(auto storage : storageVec) {
+	args.push_back(storage);
+      }
     }
+
     B.CreateCall(wrapperFcn, {args});
 
     while(!insts2clone.empty()) {

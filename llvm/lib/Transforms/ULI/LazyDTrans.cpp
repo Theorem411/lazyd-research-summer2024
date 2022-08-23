@@ -37,6 +37,12 @@ static cl::opt<int> WorkCtxLen(
 "lazy-set-workctx-len", cl::init(WORKCTX_SIZE), cl::NotHidden,
   cl::desc("Size of work context length (default=WORKCTX_SIZE)"));
 
+// Set the size of maximum grain size
+static cl::opt<int> MaxGrainSize(
+"lazy-set-maxgrainsize", cl::init(128), cl::NotHidden,
+  cl::desc("Maximum grain size for parallel for"));
+
+
 // Polling at prologue, epilogue, and inner loop
 static cl::opt<int> EnableProperPolling(
 "lazy-enable-proper-polling", cl::init(0), cl::NotHidden,
@@ -1340,7 +1346,8 @@ namespace {
     SmallVector<Loop *, 8> VisitStack = {&L};
     Function *F = unwindPathEntry->getParent();
 
-    instrumentLoop(F, &L, bHaveUnwindAlloc);
+    if(EnableProperPolling == 2 || F->getFnAttribute("poll-at-loop").getValueAsString()=="true")
+      instrumentLoop(F, &L, bHaveUnwindAlloc);
 
     while (!VisitStack.empty()) {
       Loop *CurrentLoop = VisitStack.pop_back_val();
@@ -1352,7 +1359,8 @@ namespace {
           VisitStack.push_back(SubLoop);
 #endif
       } else {
-        //instrumentLoop(F, CurrentLoop, bHaveUnwindAlloc);
+	if(EnableProperPolling == 3)
+	  instrumentLoop(F, CurrentLoop, bHaveUnwindAlloc);
       }
     }
   }
@@ -2878,7 +2886,7 @@ Value* LazyDTransPass::lowerGrainsizeCall(CallInst *GrainsizeCall) {
 					 ConstantInt::get(Limit->getType(), 1)),
 		       WorkersX8);
   // Compute min
-  Value *LargeLoopVal = ConstantInt::get(Limit->getType(), 2048);
+  Value *LargeLoopVal = ConstantInt::get(Limit->getType(), MaxGrainSize);
   Value *Cmp = Builder.CreateICmpULT(LargeLoopVal, SmallLoopVal);
   Value *Grainsize = Builder.CreateSelect(Cmp, LargeLoopVal, SmallLoopVal);
 
@@ -4821,7 +4829,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   if( (!DisableUnwindPoll && !F.hasFnAttribute(Attribute::ULINoPolling)) ) {
     // Insert Poll in looping
     for (auto L : LI) {
-      // Only insert at the inner most loop. Do DFS on nested loop.
       if(EnableProperPolling >= 2 || F.getFnAttribute("poll-at-loop").getValueAsString()=="true") {
 	insertPollingAtLoop(*L, unwindPathEntry, bHaveUnwindAlloc);
       }

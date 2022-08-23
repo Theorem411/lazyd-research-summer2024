@@ -41,6 +41,14 @@ using namespace llvm;
 
 extern cl::opt<bool> DebugABICalls;
 
+STATISTIC(LoopsConvertedToCilkABI,
+          "Number of Tapir loops converted to use the Cilk ABI for loops");
+
+// Set the size of maximum grain size
+static cl::opt<int> MaxGrainSize(
+   "cilk-set-maxgrainsize", cl::init(2048), cl::NotHidden,
+    cl::desc("Maximum grain size for parallel for"));
+
 static cl::opt<bool> fastCilk(
     "fast-cilk", cl::init(false), cl::Hidden,
     cl::desc("Attempt faster Cilk call implementation"));
@@ -1514,7 +1522,7 @@ Value *CilkABI::lowerGrainsizeCall(CallInst *GrainsizeCall) {
                                          ConstantInt::get(Limit->getType(), 1)),
                        WorkersX8);
   // Compute min
-  Value *LargeLoopVal = ConstantInt::get(Limit->getType(), 2048);
+  Value *LargeLoopVal = ConstantInt::get(Limit->getType(), MaxGrainSize);
   Value *Cmp = Builder.CreateICmpULT(LargeLoopVal, SmallLoopVal);
   Value *Grainsize = Builder.CreateSelect(Cmp, LargeLoopVal, SmallLoopVal);
 

@@ -76,9 +76,8 @@ protected:
   /// to emit them into.
   MCSection *CompactUnwindSection = nullptr;
 
-
   /// Section used to create the hash table in linker / runtime
-  /// Contains label representing return addr of forkable function and its associated unwind path address
+  /// Contains label representing return addr of forkable function with unwind addr
   MCSection *PreHashSection;
   /// Contains label representing ip range its associated unwind path address
   MCSection *PreBSTSection;
