@@ -180,13 +180,13 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
     nextIteration = B.CreateAdd(nextIteration, argsStart);
 
   B.CreateStore(nextIteration, argsCtx, true);
-  B.CreateStore(ONE, guiOn, true);
+  //B.CreateStore(ONE, guiOn, true);
 
   B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
-  B.CreateStore(ZERO, guiOn, true);
+  //B.CreateStore(ZERO, guiOn, true);
 
   B.SetInsertPoint(Latch->getFirstNonPHIOrDbgOrLifetime());
-  B.CreateStore(ZERO, guiOn, true);
+  //B.CreateStore(ZERO, guiOn, true);
 
   GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(C), 32), *M, true);
   Value* L_ONE = B.getInt64(1);
