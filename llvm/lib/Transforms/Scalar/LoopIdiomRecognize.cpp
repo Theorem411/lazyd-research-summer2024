@@ -146,6 +146,11 @@ static cl::opt<bool> UseLIRCodeSizeHeurs(
              "with -Os/-Oz"),
     cl::init(true), cl::Hidden);
 
+static cl::opt<bool> DisableLoopIdiom(
+				      "disable-loop-idiom",
+				      cl::desc("Disable loop idiom"),
+				      cl::init(false), cl::Hidden);
+
 namespace {
 
 class LoopIdiomRecognize {
@@ -270,7 +275,7 @@ public:
     if (DisableLIRP::All)
       return false;
 
-    if (skipLoop(L))
+    if (skipLoop(L) || DisableLoopIdiom)
       return false;
 
     AliasAnalysis *AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
