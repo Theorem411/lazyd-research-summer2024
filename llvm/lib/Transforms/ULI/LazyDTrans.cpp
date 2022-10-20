@@ -244,7 +244,7 @@ namespace {
                            Function::InternalLinkage,
                            bool DoesNotThrow = true) {
     LLVMContext &Ctx = M.getContext();
-    
+
     Fn = M.getFunction(FnName);
     if (Fn) {
       return true;
@@ -413,7 +413,7 @@ namespace {
 
   Function* Get__unwindrts_unwind_queryunwindaddress(Module& M) {
     using unwind_queryunwindaddress_ty = unsigned (long);
-    
+
     //AttributeList AL;
     //AL = AL.addAttribute(C, AttributeList::FunctionIndex,
     //                   Attribute::NoUnwindPath);
@@ -1376,7 +1376,7 @@ namespace llvm {
 
     // We don't modify the program, so we preserve all analyses
     void getAnalysisUsage(AnalysisUsage &AU) const override {
-      //Impl.runAnalysisUsage(AU);           
+      //Impl.runAnalysisUsage(AU);
       AU.addRequired<LoopInfoWrapperPass>();
       AU.addRequired<DominatorTreeWrapperPass>();
       AU.addRequired<DominanceFrontierWrapperPass>();
@@ -2157,7 +2157,7 @@ void LazyDTransPass::mergeSlowPathToFastPath(Function& F, SmallVector<SyncInst*,
 	      PHINode* phiNode = elem.first;
 	      phiNode->addIncoming(elem.second.first, elem.second.second);
 	    }
-	    
+
 	  }
 	}
       }
@@ -2326,7 +2326,7 @@ void LazyDTransPass::updateSlowVariables_2(Function& F,
 	      phiNode->addIncoming(elem.second.first, elem.second.second);
 	    }
 
-	    
+
 	  }
 	}
       }
@@ -4244,7 +4244,7 @@ bool LazyDTransPass::runInitialization(Module &M) {
   fcn->addFnAttr(Attribute::NoUnwindPath);
   fcn = UNWINDRTS_FUNC(unwind_queryunwindaddress, M);
   fcn->addFnAttr(Attribute::NoUnwindPath);
-  
+
 #ifdef OPTIMIZE_UNWIND
   fcn->addFnAttr(Attribute::NoInline);
 #endif
@@ -4767,6 +4767,12 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   BasicBlock * unwindPathEntry = createUnwindHandler(F, locAlloc, ownerAlloc, bHaveUnwindAlloc, bbOrder, VMapSlowPath, VMapGotStolenPath);
   if(EnableMultiRetIR) {
     SmallVector<BasicBlock*, 4> bbList = {unwindPathEntry};
+
+    // Move multiretcall only after all the alloca at the prolog
+    while (isa<AllocaInst>(dyn_cast<Instruction>(insertPoint)->getNextNode())) {
+      insertPoint = dyn_cast<Instruction>(insertPoint)->getNextNode();
+    }
+
     auto afterBB = insertPotentialJump(dyn_cast<Instruction>(insertPoint), bbList);
 
     IRBuilder<> B(dyn_cast<Instruction>(insertPoint)->getNextNode());
@@ -4850,7 +4856,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   //-------------------------------------------------------------------------------------------------
   // Post process: Simplify CFG and verify function
   postProcessCfg(F, AM, DT, AllocaSet, GotstolenSet, ReachingAllocToGotstolenSet, LatestStoreForGotStolen);
-  
+
   // lower grainsize
   SmallVector<IntrinsicInst*, 4 > ii2delete;
   for(auto &BB : F) {
@@ -4881,7 +4887,7 @@ LazyDTransPass::run(Function &F, FunctionAnalysisManager &AM) {
   // and perform renaming on the clone fcn (need to fix SSA)
   DominanceFrontier &DF = AM.getResult<DominanceFrontierAnalysis>(F);
   LoopInfo &LI = AM.getResult<LoopAnalysis>(F);
-  
+
   bool Changed = runImpl(F, AM, DT, DF, LI);
   if (!Changed)
     return PreservedAnalyses::all();
