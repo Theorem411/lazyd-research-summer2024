@@ -5385,7 +5385,7 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
     if (isFuncletEHPersonality(Pers))
       Mask = RegInfo->getNoPreservedMask();
   }
-  
+
   // Define a new register mask from the existing mask.
   uint32_t *RegMask = nullptr;
 
@@ -5428,10 +5428,10 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
     return DAG.getNode(X86ISD::TC_RETURN, dl, NodeTys, Ops);
   }
 #endif
-  
+
   Chain = DAG.getNode(X86ISD::CALL, dl, NodeTys, Ops);
   InFlag = Chain.getValue(1);
-  
+
 #if 0
   // Create the CALLSEQ_END node.
   unsigned NumBytesForCalleeToPop;
@@ -5456,7 +5456,7 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
   }
 #endif
 
-  // TODO: How Add to the call fcn implicit-def %rsp, implicit-def %ssp with needing to add callseq_end 
+  // TODO: How Add to the call fcn implicit-def %rsp, implicit-def %ssp with needing to add callseq_end
 #if 0
   // Returns a flag for retval copy to use.
   if (!IsSibcall) {
@@ -5471,11 +5471,11 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
 
 #if 0
   return LowerCallResult(Chain, InFlag, CallConv, isVarArg, Ins, dl, DAG,
-		  InVals, RegMask);  
+		  InVals, RegMask);
 #endif
 
   // TODO: How to add implicit-def %eax without needing to create an SDNODE
-  // LowerCallResult : 
+  // LowerCallResult :
   const TargetRegisterInfo *TRI = Subtarget.getRegisterInfo();
   // Assign locations to each value returned by this call.
   SmallVector<CCValAssign, 16> RVLocs;
@@ -5522,8 +5522,8 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
       Val =
 	getv64i1Argument(VA, RVLocs[++I], Chain, DAG, dl, Subtarget, &InFlag);
     } else {
-      
-      // TODO: How to remove this, how to tell that eax is defined in call fcn? 
+
+      // TODO: How to remove this, how to tell that eax is defined in call fcn?
       Chain = DAG.getCopyFromReg(Chain, dl, VA.getLocReg(), CopyVT, InFlag)
       .getValue(1);
       Val = Chain.getValue(0);
@@ -5602,7 +5602,7 @@ X86TargetLowering::LowerMultiRetCallEpilogue(TargetLowering::CallLoweringInfo &C
   }
 #endif
   bool IsMustTail = CLI.CS && CLI.CS.isMustTailCall();
-  
+
 
 #if 0
   if (IsMustTail) {
@@ -5863,7 +5863,7 @@ X86TargetLowering::LowerMultiRetCallEpilogue(TargetLowering::CallLoweringInfo &C
     }
   }
 #endif
-  
+
   // Build a sequence of copy-to-reg nodes chained together with token chain
   // and flag operands which copy the outgoing args into registers.
   SDValue InFlag;
@@ -6027,7 +6027,7 @@ X86TargetLowering::LowerMultiRetCallEpilogue(TargetLowering::CallLoweringInfo &C
   // return.
   return LowerCallResult(Chain, InFlag, CallConv, isVarArg, Ins, dl, DAG,
                          InVals, RegMask);
-        
+
 }
 
 //===----------------------------------------------------------------------===//
@@ -6497,13 +6497,23 @@ SDValue X86TargetLowering::getReturnAddressFrameIndex(SelectionDAG &DAG) const {
   const X86RegisterInfo *RegInfo = Subtarget.getRegisterInfo();
   X86MachineFunctionInfo *FuncInfo = MF.getInfo<X86MachineFunctionInfo>();
   int ReturnAddrIndex = FuncInfo->getRAIndex();
+  // Return address is different when in user interrupt handler
+  const Function &CallerFn = MF.getFunction();
+  CallingConv::ID CallerCC = CallerFn.getCallingConv();
 
   if (ReturnAddrIndex == 0) {
     // Set up a frame object for the return address.
     unsigned SlotSize = RegInfo->getSlotSize();
-    ReturnAddrIndex = MF.getFrameInfo().CreateFixedObject(SlotSize,
-                                                          -(int64_t)SlotSize,
-                                                          false);
+
+    if(CallerCC != CallingConv::X86_UINTR) {
+      ReturnAddrIndex = MF.getFrameInfo().CreateFixedObject(SlotSize,
+							    -(int64_t)SlotSize,
+							    false);
+    } else {
+      ReturnAddrIndex = MF.getFrameInfo().CreateFixedObject(SlotSize,
+							    -(int64_t)( SlotSize - 16), // stack grow downwards, from top to bottom: interrupted rsp, rflags, interrupted rip, vector, rax?, parent'base pointer?
+							    false);
+    }
     FuncInfo->setRAIndex(ReturnAddrIndex);
   }
 
