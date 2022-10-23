@@ -2191,7 +2191,9 @@ BUILTIN(__builtin_multiret_call, "viiv*.", "j")
 BUILTIN(__builtin_retpadv, "v", "j")
 BUILTIN(__builtin_retpadi, "i", "")
 
-BUILTIN(__builtin_yield, "vv*v*.", "")
+BUILTIN(__builtin_yield, "vv*v*v*.", "")
+BUILTIN(__builtin_uli_change_returnaddress, "vv*", "")
+BUILTIN(__builtin_uli_save_returnaddress, "vv*", "")
 BUILTIN(__builtin_next, "v.", "")
 
 // Similar to the following paper; Compiler Support for Lightweight Context Switching

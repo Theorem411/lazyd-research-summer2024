@@ -15406,7 +15406,6 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
   }
 
   case X86::BI__builtin_call_inlinedhandler: {
-
     auto inspectedbb = Builder.GetInsertBlock();
     auto returnbb = createBasicBlock("return.cont");
     auto defaultbb = createBasicBlock("default.cont");
@@ -15498,7 +15497,64 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
     return Builder.CreateRetPad(llvm::IntegerType::get(getLLVMContext(), 32));
   }
   case X86::BI__builtin_yield: {
-    assert(0 && "nyi");
+    auto inspectedbb = Builder.GetInsertBlock();
+    // Returnbb: restore the original return address
+    auto returnbb = createBasicBlock("return.cont");
+    // Originalbb: execute the code after yield
+    auto originalbb = createBasicBlock("original.cont");
+    // Defaultbb: perform the actual "yield"
+    auto defaultbb = createBasicBlock("default.cont");
+    EmitBlock(returnbb);
+    EmitBlock(originalbb);
+    EmitBlock(defaultbb);
+
+
+    LLVMContext& C = inspectedbb->getParent()->getContext();
+
+    Value* NULL8 = ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
+    auto donothingFcn = CGM.getIntrinsic(Intrinsic::donothing);
+    auto saveContext = CGM.getIntrinsic(Intrinsic::x86_uli_save_context);
+    auto changeRetAddr = CGM.getIntrinsic(Intrinsic::x86_uli_change_returnaddress);
+    auto storeRetAddr = CGM.getIntrinsic(Intrinsic::x86_uli_save_returnaddress);
+
+    auto br = inspectedbb->getTerminator();
+    br->eraseFromParent();
+    Builder.SetInsertPoint(inspectedbb);
+
+    // The new return address
+    auto arg0 = EmitScalarExpr(E->getArg(0));
+    // Location to store old returnaddr
+    auto arg1 = EmitScalarExpr(E->getArg(1));
+    // UnwindCtx - for resuming the return.cont
+    auto arg2 = EmitScalarExpr(E->getArg(2));
+
+    // Store the old return address
+    Builder.CreateCall(storeRetAddr, arg1);
+    // Save context
+    Builder.CreateCall(saveContext, {arg2, NULL8});
+    auto mrc = Builder.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), defaultbb, returnbb, {});
+    Builder.SetInsertPoint(defaultbb);
+    // Store return.cont
+    Builder.CreateStore(BlockAddress::get(inspectedbb, 1), EmitPointerWithAlignment(E->getArg(3)));
+    // Change return address
+    Builder.CreateCall(changeRetAddr, arg0);
+    // Yield the code
+    Builder.CreateRetVoid();
+    // Set the builder to returnbb to generate the remaining code
+    Builder.SetInsertPoint(returnbb->getTerminator());
+
+    // Restore back to old return address
+    Address oldRAaddr = EmitPointerWithAlignment(E->getArg(1));
+    oldRAaddr = Builder.CreateBitCast(oldRAaddr, oldRAaddr.getPointer()->getType()->getPointerTo());
+    Value* oldRA = Builder.CreateLoad(oldRAaddr);
+    auto changeRetAddrCall = Builder.CreateCall(changeRetAddr, oldRA);
+
+    Builder.SetInsertPoint(returnbb->getTerminator());
+
+    Builder.SetInsertPoint(originalbb);
+    auto br2 = originalbb->getTerminator();
+    br2->eraseFromParent();
+    return mrc;
   }
   case X86::BI__builtin_next: {
     assert(0 && "nyi");
