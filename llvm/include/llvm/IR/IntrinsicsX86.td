@@ -5917,10 +5917,10 @@ let TargetPrefix = "x86" in {
   // Uli return builtin
   def int_x86_uli_retq : GCCBuiltin<"__builtin_uli_retq">,
     Intrinsic<[], [], []>;
-    
+
   def int_x86_uli_atomic : GCCBuiltin<"__builtin_uli_atomic">,
     Intrinsic<[], [llvm_i64_ty], []>;
-   
+
   // Read ULI special register
   def int_x86_uli_rdrdi : GCCBuiltin<"__builtin_uli_rdrdi">,
     Intrinsic<[llvm_i64_ty], [], []>;
@@ -5934,12 +5934,12 @@ let TargetPrefix = "x86" in {
   // Write ULI special register
   def int_x86_uli_wrrdi : GCCBuiltin<"__builtin_uli_wrrdi">,
     Intrinsic<[], [llvm_i64_ty], []>;
-    
+
   def int_x86_uli_wrflags : GCCBuiltin<"__builtin_uli_wrflags">,
     Intrinsic<[], [llvm_i64_ty], []>;
 
   def int_x86_uli_wrRA : GCCBuiltin<"__builtin_uli_wrRA">,
-    Intrinsic<[], [llvm_i64_ty], []>;    
+    Intrinsic<[], [llvm_i64_ty], []>;
 }
 
 //===----------------------------------------------------------------------===//
@@ -5974,9 +5974,9 @@ let TargetPrefix = "x86" in {
   def int_x86_setup_rsp_from_rbp : GCCBuiltin<"__builtin_setup_rsp_from_rbp">,
        Intrinsic<[], [], []>;
   def int_x86_setup_rbp_from_sp_in_rbp : GCCBuiltin<"__builtin_setup_rbp_from_sp_in_rbp">,
-       Intrinsic<[], [], []>;     
+       Intrinsic<[], [], []>;
   def int_x86_uli_get_workcontext : GCCBuiltin<"__builtin_uli_get_workcontext">,
-       Intrinsic<[llvm_ptrptr_ty], [], []>;     
+       Intrinsic<[llvm_ptrptr_ty], [], []>;
   def int_x86_uli_unwind_poll : GCCBuiltin<"__builtin_uli_unwind_poll">,
        Intrinsic<[], [], [IntrNoDuplicate]>;
   def int_x86_uli_unwind_beat : GCCBuiltin<"__builtin_uli_unwind_beat">,
@@ -5987,9 +5987,15 @@ let TargetPrefix = "x86" in {
        Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
   // TODO: Keep here for now. May delete this in the future
   def int_x86_uli_save_callee_nosp : GCCBuiltin<"__builtin_uli_save_callee_nosp">,
-       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;  
+       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
   def int_x86_uli_save_context_nosp : GCCBuiltin<"__builtin_uli_save_context_nosp">,
        Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
   def int_x86_uli_restore_context : GCCBuiltin<"__builtin_uli_restore_context">,
+       Intrinsic<[], [llvm_ptr_ty], []>;
+  def int_x86_uli_restore_callee : GCCBuiltin<"__builtin_uli_restore_callee">,
+       Intrinsic<[], [llvm_ptr_ty], []>;
+  def int_x86_uli_change_returnaddress : GCCBuiltin<"__builtin_uli_change_returnaddress">,
+       Intrinsic<[], [llvm_ptr_ty], []>;
+  def int_x86_uli_save_returnaddress : GCCBuiltin<"__builtin_uli_save_returnaddress">,
        Intrinsic<[], [llvm_ptr_ty], []>;
 }

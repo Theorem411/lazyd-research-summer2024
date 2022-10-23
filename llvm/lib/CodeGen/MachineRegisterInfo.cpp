@@ -48,6 +48,7 @@ MachineRegisterInfo::MachineRegisterInfo(MachineFunction *MF)
   VRegInfo.reserve(256);
   RegAllocHints.reserve(256);
   UsedPhysRegMask.resize(NumRegs);
+  UsedPhysOnlyInUnwindPathRegs.resize(NumRegs);
   PhysRegUseDefLists.reset(new MachineOperand*[NumRegs]());
 }
 
@@ -591,6 +592,11 @@ bool MachineRegisterInfo::isPhysRegUsed(MCRegister PhysReg,
   }
   return false;
 }
+
+bool MachineRegisterInfo::isUsedOnlyInUnwindPath(unsigned PhysReg) const {
+  return UsedPhysOnlyInUnwindPathRegs.test(PhysReg);
+}
+
 
 void MachineRegisterInfo::disableCalleeSavedRegister(MCRegister Reg) {
 

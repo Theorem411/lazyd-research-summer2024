@@ -3380,6 +3380,9 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
 
     if(EnableSaveRestoreCtx) {
+      //auto restoreCallee = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_restore_callee);
+      //B.CreateCall(restoreCallee, {B.CreateBitCast(gPTmpContext, IntegerType::getInt8Ty(C)->getPointerTo())});
+
       auto restoreContext = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_restore_context);
       //restoreContext->addFnAttr(Attribute::Forkable);
       CallInst* result = B.CreateCall(restoreContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(C)->getPointerTo())});
@@ -3409,6 +3412,10 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     B.CreateStore(B.CreateLoad(myRA), gPrevRa);
     // Change my return address to unwnd entry
     B.CreateStore(unwindEntryVal, myRA);
+
+    // Restore back the calleee
+    auto restoreCallee = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_restore_callee);
+    B.CreateCall(restoreCallee, {B.CreateBitCast(gPTmpContext, IntegerType::getInt8Ty(C)->getPointerTo())});
 
     // Restore rsp to get proper stack
     Function *SetupRSPfromRBP = Intrinsic::getDeclaration(M, Intrinsic::x86_setup_rsp_from_rbp);
@@ -4292,6 +4299,15 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     return false;
   }
 
+  bool bNotProcess = true;
+  // If function does not return (simply abort), do not process
+  for(auto &BB : F) {
+    if (isa<ReturnInst>(BB.getTerminator())) {
+      bNotProcess = false;
+    }
+  }
+  if(bNotProcess) return false;
+
   LiveVariable LV;
   ReachingDetachInst RDI;
   ReachingStoreReachableLoad RSI;
@@ -4767,19 +4783,35 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   BasicBlock * unwindPathEntry = createUnwindHandler(F, locAlloc, ownerAlloc, bHaveUnwindAlloc, bbOrder, VMapSlowPath, VMapGotStolenPath);
   if(EnableMultiRetIR) {
     SmallVector<BasicBlock*, 4> bbList = {unwindPathEntry};
-
+    Value* insertPointEnd = nullptr;
+#if 0
     // Move multiretcall only after all the alloca at the prolog
     while (isa<AllocaInst>(dyn_cast<Instruction>(insertPoint)->getNextNode())) {
       insertPoint = dyn_cast<Instruction>(insertPoint)->getNextNode();
     }
+#endif
+    // Insert multiretcall to uwnind_path_entry just before epilog. This should be better than in prolog since
+    // there might be stack spilling if placed after prolog.
+    for (auto pBB : bb2clones) {
+      Instruction * termInst = pBB->getTerminator();
+      if(isa<ReturnInst>(termInst) ){
+	auto donothingFcn = Intrinsic::getDeclaration(M, Intrinsic::donothing);
+	IRBuilder<> B(termInst);
+	// Ensure that the return instruction in a basicblock has a previous node (not a single instruction inside a basicblock)
+	B.CreateCall(dyn_cast<Function>(donothingFcn),{});
+	assert(termInst->getPrevNode() && "Return inst has not prev node");
+	insertPointEnd = termInst->getPrevNode();
+	break;
+      }
+    }
+    assert(insertPointEnd && "Function has no return inst");
+    auto afterBB = insertPotentialJump(dyn_cast<Instruction>(insertPointEnd), bbList);
 
-    auto afterBB = insertPotentialJump(dyn_cast<Instruction>(insertPoint), bbList);
-
-    IRBuilder<> B(dyn_cast<Instruction>(insertPoint)->getNextNode());
+    IRBuilder<> B(dyn_cast<Instruction>(insertPointEnd)->getNextNode());
     using AsmTypeCallee = void (void);
     FunctionType *killCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
-    Value *Asm = InlineAsm::get(killCallee, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{rdi},~{rsi},~{r8},~{r9},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
-    B.CreateCall(Asm);
+    //Value *Asm = InlineAsm::get(killCallee, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{rdi},~{rsi},~{r8},~{r9},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+    //B.CreateCall(Asm);
 
 
   } else {
@@ -4857,18 +4889,19 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   // Post process: Simplify CFG and verify function
   postProcessCfg(F, AM, DT, AllocaSet, GotstolenSet, ReachingAllocToGotstolenSet, LatestStoreForGotStolen);
 
-  // lower grainsize
   SmallVector<IntrinsicInst*, 4 > ii2delete;
   for(auto &BB : F) {
     for(auto &II : BB) {
       if (IntrinsicInst *IntrinsicI = dyn_cast<IntrinsicInst>(&II)) {
+	// lower grainsize
 	if (Intrinsic::tapir_loop_grainsize == IntrinsicI->getIntrinsicID()){
 	  ii2delete.push_back(IntrinsicI);
 	  lowerGrainsizeCall(IntrinsicI);
-	}
-      }
+	}	
+      }      
     }
   }
+  
 
   for(auto ii : ii2delete) {
     ii->eraseFromParent();

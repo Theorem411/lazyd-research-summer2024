@@ -129,6 +129,10 @@ private:
   /// This bit vector represents all the registers clobbered by function calls.
   BitVector UsedPhysRegMask;
 
+  /// UsedPhysOnlyInUnwindPathRegs
+  /// This bit vector represents all callee register used in unwind path only
+  BitVector UsedPhysOnlyInUnwindPathRegs;
+
   /// ReservedRegs - This is a bit vector of reserved registers.  The target
   /// may change its mind about which registers should be reserved.  This
   /// vector is the frozen set of reserved registers when register allocation
@@ -873,6 +877,14 @@ public:
   /// any of its aliases. If SkipRegMaskTest is false, the register is
   /// considered used when it is set in the UsedPhysRegMask.
   bool isPhysRegUsed(MCRegister PhysReg, bool SkipRegMaskTest = false) const;
+
+  /// Return true if the specified callee register is modified only in the unwind path.
+  bool isUsedOnlyInUnwindPath(unsigned PhysReg) const;
+
+  /// addOnlyUsedInUnwindPath - Mark any callee registers used only in unwind path.
+  void addOnlyUsedInUnwindPath(unsigned PhysReg) {
+    UsedPhysOnlyInUnwindPathRegs.set(PhysReg);
+  }
 
   /// addPhysRegsUsedFromRegMask - Mark any registers not in RegMask as used.
   /// This corresponds to the bit mask attached to register mask operands.

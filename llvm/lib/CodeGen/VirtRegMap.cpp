@@ -23,6 +23,7 @@
 #include "llvm/CodeGen/LiveIntervals.h"
 #include "llvm/CodeGen/LiveStacks.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/MachineDominators.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -193,6 +194,7 @@ class VirtRegRewriter : public MachineFunctionPass {
   bool ClearVirtRegs;
 
   void rewrite();
+  void getCSRUsedInUnwind();
   void addMBBLiveIns();
   bool readsUndefSubreg(const MachineOperand &MO) const;
   void addLiveInsForSubRanges(const LiveInterval &LI, MCRegister PhysReg) const;
@@ -233,6 +235,7 @@ INITIALIZE_PASS_DEPENDENCY(LiveIntervals)
 INITIALIZE_PASS_DEPENDENCY(LiveDebugVariables)
 INITIALIZE_PASS_DEPENDENCY(LiveStacks)
 INITIALIZE_PASS_DEPENDENCY(VirtRegMap)
+INITIALIZE_PASS_DEPENDENCY(MachineDominatorTree)
 INITIALIZE_PASS_END(VirtRegRewriter, "virtregrewriter",
                     "Virtual Register Rewriter", false, false)
 
@@ -287,6 +290,12 @@ bool VirtRegRewriter::runOnMachineFunction(MachineFunction &fn) {
     VRM->clearAllVirt();
     MRI->clearVirtRegs();
   }
+
+  // TODO: Temporary fix, add a function to determine if a register is used only in the MBB belonging to the unwind path
+  getCSRUsedInUnwind();
+
+  // Write out new DBG_VALUE instructions.
+  //getAnalysis<LiveDebugVariables>().emitDebugValues(VRM);
 
   return true;
 }
@@ -645,4 +654,47 @@ void VirtRegRewriter::rewrite() {
 
 FunctionPass *llvm::createVirtRegRewriter(bool ClearVirtRegs) {
   return new VirtRegRewriter(ClearVirtRegs);
+}
+
+
+void VirtRegRewriter::getCSRUsedInUnwind() {
+  // Locate the uwnind path if any
+  MachineBasicBlock* unwindPath = nullptr;
+  for (MachineFunction::iterator MBBI = MF->begin(), MBBE = MF->end();
+       MBBI != MBBE; ++MBBI) {
+    if( MBBI->isUnwindPathEntry())
+      unwindPath = &*MBBI;
+  }
+  if(!unwindPath)
+    return;
+
+  // Get the callee saved register list
+  const MCPhysReg *CSRegs = MF->getRegInfo().getCalleeSavedRegs();
+  // Early exit if there are no callee saved registers.
+  if (!CSRegs || CSRegs[0] == 0)
+    return;
+
+  // In Naked functions we aren't going to save any registers.
+  if (MF->getFunction().hasFnAttribute(Attribute::Naked))
+    return;
+
+  // Functions which call __builtin_unwind_init get all their registers saved.
+  for (unsigned i = 0; CSRegs[i]; ++i) {
+    unsigned Reg = CSRegs[i];
+
+    // Check if callee is used only in unwind path, if yes, don't save/restore it in the original code's prolog/epilog
+    bool onlyUsedInUnwindPath = true;
+    for (MCRegAliasIterator AI(Reg, TRI, true); AI.isValid(); ++AI) {
+      for (MachineOperand &MO : make_range(MRI->def_begin(*AI), MRI->def_end())) {
+	MachineInstr &MI = *MO.getParent();
+	if(!MDT->dominates(unwindPath, MI.getParent())) {
+	  onlyUsedInUnwindPath = false;
+	}
+      }
+    }
+
+    if (onlyUsedInUnwindPath)  {
+      MRI->addOnlyUsedInUnwindPath(Reg);
+    }
+  }
 }

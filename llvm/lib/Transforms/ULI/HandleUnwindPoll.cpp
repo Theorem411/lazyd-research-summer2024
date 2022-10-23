@@ -129,6 +129,9 @@ DEFAULT_GET_LIB_FUNC(POLL)
 using POLL2_ty = void (int, void*, void*, void*) ;
 DEFAULT_GET_LIB_FUNC(POLL2)
 
+using stealRequestHandler_poll_ty = void (void*, void*, void*) ;
+DEFAULT_GET_LIB_FUNC(stealRequestHandler_poll)
+
 
 using unwind_gosteal_ty = void (void );
 DEFAULT_GET_LIB_FUNC(unwind_gosteal)
@@ -320,7 +323,7 @@ namespace {
     GlobalVariable* pthresholdTime = GetGlobalVariable("thresholdTime", IntegerType::getInt64Ty(Ctx), M, true);
 
     GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
-    auto prequestCell = B.CreateConstInBoundsGEP2_64(prequestCellG, 0, 0 ); 
+    auto prequestCell = B.CreateConstInBoundsGEP2_64(prequestCellG, 0, 0 );
 
 
 
@@ -653,7 +656,7 @@ namespace {
 
     GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
     GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
-    auto prequestCell = B.CreateConstInBoundsGEP2_64(prequestCellG, 0, 0 ); 
+    auto prequestCell = B.CreateConstInBoundsGEP2_64(prequestCellG, 0, 0 );
 
     //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
 
@@ -755,7 +758,7 @@ namespace {
 
     GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
     GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
-    auto prequestCell = B.CreateConstInBoundsGEP2_64(prequestCellG, 0, 0 ); 
+    auto prequestCell = B.CreateConstInBoundsGEP2_64(prequestCellG, 0, 0 );
 
     //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
 
@@ -851,7 +854,7 @@ namespace {
 
     GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
     GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
-    auto prequestCell = B.CreateConstInBoundsGEP2_64(prequestCellG, 0, 0 ); 
+    auto prequestCell = B.CreateConstInBoundsGEP2_64(prequestCellG, 0, 0 );
 
     //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
 
@@ -864,7 +867,7 @@ namespace {
 
     // Update latest time
     B.SetInsertPoint(CheckForWork);
-    Constant* POLL2 = Get_POLL2(M);
+    Constant* stealRequestHandler_poll = Get_stealRequestHandler_poll(M);
     //auto bWorkExists = B.CreateCall(POLL, B.getInt32(0));
 
     // FIXME: can not refer to myself blockaddress(self, idx)
@@ -887,8 +890,8 @@ namespace {
     Value* myBP = B.CreateSub(myRA, EIGHT);
     myBP = B.CreateCast(Instruction::IntToPtr, myBP, IntegerType::getInt8Ty(Ctx)->getPointerTo());
 
-    auto insertPoint = B.CreateCall(dyn_cast<Function>(POLL2),
-                                    {B.getInt32(0), BlockAddress::get(CheckForWork), myBP, mySP});
+    auto insertPoint = B.CreateCall(dyn_cast<Function>(stealRequestHandler_poll),
+                                    {BlockAddress::get(CheckForWork), myBP, mySP});
 
     B.CreateBr(ReturnFromPoll);
 
@@ -993,11 +996,11 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
     auto cond = B.CreateICmpEQ(pollLlvm, B.getInt32(1));
     auto afterBB = bb->splitBasicBlock(dyn_cast<Instruction>(cond)->getNextNode());
     auto terminator = bb->getTerminator();
-    if (!UnwindPollingType.compare("unwind-ulifsim")) {      
-    } else {            
+    if (!UnwindPollingType.compare("unwind-ulifsim")) {
+    } else {
       // Update terminator for bb
       auto branch = BranchInst::Create(startUnwindStack, afterBB, cond);
-      ReplaceInstWithInst(terminator, branch);    
+      ReplaceInstWithInst(terminator, branch);
     }
 
     // TODO:If unwindPathEntry is not found, just delete the builtin
@@ -1067,6 +1070,67 @@ bool HandleUnwindPollPass::handleSaveRestoreCtx(BasicBlock &BB) {
   return changed;
 }
 
+/// Handle both changereturnaddress and savereturnaddress
+bool HandleUnwindPollPass::handleChangeRetAddr(BasicBlock &BB)  {
+  // Search for the unwind path entry, if not found, return
+  Module* M = BB.getModule();
+  Function* F = BB.getParent();
+  LLVMContext& C = BB.getContext();
+  IRBuilder<> B(C);
+
+  SmallVector<Instruction*, 4> inst2delete;
+  bool modified = false;
+  // Search for the intrinsic related to unwind polling
+  for (auto it = BB.begin(); it != BB.end(); ++it) {
+    auto &instr = *it;
+    auto call = dyn_cast<CallInst>(&instr);
+    if (!call) continue;
+    auto fn = call->getCalledFunction();
+    if (!fn) continue;
+    bool isFcnNotChangeRetAddr = (fn->getIntrinsicID() != Intrinsic::x86_uli_change_returnaddress) && ( (fn->getIntrinsicID() != Intrinsic::x86_uli_save_returnaddress));
+    if (isFcnNotChangeRetAddr) continue;
+
+    B.SetInsertPoint(&instr);
+    modified=true;
+    // Collect the intrinsic
+    if(fn->getIntrinsicID() == Intrinsic::x86_uli_change_returnaddress) {
+      inst2delete.push_back(call);
+    } else if(fn->getIntrinsicID() == Intrinsic::x86_uli_save_returnaddress) {
+      inst2delete.push_back(call);
+    }
+
+  }
+
+  // Modify and delete call to intrisic
+  for(auto ii: inst2delete) {
+    auto call = dyn_cast<CallInst>(ii);
+    auto fn = call->getCalledFunction();
+    B.SetInsertPoint(ii);
+
+    if(fn->getIntrinsicID() == Intrinsic::x86_uli_change_returnaddress) {
+      auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress);
+      Value* myRA = B.CreateCall(addrOfRA);
+      myRA = B.CreateBitCast(myRA, IntegerType::getInt64Ty(C)->getPointerTo());
+      Value* newAddr = B.CreateCast(Instruction::PtrToInt, call->getArgOperand(0), IntegerType::getInt64Ty(C));
+      // Store new returnaddress to location of returnaddress
+      B.CreateStore(newAddr, myRA);
+    } else if(fn->getIntrinsicID() == Intrinsic::x86_uli_save_returnaddress) {
+      auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress);
+      Value* myRA = B.CreateCall(addrOfRA);
+      myRA = B.CreateBitCast(myRA, IntegerType::getInt64Ty(C)->getPointerTo());
+      Value* raValue = B.CreateLoad(myRA);
+      Value* storageLoc = B.CreateBitCast(call->getArgOperand(0), IntegerType::getInt64Ty(C)->getPointerTo());
+      // Store return address to stack slot
+      B.CreateStore(raValue, storageLoc);
+    }
+
+    ii->eraseFromParent();
+  }
+
+  return modified;
+}
+
+
 bool HandleUnwindPollPass::runInitialization(Module &M) {
   auto &C = M.getContext();
   BoolTy = Type::getInt1Ty(C);
@@ -1109,6 +1173,8 @@ bool HandleUnwindPollPass::runImpl(Function &F) {
 
     // TODO: handleSaveRestoreCtx is not used, could be removed
     changed |= handleSaveRestoreCtx(BB);
+
+    changed |= handleChangeRetAddr(BB);
   }
   return changed;
 }
