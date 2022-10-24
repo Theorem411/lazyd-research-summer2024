@@ -5471,7 +5471,7 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
 
 #if 0
   return LowerCallResult(Chain, InFlag, CallConv, isVarArg, Ins, dl, DAG,
-		  InVals, RegMask);
+                  InVals, RegMask);
 #endif
 
   // TODO: How to add implicit-def %eax without needing to create an SDNODE
@@ -5520,7 +5520,7 @@ X86TargetLowering::LowerMultiRetCallPrologue(TargetLowering::CallLoweringInfo &C
       assert(VA.getValVT() == MVT::v64i1 &&
              "Currently the only custom case is when we split v64i1 to 2 regs");
       Val =
-	getv64i1Argument(VA, RVLocs[++I], Chain, DAG, dl, Subtarget, &InFlag);
+        getv64i1Argument(VA, RVLocs[++I], Chain, DAG, dl, Subtarget, &InFlag);
     } else {
 
       // TODO: How to remove this, how to tell that eax is defined in call fcn?
@@ -6507,12 +6507,16 @@ SDValue X86TargetLowering::getReturnAddressFrameIndex(SelectionDAG &DAG) const {
 
     if(CallerCC != CallingConv::X86_UINTR) {
       ReturnAddrIndex = MF.getFrameInfo().CreateFixedObject(SlotSize,
-							    -(int64_t)SlotSize,
-							    false);
+                                                            -(int64_t)SlotSize,
+                                                            false);
     } else {
       ReturnAddrIndex = MF.getFrameInfo().CreateFixedObject(SlotSize,
-							    -(int64_t)( SlotSize - 16), // stack grow downwards, from top to bottom: interrupted rsp, rflags, interrupted rip, vector, rax?, parent'base pointer?
-							    false);
+                                                            -(int64_t)SlotSize,
+                                                            false);
+      // stack grow downwards, from top to bottom: interrupted rsp, rflags, interrupted rip, vector, rax?, parent'base pointer?
+      //                                                                                             parent's rsp points to rax?
+      MachineFrameInfo &MFI = MF.getFrameInfo();
+      MFI.setObjectOffset(ReturnAddrIndex, 8); // Why 8 though?
     }
     FuncInfo->setRAIndex(ReturnAddrIndex);
   }
@@ -27212,8 +27216,10 @@ static int getSEHRegistrationNodeSize(const Function *Fn) {
 }
 
 bool X86TargetLowering::isSaveContextOpcode (
-  const MachineInstr &MI) const { 
-  return (MI.getOpcode() == X86::ULI_SAVE_CONTEXT_NOSP || MI.getOpcode() == X86::ULI_SAVE_CONTEXT || MI.getOpcode() == X86::ULI_SAVE_CALLEE_NOSP || MI.getOpcode() == X86::ULI_SAVE_CALLEE);
+    const MachineInstr &MI) const {
+
+  return (MI.getOpcode() == X86::ULI_SAVE_CONTEXT_NOSP || MI.getOpcode() == X86::ULI_SAVE_CONTEXT
+          || MI.getOpcode() == X86::ULI_SAVE_CALLEE_NOSP || MI.getOpcode() == X86::ULI_SAVE_CALLEE);
 }
 
 
@@ -40770,12 +40776,12 @@ static SDValue canonicalizeLaneShuffleWithRepeatedOps(SDValue V,
 }
 
 static MachineBasicBlock *emitReadSp(MachineInstr &MI, MachineBasicBlock *BB,
-					const X86Subtarget &Subtarget) {
+                                        const X86Subtarget &Subtarget) {
   DebugLoc dl = MI.getDebugLoc();
   const TargetInstrInfo *TII = Subtarget.getInstrInfo();
 
   BuildMI(*BB, MI, dl, TII->get(TargetOpcode::COPY), MI.getOperand(0).getReg())
-	.addReg(X86::RSP);
+        .addReg(X86::RSP);
 
   MI.eraseFromParent();
   return BB;
