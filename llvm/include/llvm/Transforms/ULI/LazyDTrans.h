@@ -47,6 +47,7 @@
 
 #include <iostream>
 
+#define STICK_STACKXCGH_FUNC
 #define OPTIMIZE_UNWIND
 #define OPTIMIZE_UNWIND_FUNC
 
@@ -90,6 +91,9 @@ namespace llvm {
 
   struct LazyDTransPass : public PassInfoMixin<LazyDTransPass> {
   private:
+
+    // Check if a function is spawning/forking function.
+    bool bHaveFork;
 
     // Create the multiretcall from fast path to slow path
     void addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder, ValueToValueMapTy& VMapSlowPath, Value* fromSlowPathAlloc, SSAUpdater& SSAUpdateWorkContext, DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet);

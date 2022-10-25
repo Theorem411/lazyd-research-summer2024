@@ -3057,10 +3057,15 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 
     BasicBlock* stackAlreadyUnwindCheckBB = BasicBlock::Create(C, "unwind.path.already.unwind.check", &F);
 
-    Value* bHaveUnwind = B.CreateLoad(bHaveUnwindAlloc, 1);
-    Value* haveBeenUnwind = B.CreateICmpEQ(bHaveUnwind, B.getInt1(1));
-
+    Value* haveBeenUnwind = nullptr;
+    if(bHaveFork) {
+      Value* bHaveUnwind = B.CreateLoad(bHaveUnwindAlloc, 1);
+      haveBeenUnwind = B.CreateICmpEQ(bHaveUnwind, B.getInt1(1));
+    } else {
+      haveBeenUnwind = B.CreateICmpEQ(B.getInt1(0), B.getInt1(1));
+    }
     //xchg unwind_stack, rsp
+#ifndef STICK_STACKXCGH_FUNC
     Value* unwindStack = B.CreateLoad(gUnwindStack);
     Value* mySP = B.CreateCall(getSP);
     B.CreateStore(mySP, gPrevSp);
@@ -3068,6 +3073,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
     Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     B.CreateCall(Asm, {unwindStack});
+#endif
 
     // If first time unwind, resume without changing return address
     B.CreateCondBr(haveBeenUnwind, stackAlreadyUnwindCheckBB, unwindPathNewStackBB);
@@ -3198,9 +3204,25 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 
 #ifdef OPTIMIZE_UNWIND_FUNC
       // Call a function to update parallel context (ip, join counter, owner of work, location, locRef
+#ifdef STICK_STACKXCGH_FUNC
+    Value* unwindStack = B.CreateLoad(gUnwindStack);
+    Value* mySP = B.CreateCall(getSP);
+    B.CreateStore(mySP, gPrevSp);
+    using AsmTypeCallee = void (void*);
+    FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
+    Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+    B.CreateCall(Asm, {unwindStack});
+#endif
       Value* locAllocAsPointer = B.CreateBitCast(locAlloc, IntegerType::getInt8Ty(C)->getPointerTo());
       Constant* initialize_parallel_ctx = Get_initialize_parallel_ctx(*M);
       B.CreateCall(initialize_parallel_ctx, {gWorkContextPtr, BlockAddress::get(actualDetachBB, STEALENTRY_INDEX), locAllocAsPointer});
+#ifdef STICK_STACKXCGH_FUNC
+    Value* prevSP = B.CreateLoad(gPrevSp);
+    using AsmTypeCallee2 = void (long);
+    FunctionType *FAsmTypeCallee2 = TypeBuilder<AsmTypeCallee2, false>::get(C);
+    Value *Asm2 = InlineAsm::get(FAsmTypeCallee2, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+    B.CreateCall(Asm2, {prevSP});
+#endif
 
 #else
       // Store the address of the slow path entry into the temporary context
@@ -3347,10 +3369,26 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   Value* unwindAddrRes = nullptr;
   if(DisablePushPopSeed) {
     // Get the unwind path entry based on return address
+#ifdef STICK_STACKXCGH_FUNC
+    Value* unwindStack = B.CreateLoad(gUnwindStack);
+    Value* mySP = B.CreateCall(getSP);
+    B.CreateStore(mySP, gPrevSp);
+    using AsmTypeCallee = void (void*);
+    FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
+    Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+    B.CreateCall(Asm, {unwindStack});
+#endif
     Constant* queryUnwindAddr = UNWINDRTS_FUNC(unwind_queryunwindaddress, *M);
     auto loadRA = B.CreateLoad(myRA); // myRA: int64*, loadRA: int64
     unwindAddrRes = B.CreateCall(queryUnwindAddr, {loadRA});
     unwindEntryVal = B.CreateZExt(unwindAddrRes, IntegerType::getInt64Ty(C));
+#ifdef STICK_STACKXCGH_FUNC
+    Value* prevSP = B.CreateLoad(gPrevSp);
+    using AsmTypeCallee2 = void (long);
+    FunctionType *FAsmTypeCallee2 = TypeBuilder<AsmTypeCallee2, false>::get(C);
+    Value *Asm2 = InlineAsm::get(FAsmTypeCallee2, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+    B.CreateCall(Asm2, {prevSP});
+#endif
 
   } else {
     // Get the unwind entry
@@ -3401,12 +3439,14 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   {
     B.SetInsertPoint(returnToUnwindBB);
 
-    // TODO: Switch stack
+    // Switch stack
+#ifndef STICK_STACKXCGH_FUNC
     Value* prevSP = B.CreateLoad(gPrevSp);
     using AsmTypeCallee = void (long);
     FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
     Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     B.CreateCall(Asm, {prevSP});
+#endif
 
     // Change the gPrevRa to my return address
     B.CreateStore(B.CreateLoad(myRA), gPrevRa);
@@ -4290,9 +4330,22 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   // Why?
   // qsort will generate an error without this
   if(F.getName().contains(F.getParent()->getSourceFileName())) {
-    //errs() << "qsort will generate error here\n";
+    errs() << "Function " << F.getName() << " will not have an unwinder\n";
     F.addFnAttr(Attribute::NoUnwindPath);
   }
+
+  // Check if a function is a forking / spawning function or not
+  bHaveFork = F.getFnAttribute("poll-at-loop").getValueAsString()=="true";
+  if(!bHaveFork) {
+    for(auto &BB : F) {
+      for(auto &II : BB) {
+	if (isa<DetachInst>(&II)) {
+	  bHaveFork = true;
+	}
+      }
+    }
+  }
+
 
   // Do not process function that have the nounwindpath attribute
   if(F.hasFnAttribute(Attribute::NoUnwindPath)) {
@@ -4492,7 +4545,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   if(EnableUnwindOnce) {
     // Create memory to store haveBeenUnwind
     bHaveUnwindAlloc = B.CreateAlloca(IntegerType::getInt1Ty(M->getContext()), DL.getAllocaAddrSpace(), nullptr, "bHaveUnwind");
-    if (DisableUnwindPoll)
+    if (DisableUnwindPoll || !bHaveFork)
       insertPoint = bHaveUnwindAlloc;
     else
       insertPoint = B.CreateStore(B.getInt1(0), bHaveUnwindAlloc);
@@ -4756,7 +4809,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     B.CreateUnreachable();
     indirectDestFast->getTerminator()->getSuccessor(0)->getTerminator()->eraseFromParent();
 
-
     B.SetInsertPoint(indirectDestFast->getTerminator());
     B.CreateUnreachable();
     indirectDestFast->getTerminator()->eraseFromParent();
@@ -4897,11 +4949,11 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 	if (Intrinsic::tapir_loop_grainsize == IntrinsicI->getIntrinsicID()){
 	  ii2delete.push_back(IntrinsicI);
 	  lowerGrainsizeCall(IntrinsicI);
-	}	
-      }      
+	}
+      }
     }
   }
-  
+
 
   for(auto ii : ii2delete) {
     ii->eraseFromParent();
