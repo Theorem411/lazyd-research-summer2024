@@ -2196,6 +2196,11 @@ BUILTIN(__builtin_uli_change_returnaddress, "vv*", "")
 BUILTIN(__builtin_uli_save_returnaddress, "vv*", "")
 BUILTIN(__builtin_next, "v.", "")
 
+// Disable and enable UI using compiler inserted code 
+BUILTIN(__builtin_ui_disable_region, "v", "")
+BUILTIN(__builtin_ui_enable_region, "v", "")
+
+
 // Similar to the following paper; Compiler Support for Lightweight Context Switching
 // Return void
 // First argument: ip
@@ -2208,6 +2213,13 @@ BUILTIN(__builtin_swapstackip, "vv*v*.", "")
 // Second argument: (swapstack) void* (store the continuation, etc). Used as a call stack as well.
 // Remaining argument: argument for the target
 BUILTIN(__builtin_swapstackctx, "vv*v*.", "")
+
+// Return void
+// First argument: old stack
+// Second argument: new stack
+// Third argument: temporary variable to hold the stack 
+// 
+BUILTIN(__builtin_swapstack, "vv*v*.", "")
 
 // Jump to an inlined handler
 // Return void
