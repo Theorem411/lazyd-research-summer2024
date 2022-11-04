@@ -842,6 +842,7 @@ void PassManagerBuilder::populateModulePassManager(
   do {
     RerunAfterTapirLowering =
       !TapirHasBeenLowered && (TapirTargetID::None != TapirTarget || ForkDLowering > llvm::ForkDTargetType::None) && !PrepareForThinLTO;
+    //!TapirHasBeenLowered && (TapirTargetID::None != TapirTarget) && !PrepareForThinLTO;
 
   // Infer attributes about declarations if possible.
   MPM.add(createInferFunctionAttrsLegacyPass());
@@ -1106,7 +1107,17 @@ void PassManagerBuilder::populateModulePassManager(
     addExtensionsToPM(EP_TapirLate, MPM);
 
   if (!TapirHasBeenLowered || ForkDLowering > llvm::ForkDTargetType::None) {
-    // First handle Tapir loops. First, simplify their induction variables.
+#if 0
+    if((ForkDLowering == llvm::ForkDTargetType::LazyD || ForkDLowering == llvm::ForkDTargetType::ULID || ForkDLowering == llvm::ForkDTargetType::SIGUSRD) && !TapirHasBeenLowered){
+      // If the body of a parallel for loop is an instruction, set its granularity to some fixed number
+      // TODO: Create a function that adds pragma #pragma clang loop unroll_count(20) if body only conissts of instruction
+      // Create loop nest
+      MPM.add(createLoopUnrollPass(OptLevel));
+      // TODO: Add luca's code to create function for the loop's body
+    }
+#endif
+
+    // First handle Tapir loops. First, simplify their induction variables.    
     MPM.add(createIndVarSimplifyPass());
     // Re-rotate loops in all our loop nests. These may have fallout out of
     // rotated form due to GVN or other transformations, and loop spawning
@@ -1144,6 +1155,7 @@ void PassManagerBuilder::populateModulePassManager(
     // If loop spawn strategy is hybrid, instrument pfor
     if((ForkDLowering == llvm::ForkDTargetType::LazyD || ForkDLowering == llvm::ForkDTargetType::ULID || ForkDLowering == llvm::ForkDTargetType::SIGUSRD) && !TapirHasBeenLowered){
       MPM.add(createInstrumentPforPass());
+
     }
 
     MPM.add(createInferFunctionAttrsLegacyPass());
@@ -1157,20 +1169,20 @@ void PassManagerBuilder::populateModulePassManager(
     if(ForkDLowering == llvm::ForkDTargetType::LazyD) {
       // If optimized
       MPM.add(createInsertLazyDPollingPass());
-    } 
+    }
 #endif
 
     if ((ForkDLowering == llvm::ForkDTargetType::ULID || ForkDLowering == llvm::ForkDTargetType::SIGUSRD) && !TapirHasBeenLowered) {
-      // If using ULI: insert TLS variable to "disable/enable" interrupt  
+      // If using ULI: insert TLS variable to "disable/enable" interrupt
       MPM.add(createInsertLazyDEnDisUIPass());
     }
 
     // TODO: Separate polling from codegen
     if((ForkDLowering == llvm::ForkDTargetType::LazyD || ForkDLowering == llvm::ForkDTargetType::ULID || ForkDLowering == llvm::ForkDTargetType::SIGUSRD) && !TapirHasBeenLowered) {
-      assert(!tapirTarget && "Can only create lazyD / uliD when -ftapir=serial"); 
+      assert(!tapirTarget && "Can only create lazyD / uliD when -ftapir=serial");
       MPM.add(createLazyDTransPass());
     } else if ((ForkDLowering == llvm::ForkDTargetType::EagerD) && !TapirHasBeenLowered) {
-      assert(!tapirTarget && "Can only create eagerD when -ftapir=serial"); 
+      assert(!tapirTarget && "Can only create eagerD when -ftapir=serial");
       MPM.add(createEagerDTransPass());
     }
     
@@ -1205,6 +1217,10 @@ void PassManagerBuilder::populateModulePassManager(
 
     if (MergeFunctions)
       MPM.add(createMergeFunctionsPass());
+    // TODO: Chrisma For now, mergeFunctionPass does not work with blockaddress(function_to_clone)?
+    //if(ForkDLowering == llvm::ForkDTargetType::None) {
+    //  MPM.add(createMergeFunctionsPass());
+    //}
     MPM.add(createBarrierNoopPass());
 
     // We add a module alias analysis pass here. In part due to bugs in the

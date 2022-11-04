@@ -134,11 +134,6 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   BasicBlock *Preheader = L->getLoopPreheader();
   BasicBlock *Latch = L->getLoopLatch();
 
-  outs() << "Loop information: \n";
-  outs() << "Header:" << Header->getName() << "\n";
-  outs() << "PreHeader:" << Preheader->getName() << "\n";
-  outs() << "Latch:" << Latch->getName() << "\n";
-
   const SCEV *Limit = SE.getExitCount(L, Latch);
   outs() << "LS Loop limit: " << *Limit << "\n";
 
@@ -155,9 +150,9 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   IRBuilder<> B (Header->getFirstNonPHIOrDbgOrLifetime());
 
   unsigned loc = 0;
-
   for (Function::const_arg_iterator J = F.arg_begin(); J != F.arg_end(); ++J) {
-    if(J->getType()->isPointerTy()){
+    // If argument is sret, skip
+    if(J->getType()->isPointerTy() && !J->hasStructRetAttr()){
       break;
     }
     loc++;
@@ -180,6 +175,12 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
     nextIteration = B.CreateAdd(nextIteration, argsStart);
 
   B.CreateStore(nextIteration, argsCtx, true);
+#if 1
+  B.CreateCall(ui_enable_region);
+#endif
+
+
+  B.CreateStore(nextIteration, argsCtx, true);
   //B.CreateStore(ONE, guiOn, true);
 
   B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
@@ -192,6 +193,7 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   Value* L_ONE = B.getInt64(1);
   auto workExists = B.CreateConstInBoundsGEP2_64(prequestcell, 0, 1 );
   B.CreateStore(L_ONE, workExists);
+
 }
 
 
