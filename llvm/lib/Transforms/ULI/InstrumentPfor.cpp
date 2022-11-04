@@ -186,14 +186,13 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
   //B.CreateStore(ZERO, guiOn, true);
 
+  //B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
   B.SetInsertPoint(Latch->getFirstNonPHIOrDbgOrLifetime());
-  //B.CreateStore(ZERO, guiOn, true);
 
   GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(C), 32), *M, true);
   Value* L_ONE = B.getInt64(1);
   auto workExists = B.CreateConstInBoundsGEP2_64(prequestcell, 0, 1 );
   B.CreateStore(L_ONE, workExists);
-
 }
 
 
