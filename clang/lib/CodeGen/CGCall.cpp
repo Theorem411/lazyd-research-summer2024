@@ -1904,7 +1904,8 @@ void CodeGenModule::getDefaultFunctionAttributes(StringRef Name,
   if(getLangOpts().ForkDLowering > llvm::ForkDTargetType::None) {
     // Disable exceptions and always generate frame pointer when generating ForkD code
     FuncAttrs.addAttribute(llvm::Attribute::NoUnwind);
-    FuncAttrs.addAttribute("no-frame-pointer-elim", "true");
+    // Overhead for sequential path
+    //FuncAttrs.addAttribute("no-frame-pointer-elim", "true");
   }
 }
 

@@ -2158,6 +2158,9 @@ BUILTIN(__builtin_uli_set, "vULLi", "")
 // read the SP
 BUILTIN(__builtin_read_sp, "ULLi", "")
 
+// write to SP
+BUILTIN(__builtin_write_sp, "vULLi", "")
+
 // return the frame size
 BUILTIN(__builtin_get_frame_size, "ULLi", "")
 
@@ -2170,6 +2173,8 @@ BUILTIN(__builtin_uli_potential_jump, "vv*", "")
 BUILTIN(__builtin_setup_rbp_from_rsp, "v", "")
 BUILTIN(__builtin_setup_rbp_from_sp_in_rbp, "v", "")
 BUILTIN(__builtin_uli_unwind_poll, "v", "")
+BUILTIN(__builtin_uli_unwind_poll_pfor, "vULLiULLiULLi*", "")
+BUILTIN(__builtin_uli_unwind_poll_pfor2, "vULLiULLiULLi*b*", "")
 BUILTIN(__builtin_uli_unwind_beat, "v", "")
 BUILTIN(__builtin_uli_save_context, "vv*v*", "")
 BUILTIN(__builtin_uli_save_callee, "vv*v*", "")
