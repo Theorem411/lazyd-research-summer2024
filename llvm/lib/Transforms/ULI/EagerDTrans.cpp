@@ -1665,6 +1665,22 @@ bool EagerDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominato
 
   // Do not process function that have the nounwindpath attribute
   if(F.hasFnAttribute(Attribute::NoUnwindPath)) {
+    SmallVector<IntrinsicInst*, 4 > ii2delete;
+    for(auto &BB : F) {
+      for(auto &II : BB) {
+	if (IntrinsicInst *IntrinsicI = dyn_cast<IntrinsicInst>(&II)) {
+	  if (Intrinsic::tapir_loop_grainsize == IntrinsicI->getIntrinsicID()){
+	    ii2delete.push_back(IntrinsicI);
+	    lowerGrainsizeCall(IntrinsicI);
+	  }
+	}
+      }
+    }
+
+    for(auto ii : ii2delete) {
+      ii->eraseFromParent();
+    }
+
     return false;
   }
       

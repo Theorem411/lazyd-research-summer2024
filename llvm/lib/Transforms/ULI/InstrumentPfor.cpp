@@ -168,17 +168,32 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   Value* ONE = B.getInt8(1);
   Value* ZERO = B.getInt8(0);  
 
+ //#define UI_REGION
+#ifdef UI_REGION
+  B.CreateCall(ui_disable_region);
+#endif
+
+#define NO_UNWIND_POLLPFOR
+#ifdef NO_UNWIND_POLLPFOR
   auto nextIteration = B.CreateAdd(CanonicalIV, constStep->getValue());
 
   // If iv starts at zero, add the first argument (start variable)
   if(PNSCEV->getStart()->isZero()) 
     nextIteration = B.CreateAdd(nextIteration, argsStart);
 
+
   B.CreateStore(nextIteration, argsCtx, true);
-#if 1
-  B.CreateCall(ui_enable_region);
+
+
+#else
+  Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll_pfor);
+  B.CreateCall(pollFcn, {CanonicalIV ,constStep->getValue(), argsCtx});
+
 #endif
 
+#ifdef UI_REGION
+  B.CreateCall(ui_enable_region);
+#endif
 
   B.CreateStore(nextIteration, argsCtx, true);
   //B.CreateStore(ONE, guiOn, true);
@@ -189,10 +204,15 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   //B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
   B.SetInsertPoint(Latch->getFirstNonPHIOrDbgOrLifetime());
 
+#if 1
+  //B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
+  B.SetInsertPoint(Latch->getTerminator());
   GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(C), 32), *M, true);
   Value* L_ONE = B.getInt64(1);
   auto workExists = B.CreateConstInBoundsGEP2_64(prequestcell, 0, 1 );
   B.CreateStore(L_ONE, workExists);
+#endif
+
 }
 
 

@@ -47,6 +47,7 @@
 
 #include <iostream>
 
+#define OPTIMIZE_FP
 #define STICK_STACKXCGH_FUNC
 #define OPTIMIZE_UNWIND
 #define OPTIMIZE_UNWIND_FUNC
@@ -94,6 +95,9 @@ namespace llvm {
 
     // Check if a function is spawning/forking function.
     bool bHaveFork;
+
+    // Check if a function have dynamic alloca
+    bool bHaveDynamicAlloca;
 
     // Create the multiretcall from fast path to slow path
     void addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder, ValueToValueMapTy& VMapSlowPath, Value* fromSlowPathAlloc, SSAUpdater& SSAUpdateWorkContext, DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet);

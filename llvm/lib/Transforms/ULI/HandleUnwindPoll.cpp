@@ -56,6 +56,7 @@ using namespace llvm;
 
 
 using unwind_poll_ty = int(void);
+using unwind_poll_pfor_ty = int(long, long, long*, char*);
 using mylongwithoutjmp_callee_ty = void (void**);
 
 #define UNWINDRTS_FUNC(name, CGF) Get__unwindrts_##name(CGF)
@@ -901,6 +902,94 @@ namespace {
     return Fn;
   }
 
+  Function* Get__unwindrts_unwind_poll_pfor(Module& M) {
+    Function* Fn = nullptr;
+    if (GetOrCreateFunction<unwind_poll_pfor_ty>("unwind_poll_pfor_llvm", M, Fn))
+      return Fn;
+    LLVMContext& Ctx = M.getContext();
+    auto workcontext_ty = ArrayType::get(PointerType::getInt8PtrTy(Ctx), WorkCtxLen2);
+
+    BasicBlock* PollEntry = BasicBlock::Create(Ctx, "poll.entry", Fn);
+    BasicBlock* CheckForWork = BasicBlock::Create(Ctx, "check.for.work", Fn);
+    BasicBlock* ReturnFromPoll = BasicBlock::Create(Ctx, "return.from.poll", Fn);
+    IRBuilder<> B(PollEntry);
+
+    Value *ONE = B.getInt32(1);
+    Value *ZERO = B.getInt32(0);
+    Value* ONEBYTE = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
+
+    Constant* unwind_gosteal = Get_unwind_gosteal(M);
+
+    if(EnablePollEpoch) {
+      Constant* pollepoch = Get_pollepoch(M);
+      B.CreateCall(pollepoch);
+    }
+
+    GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
+    GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
+    auto prequestCell = B.CreateConstInBoundsGEP2_64(prequestCellG, 0, 0 );
+
+    //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
+
+    auto threadId = B.CreateAlignedLoad(pThreadId, 4);
+    auto requestCell = B.CreateAlignedLoad(prequestCell, 8);
+
+    // Check requirement
+    auto cmpVal = B.CreateICmpEQ(requestCell, B.getInt64(-1));
+    B.CreateCondBr(cmpVal, ReturnFromPoll, CheckForWork);
+
+    // Update latest time
+    B.SetInsertPoint(CheckForWork);
+    Constant* stealRequestHandler_poll = Get_stealRequestHandler_poll(M);
+    //auto bWorkExists = B.CreateCall(POLL, B.getInt32(0));
+
+    // FIXME: can not refer to myself blockaddress(self, idx)
+    //auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(POLL), WorkExists, {InitiateUnwind},
+    //             {B.getInt32(0), BlockAddress::get(CheckForWork, 0), BlockAddress::get(CheckForWork, 1)});
+
+    //
+    //call->getArgOperand();
+
+    Function::arg_iterator args = Fn->arg_begin();
+
+    auto ivValue = &*args;
+    auto ivInc = &*(args+1);
+    auto ivStorage = &*(args+2);
+    auto bHaveUnwindAlloc = &*(args+3);
+
+    //auto nextIteration = B.CreateAdd(ivValue, ivInc);
+    B.CreateStore(ivValue, ivStorage, true);
+
+    Function* getSP = Intrinsic::getDeclaration(&M, Intrinsic::x86_read_sp);
+    Value* mySP = B.CreateCall(getSP);
+    mySP = B.CreateCast(Instruction::IntToPtr, mySP, IntegerType::getInt8Ty(Ctx)->getPointerTo());
+
+
+    // Get my base pointer
+    Value* EIGHT = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
+
+    auto addrOfRA = Intrinsic::getDeclaration(&M, Intrinsic::addressofreturnaddress);
+    Value* myRA = B.CreateCall(addrOfRA);
+    //myRA = B.CreateBitCast(myRA, IntegerType::getInt8Ty(Ctx)->getPointerTo());
+    myRA = B.CreateCast(Instruction::PtrToInt, myRA, IntegerType::getInt64Ty(Ctx));
+
+    Value* myBP = B.CreateSub(myRA, EIGHT);
+    myBP = B.CreateCast(Instruction::IntToPtr, myBP, IntegerType::getInt8Ty(Ctx)->getPointerTo());
+
+    auto insertPoint = B.CreateCall(dyn_cast<Function>(stealRequestHandler_poll),
+                                    {BlockAddress::get(CheckForWork), myBP, mySP});
+
+    auto bHaveUnwind = B.CreateLoad(bHaveUnwindAlloc);
+    B.CreateRet(B.CreateZExt(bHaveUnwind, IntegerType::getInt32Ty(Ctx)));
+    //B.CreateRet(ZERO);
+    //B.CreateBr(ReturnFromPoll);
+
+    B.SetInsertPoint(ReturnFromPoll);
+    B.CreateRet(ZERO);
+
+    return Fn;
+  }
+
 }
 
 
@@ -963,7 +1052,8 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
     auto fn = call->getCalledFunction();
     if (!fn) continue;
     bool isFcnNotPoll = (fn->getIntrinsicID() != Intrinsic::x86_uli_unwind_poll)
-      && (fn->getIntrinsicID() != Intrinsic::x86_uli_unwind_beat) ;
+      && (fn->getIntrinsicID() != Intrinsic::x86_uli_unwind_beat)
+      && (fn->getIntrinsicID() != Intrinsic::x86_uli_unwind_poll_pfor2);
     if (isFcnNotPoll) continue;
 
     if(!unwindPathEntry || !UnwindPollingType.compare("nop")) {
@@ -978,6 +1068,8 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
     if((!UnwindPollingType.compare("unwind-only")) ||
        (fn->getIntrinsicID() == Intrinsic::x86_uli_unwind_beat)) {
       unwind_poll = Get__unwindrts_unwind_poll(*M);
+    } else if(fn->getIntrinsicID() == Intrinsic::x86_uli_unwind_poll_pfor2) {
+      unwind_poll = Get__unwindrts_unwind_poll_pfor(*M);
     } else if(!UnwindPollingType.compare("unwind-suspend")) {
       unwind_poll = Get__unwindrts_unwind_suspend(*M);
     } else if(!UnwindPollingType.compare("unwind-steal")) {
@@ -991,20 +1083,33 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
     }
 
 
-    auto pollLlvm = B.CreateCall(unwind_poll);
+    CallInst* pollLlvm = nullptr;
+    if(fn->getIntrinsicID() == Intrinsic::x86_uli_unwind_poll_pfor2) {
+      auto bHaveUnwindAlloc = B.CreateBitCast(call->getArgOperand(3), IntegerType::getInt8Ty(C)->getPointerTo());
+      pollLlvm = B.CreateCall(unwind_poll, {call->getArgOperand(0),call->getArgOperand(1), call->getArgOperand(2), bHaveUnwindAlloc});
+    }  else {
+      pollLlvm = B.CreateCall(unwind_poll);
+    }
     BasicBlock* bb = pollLlvm->getParent();
     auto cond = B.CreateICmpEQ(pollLlvm, B.getInt32(1));
     auto afterBB = bb->splitBasicBlock(dyn_cast<Instruction>(cond)->getNextNode());
     auto terminator = bb->getTerminator();
-    if (!UnwindPollingType.compare("unwind-ulifsim")) {
+    if (!UnwindPollingType.compare("unwind-ulifsim") || fn->getIntrinsicID() == Intrinsic::x86_uli_unwind_poll_pfor2) {
     } else {
       // Update terminator for bb
       auto branch = BranchInst::Create(startUnwindStack, afterBB, cond);
       ReplaceInstWithInst(terminator, branch);
     }
 
-    // TODO:If unwindPathEntry is not found, just delete the builtin
+    if(fn->getIntrinsicID() == Intrinsic::x86_uli_unwind_poll_pfor2){
+      BasicBlock * returnBB = BasicBlock::Create(C, "return.bb", F);
+      auto branch = BranchInst::Create(returnBB, afterBB, cond);
+      ReplaceInstWithInst(terminator, branch);
+      B.SetInsertPoint(returnBB);
+      B.CreateRetVoid();
+    }
 
+    // TODO:If unwindPathEntry is not found, just delete the builtin
     B.SetInsertPoint(startUnwindStack);
 
     // TODO: Kill callee-saved register

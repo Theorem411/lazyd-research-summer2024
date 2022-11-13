@@ -42,6 +42,11 @@ static cl::opt<int> MaxGrainSize(
 "lazy-set-maxgrainsize", cl::init(128), cl::NotHidden,
   cl::desc("Maximum grain size for parallel for"));
 
+// Set the size of maximum grain size
+static cl::opt<int> MaxInstPoll(
+"lazy-set-maxinstpoll", cl::init(0), cl::NotHidden,
+  cl::desc("Maximum number of instruction to enable poll"));
+
 
 // Polling at prologue, epilogue, and inner loop
 static cl::opt<int> EnableProperPolling(
@@ -1308,6 +1313,7 @@ namespace {
     }
 #endif
 
+//#define UI_REGION
     if (HeaderBlock) {
       if(F->getFnAttribute("poll-at-loop").getValueAsString()=="true") {
         auto splitPt = HeaderBlock->getFirstNonPHIOrDbgOrLifetime();
@@ -1316,6 +1322,9 @@ namespace {
         Instruction *term = HeaderBlock->getTerminator();
         //B.SetInsertPoint(term);
         B.SetInsertPoint(HeaderBlock->getFirstNonPHIOrDbgOrLifetime());
+
+#define NO_UNWIND_POLLPFOR
+#ifdef NO_UNWIND_POLLPFOR
 
         Value* bHaveUnwind = B.CreateLoad(bHaveUnwindAlloc, 1);
         Value* haveBeenUnwind = B.CreateICmpEQ(bHaveUnwind, B.getInt1(1));
@@ -1329,12 +1338,19 @@ namespace {
         B.SetInsertPoint(loopUnwound);
 
         B.CreateRetVoid();
+#else
+
+	// No need for this if using unwind-ulifsim-poll
+
+#endif
 
       }
 
+#ifdef NO_UNWIND_POLLPFOR
       B.SetInsertPoint(HeaderBlock->getFirstNonPHIOrDbgOrLifetime());
       Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll);
       B.CreateCall(pollFcn);
+#endif
 
       DEBUG(dbgs() << F->getName() << ": Polling at inner most loop\n");
     }
@@ -2700,8 +2716,15 @@ void LazyDTransPass::cloneBasicBlock(Function &F, SmallVector<BasicBlock*, 8>& b
     Instruction * termInst = ClonedBB->getTerminator();
     if(isa<ReturnInst>(termInst) ){
       B.SetInsertPoint(termInst);
-      Function *SetupRSPfromRBP = Intrinsic::getDeclaration(F.getParent(), Intrinsic::x86_setup_rsp_from_rbp);
-      B.CreateCall(SetupRSPfromRBP);
+      // If there is only dynamic alloca
+#ifdef OPTIMIZE_FP
+    if(bHaveFork) {
+#else
+    if(true) {
+#endif
+	Function *SetupRSPfromRBP = Intrinsic::getDeclaration(F.getParent(), Intrinsic::x86_setup_rsp_from_rbp);
+	B.CreateCall(SetupRSPfromRBP);
+      }
     }
 
     for (Instruction &II : *ClonedBB) {
@@ -2995,6 +3018,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   //====================================================================================================
   // Function Needed
   Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
+  Function* setSP = Intrinsic::getDeclaration(M, Intrinsic::x86_write_sp);
   Function* getFrameSize = Intrinsic::getDeclaration(M, Intrinsic::x86_get_frame_size);
 
   // Constant
@@ -3208,20 +3232,29 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     Value* unwindStack = B.CreateLoad(gUnwindStack);
     Value* mySP = B.CreateCall(getSP);
     B.CreateStore(mySP, gPrevSp);
+#ifdef OPTIMIZE_FP
+    auto unwindStackInt = B.CreateCast(Instruction::PtrToInt, unwindStack, IntegerType::getInt64Ty(C));
+    B.CreateCall(setSP, {unwindStackInt});
+#else
     using AsmTypeCallee = void (void*);
     FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
     Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     B.CreateCall(Asm, {unwindStack});
 #endif
-      Value* locAllocAsPointer = B.CreateBitCast(locAlloc, IntegerType::getInt8Ty(C)->getPointerTo());
-      Constant* initialize_parallel_ctx = Get_initialize_parallel_ctx(*M);
-      B.CreateCall(initialize_parallel_ctx, {gWorkContextPtr, BlockAddress::get(actualDetachBB, STEALENTRY_INDEX), locAllocAsPointer});
+#endif
+    Value* locAllocAsPointer = B.CreateBitCast(locAlloc, IntegerType::getInt8Ty(C)->getPointerTo());
+    Constant* initialize_parallel_ctx = Get_initialize_parallel_ctx(*M);
+    B.CreateCall(initialize_parallel_ctx, {gWorkContextPtr, BlockAddress::get(actualDetachBB, STEALENTRY_INDEX), locAllocAsPointer});
 #ifdef STICK_STACKXCGH_FUNC
     Value* prevSP = B.CreateLoad(gPrevSp);
+#ifdef OPTIMIZE_FP
+    B.CreateCall(setSP, {prevSP});
+#else
     using AsmTypeCallee2 = void (long);
     FunctionType *FAsmTypeCallee2 = TypeBuilder<AsmTypeCallee2, false>::get(C);
     Value *Asm2 = InlineAsm::get(FAsmTypeCallee2, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     B.CreateCall(Asm2, {prevSP});
+#endif
 #endif
 
 #else
@@ -3373,10 +3406,15 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     Value* unwindStack = B.CreateLoad(gUnwindStack);
     Value* mySP = B.CreateCall(getSP);
     B.CreateStore(mySP, gPrevSp);
+#ifdef OPTIMIZE_FP
+    auto unwindStackInt = B.CreateCast(Instruction::PtrToInt, unwindStack, IntegerType::getInt64Ty(C));
+    B.CreateCall(setSP, {unwindStackInt});
+#else
     using AsmTypeCallee = void (void*);
     FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
     Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     B.CreateCall(Asm, {unwindStack});
+#endif
 #endif
     Constant* queryUnwindAddr = UNWINDRTS_FUNC(unwind_queryunwindaddress, *M);
     auto loadRA = B.CreateLoad(myRA); // myRA: int64*, loadRA: int64
@@ -3384,10 +3422,14 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     unwindEntryVal = B.CreateZExt(unwindAddrRes, IntegerType::getInt64Ty(C));
 #ifdef STICK_STACKXCGH_FUNC
     Value* prevSP = B.CreateLoad(gPrevSp);
+#ifdef OPTIMIZE_FP
+    B.CreateCall(setSP, {prevSP});
+#else
     using AsmTypeCallee2 = void (long);
     FunctionType *FAsmTypeCallee2 = TypeBuilder<AsmTypeCallee2, false>::get(C);
     Value *Asm2 = InlineAsm::get(FAsmTypeCallee2, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     B.CreateCall(Asm2, {prevSP});
+#endif
 #endif
 
   } else {
@@ -3457,10 +3499,15 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     auto restoreCallee = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_restore_callee);
     B.CreateCall(restoreCallee, {B.CreateBitCast(gPTmpContext, IntegerType::getInt8Ty(C)->getPointerTo())});
 
-    // Restore rsp to get proper stack
-    Function *SetupRSPfromRBP = Intrinsic::getDeclaration(M, Intrinsic::x86_setup_rsp_from_rbp);
-    B.CreateCall(SetupRSPfromRBP);
-
+    // Restore rsp to get proper stack (if there is only dynamic alloca)
+#ifdef OPTIMIZE_FP
+    if(bHaveFork) {
+#else
+    if(true) {
+#endif
+      Function *SetupRSPfromRBP = Intrinsic::getDeclaration(M, Intrinsic::x86_setup_rsp_from_rbp);
+      B.CreateCall(SetupRSPfromRBP);
+    }
     // return 0; or anything empty
     if(F.getReturnType()->isVoidTy())
       B.CreateRetVoid();
@@ -4310,6 +4357,13 @@ void LazyDTransPass::runAnalysisUsage(AnalysisUsage &AU) const  {
   AU.addRequired<DominanceFrontierWrapperPass>();
 }
 
+static unsigned getInstructionCount(Function &F) {
+  unsigned NumInstrs = 0;
+  for (const BasicBlock &BB : F)
+    NumInstrs += std::distance(BB.begin(), BB.end());
+
+  return NumInstrs;
+}
 
 bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, DominatorTree &DT,  DominanceFrontier &DF, LoopInfo &LI)  {
   if(F.getName() == "main") {
@@ -4335,6 +4389,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   }
 
   // Check if a function is a forking / spawning function or not
+  bHaveDynamicAlloca = false;
   bHaveFork = F.getFnAttribute("poll-at-loop").getValueAsString()=="true";
   if(!bHaveFork) {
     for(auto &BB : F) {
@@ -4342,10 +4397,23 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 	if (isa<DetachInst>(&II)) {
 	  bHaveFork = true;
 	}
+	if (isa<AllocaInst>(&II)) {
+	  bHaveDynamicAlloca = true;
+	}
       }
     }
   }
 
+  if(bHaveFork) {
+    //outs() << "Add no-frame-pointer-elim: " << F.getName() << "\n";
+    F.addFnAttr("no-frame-pointer-elim");
+    F.addFnAttr("no-frame-pointer-elim-non-leaf");
+    F.addFnAttr("no-realign-stack");
+  }
+
+  // If function does not have a fork and instruction is less than 50
+  if(!bHaveFork && getInstructionCount(F) <= MaxInstPoll)
+    F.addFnAttr(Attribute::ULINoPolling);
 
   // Do not process function that have the nounwindpath attribute
   if(F.hasFnAttribute(Attribute::NoUnwindPath)) {
@@ -4441,12 +4509,12 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     //if(!EnableStoreLoadForkStorage) {
     for (auto pBB : bb2clones){
       if (DetachInst * DI = dyn_cast<DetachInst>(pBB->getTerminator())){
+
 	BasicBlock * detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
 	for( Instruction &II : *detachBlock ) {
 	  if( isa<CallInst>(&II) ) {
 	    dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);
 	    dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::ReturnsTwice);
-
 	  }
 	}
       }
@@ -4529,6 +4597,14 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
   // Create memory to store location of parallel task in workctx_ar
   B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+
+  for(auto& II: F.getEntryBlock()) {
+    if (!isa<AllocaInst>(&II)) {
+      B.SetInsertPoint(&II);
+      break;
+    }
+  }
+
   // Location of the work
   Value* locAlloc = B.CreateAlloca(TypeBuilder<int, false>::get(M->getContext()), DL.getAllocaAddrSpace(), nullptr, "loc");
   Value* insertPoint  = locAlloc;
@@ -4550,6 +4626,16 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     else
       insertPoint = B.CreateStore(B.getInt1(0), bHaveUnwindAlloc);
   }
+
+
+  if(bHaveFork && !(F.getFnAttribute("poll-at-loop").getValueAsString()=="true")) {
+  //if(bHaveFork) {
+    GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(C), 32), *M, true);
+    Value* L_ONE = B.getInt64(1);
+    auto workExists = B.CreateConstInBoundsGEP2_64(prequestcell, 0, 1 );
+    insertPoint = B.CreateStore(L_ONE, workExists);
+  }
+
 
 #if 0
   // Move alloca to entry
@@ -4889,7 +4975,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
   // Insert poling
   // Polling @prologue
-  if( (!DisableUnwindPoll && !F.hasFnAttribute(Attribute::ULINoPolling)) ) {
+  if( (!DisableUnwindPoll && !F.hasFnAttribute(Attribute::ULINoPolling)) && !(F.getFnAttribute("poll-at-loop").getValueAsString()=="true") ) {
     Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll);
     //pollFcn->addFnAttr(Attribute::Forkable);
     auto res = B.CreateCall(pollFcn);
@@ -4949,6 +5035,12 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 	if (Intrinsic::tapir_loop_grainsize == IntrinsicI->getIntrinsicID()){
 	  ii2delete.push_back(IntrinsicI);
 	  lowerGrainsizeCall(IntrinsicI);
+	} else if(Intrinsic::x86_uli_unwind_poll_pfor == IntrinsicI->getIntrinsicID()) {
+	  ii2delete.push_back(IntrinsicI);
+	  Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll_pfor2);
+	  IRBuilder<> B(IntrinsicI);
+	  CallInst* call = dyn_cast<CallInst>(&II);
+	  B.CreateCall(pollFcn, {call->getArgOperand(0),call->getArgOperand(1), call->getArgOperand(2), bHaveUnwindAlloc});
 	}
       }
     }
