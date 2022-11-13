@@ -26420,6 +26420,7 @@ static SDValue scalarizeVectorStore(StoreSDNode *Store, MVT StoreVT,
 
 #if 0
   case Intrinsic::x86_read_sp:
+  case Intrinsic::x86_write_sp:
     return  SDValue();    // Don't custom lower most intrinsics.
   case Intrinsic::x86_avx2_permd:
   case Intrinsic::x86_avx2_permps:
@@ -40787,6 +40788,18 @@ static MachineBasicBlock *emitReadSp(MachineInstr &MI, MachineBasicBlock *BB,
   return BB;
 }
 
+static MachineBasicBlock *emitWriteSp(MachineInstr &MI, MachineBasicBlock *BB,
+                                        const X86Subtarget &Subtarget) {
+  DebugLoc dl = MI.getDebugLoc();
+  const TargetInstrInfo *TII = Subtarget.getInstrInfo();
+
+  BuildMI(*BB, MI, dl, TII->get(X86::MOV64rr), X86::RSP)
+        .addReg(MI.getOperand(0).getReg());
+
+  MI.eraseFromParent();
+  return BB;
+}
+
 static MachineBasicBlock *emitMonitor(MachineInstr &MI, MachineBasicBlock *BB,
                                       const X86Subtarget &Subtarget,
                                       unsigned Opc) {
@@ -43945,6 +43958,8 @@ static SDValue createPSADBW(SelectionDAG &DAG, const SDValue &Zext0,
     return BB;
   case X86::READSP64:
     return emitReadSp(MI, BB, Subtarget);
+  case X86::WRITESP64:
+    return emitWriteSp(MI, BB, Subtarget);
   // Thread synchronization.
   case X86::MONITOR:
     return emitMonitor(MI, BB, Subtarget, X86::MONITORrrr);
