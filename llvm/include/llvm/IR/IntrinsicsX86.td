@@ -5965,6 +5965,10 @@ let TargetPrefix = "x86" in {
        //Intrinsic<[llvm_i64_ty], [], [IntrNoMem]>;
        Intrinsic<[llvm_i64_ty], [], [IntrHasSideEffects]>;
 
+  def int_x86_write_sp : GCCBuiltin<"__builtin_write_sp">,
+       Intrinsic<[], [llvm_i64_ty], [IntrHasSideEffects]>;
+
+
   def int_x86_get_frame_size : GCCBuiltin<"__builtin_get_frame_size">,
        Intrinsic<[llvm_i64_ty], [], [IntrNoMem]>;
   def int_x86_uli_potential_jump : GCCBuiltin<"__builtin_uli_potential_jump">,
@@ -5979,6 +5983,10 @@ let TargetPrefix = "x86" in {
        Intrinsic<[llvm_ptrptr_ty], [], []>;
   def int_x86_uli_unwind_poll : GCCBuiltin<"__builtin_uli_unwind_poll">,
        Intrinsic<[], [], [IntrNoDuplicate]>;
+  def int_x86_uli_unwind_poll_pfor : GCCBuiltin<"__builtin_uli_unwind_poll_pfor">,
+       Intrinsic<[], [llvm_i64_ty, llvm_i64_ty, llvm_i64ptr_ty], [IntrNoDuplicate]>;
+  def int_x86_uli_unwind_poll_pfor2 : GCCBuiltin<"__builtin_uli_unwind_poll_pfor2">,
+       Intrinsic<[], [llvm_i64_ty, llvm_i64_ty, llvm_i64ptr_ty, llvm_i1ptr_ty], [IntrNoDuplicate]>;
   def int_x86_uli_unwind_beat : GCCBuiltin<"__builtin_uli_unwind_beat">,
        Intrinsic<[], [], []>;
   def int_x86_uli_save_context : GCCBuiltin<"__builtin_uli_save_context">,

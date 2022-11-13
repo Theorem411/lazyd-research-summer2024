@@ -166,6 +166,10 @@ in {
    def READSP64 : PseudoI<(outs GR64:$dst), (ins),
                       [(set GR64:$dst, (int_x86_read_sp))]>,
                     Requires<[In64BitMode]>;
+   def WRITESP64 : PseudoI<(outs), (ins GR64:$src),
+                      [(int_x86_write_sp GR64:$src)]>,
+                    Requires<[In64BitMode]>;
+
 }
 
 let isPseudo = 1
@@ -203,8 +207,8 @@ in {
  }
 
 
- let Defs = [R10], Uses = [R10], hasSideEffects = 1, mayStore =  1, SchedRW = [WriteFence], isBarrier = 1, isTerminator = 1 in
-
+ //let Defs = [R10], Uses = [R10], hasSideEffects = 1, mayStore =  1, SchedRW = [WriteFence], isBarrier = 1, isTerminator = 1 in
+ let Defs = [R10], Uses = [R10], hasSideEffects = 1, mayStore =  1, SchedRW = [WriteSystem], isBarrier = 1 in
  {
      def ULI_RESTORE_CONTEXT : PseudoI<(outs), (ins),
       [(int_x86_uli_restore_context R10)]>;

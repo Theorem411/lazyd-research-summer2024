@@ -98,6 +98,27 @@ X86FrameLowering::needsFrameIndexResolution(const MachineFunction &MF) const {
 /// or if frame pointer elimination is disabled.
 bool X86FrameLowering::hasFP(const MachineFunction &MF) const {
   const MachineFrameInfo &MFI = MF.getFrameInfo();
+
+#if 0
+  outs() << "Name: " << MF.getFunction().getName() << "\n";
+  if(MF.getTarget().Options.DisableFramePointerElim(MF))
+    outs() << "MF.getTarget().Options.DisableFramePointerElim(MF)\n";
+  if(TRI->needsStackRealignment(MF))
+    outs() << "TRI->needsStackRealignment(MF)\n";
+  if(MFI.hasVarSizedObjects())
+    outs() << "MFI.hasVarSizedObjects()\n";
+  if(MFI.isFrameAddressTaken())
+    outs() << "MFI.isFrameAddressTaken()\n";
+  if(MFI.hasOpaqueSPAdjustment())
+    outs() << "MFI.hasOpaqueSPAdjustment()\n";
+  if(MF.getInfo<X86MachineFunctionInfo>()->getForceFramePointer())
+    outs() << "MF.getInfo<X86MachineFunctionInfo>()->getForceFramePointer()\n";
+  if(MF.callsUnwindInit())
+    outs() << "MF.callsUnwindInit()\n";
+  if(MFI.hasCopyImplyingStackAdjustment())
+    outs() << "MFI.hasCopyImplyingStackAdjustment()\n";
+#endif
+
   return (MF.getTarget().Options.DisableFramePointerElim(MF) ||
           TRI->hasStackRealignment(MF) || MFI.hasVarSizedObjects() ||
           MFI.isFrameAddressTaken() || MFI.hasOpaqueSPAdjustment() ||
@@ -2918,6 +2939,8 @@ bool X86FrameLowering::assignCalleeSavedSpillSlots(
   return true;
 }
 
+// TODO: Chrisma, if callee is only used in unwinder code, don't save it
+
 bool X86FrameLowering::spillCalleeSavedRegisters(
     MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
     ArrayRef<CalleeSavedInfo> CSI, const TargetRegisterInfo *TRI) const {
@@ -3072,11 +3095,13 @@ bool X86FrameLowering::restoreCalleeSavedRegisters(
   return true;
 }
 
+// TODO: Chrisma should this be modified to account for the unwinder
 void X86FrameLowering::determineCalleeSaves(MachineFunction &MF,
                                             BitVector &SavedRegs,
                                             RegScavenger *RS) const {
   TargetFrameLowering::determineCalleeSaves(MF, SavedRegs, RS);
 
+  // TODO: Chrisma, if base pointer or stack pointer is used, spill it?
   // Spill the BasePtr if it's used.
   if (TRI->hasBasePointer(MF)){
     Register BasePtr = TRI->getBaseRegister();
