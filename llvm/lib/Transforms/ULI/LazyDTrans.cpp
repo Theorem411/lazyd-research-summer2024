@@ -1313,7 +1313,7 @@ namespace {
     }
 #endif
 
-//#define UI_REGION
+#define UI_REGION
     if (HeaderBlock) {
       if(F->getFnAttribute("poll-at-loop").getValueAsString()=="true") {
         auto splitPt = HeaderBlock->getFirstNonPHIOrDbgOrLifetime();
@@ -2718,7 +2718,7 @@ void LazyDTransPass::cloneBasicBlock(Function &F, SmallVector<BasicBlock*, 8>& b
       B.SetInsertPoint(termInst);
       // If there is only dynamic alloca
 #ifdef OPTIMIZE_FP
-    if(bHaveFork) {
+    if(bHaveFork || bHaveCallFcn6Args) {
 #else
     if(true) {
 #endif
@@ -3501,7 +3501,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 
     // Restore rsp to get proper stack (if there is only dynamic alloca)
 #ifdef OPTIMIZE_FP
-    if(bHaveFork) {
+    if(bHaveFork || bHaveCallFcn6Args) {
 #else
     if(true) {
 #endif
@@ -4390,6 +4390,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
   // Check if a function is a forking / spawning function or not
   bHaveDynamicAlloca = false;
+  bHaveCallFcn6Args = false;
   bHaveFork = F.getFnAttribute("poll-at-loop").getValueAsString()=="true";
   if(!bHaveFork) {
     for(auto &BB : F) {
@@ -4400,11 +4401,18 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 	if (isa<AllocaInst>(&II)) {
 	  bHaveDynamicAlloca = true;
 	}
+	if( isa<CallInst>(&II) ) {
+	  bHaveCallFcn6Args = (dyn_cast<CallInst>(&II)->arg_end() - dyn_cast<CallInst>(&II)->arg_begin() > 6);
+	}
       }
     }
   }
 
-  if(bHaveFork) {
+#ifdef OPTIMIZE_FP
+  if(bHaveFork || bHaveCallFcn6Args) {
+#else
+  if(true) {
+#endif
     //outs() << "Add no-frame-pointer-elim: " << F.getName() << "\n";
     F.addFnAttr("no-frame-pointer-elim");
     F.addFnAttr("no-frame-pointer-elim-non-leaf");
@@ -4927,12 +4935,26 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     while (isa<AllocaInst>(dyn_cast<Instruction>(insertPoint)->getNextNode())) {
       insertPoint = dyn_cast<Instruction>(insertPoint)->getNextNode();
     }
-#endif
+    auto afterBB = insertPotentialJump(dyn_cast<Instruction>(insertPoint), bbList);
+
+    // Fixme: Hack
+    for (Function::const_arg_iterator J = F.arg_begin(); J != F.arg_end(); ++J) {
+      if(J->hasStructRetAttr()){
+	IRBuilder<> B(dyn_cast<Instruction>(insertPoint)->getNextNode());
+	using AsmTypeCallee = void (void);
+	FunctionType *killCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
+	Value *Asm = InlineAsm::get(killCallee, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{rdi},~{rsi},~{r8},~{r9},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+	B.CreateCall(Asm);
+	outs()<<"Function: " << F.getName() << " callee unoptimized\n";
+	break;
+      }
+    }
+#else    
     // Insert multiretcall to uwnind_path_entry just before epilog. This should be better than in prolog since
     // there might be stack spilling if placed after prolog.
     for (auto pBB : bb2clones) {
       Instruction * termInst = pBB->getTerminator();
-      if(isa<ReturnInst>(termInst) ){
+      if(isa<ReturnInst>(termInst)){
 	auto donothingFcn = Intrinsic::getDeclaration(M, Intrinsic::donothing);
 	IRBuilder<> B(termInst);
 	// Ensure that the return instruction in a basicblock has a previous node (not a single instruction inside a basicblock)
@@ -4945,12 +4967,19 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     assert(insertPointEnd && "Function has no return inst");
     auto afterBB = insertPotentialJump(dyn_cast<Instruction>(insertPointEnd), bbList);
 
-    IRBuilder<> B(dyn_cast<Instruction>(insertPointEnd)->getNextNode());
-    using AsmTypeCallee = void (void);
-    FunctionType *killCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
-    //Value *Asm = InlineAsm::get(killCallee, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{rdi},~{rsi},~{r8},~{r9},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
-    //B.CreateCall(Asm);
-
+    // Fixme: Hack
+    for (Function::const_arg_iterator J = F.arg_begin(); J != F.arg_end(); ++J) {
+      if(J->hasStructRetAttr()){
+	IRBuilder<> B(dyn_cast<Instruction>(insertPointEnd)->getNextNode());
+	using AsmTypeCallee = void (void);
+	FunctionType *killCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
+	Value *Asm = InlineAsm::get(killCallee, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{rdi},~{rsi},~{r8},~{r9},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+	B.CreateCall(Asm);
+	outs()<<"Function: " << F.getName() << " callee unoptimized\n";
+	break;
+      }
+    }
+#endif
 
   } else {
     // Create potential jump from entry to unwindPathEntry

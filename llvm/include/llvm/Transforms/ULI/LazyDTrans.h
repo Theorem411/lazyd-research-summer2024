@@ -99,6 +99,9 @@ namespace llvm {
     // Check if a function have dynamic alloca
     bool bHaveDynamicAlloca;
 
+    // Check if function calls a function with more than 6 arguments
+    bool bHaveCallFcn6Args;
+
     // Create the multiretcall from fast path to slow path
     void addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder, ValueToValueMapTy& VMapSlowPath, Value* fromSlowPathAlloc, SSAUpdater& SSAUpdateWorkContext, DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet);
 
@@ -146,7 +149,7 @@ namespace llvm {
 
     void replaceUses(Instruction *liveVar, Instruction *slowLiveVar);
 
-    void updateSSA(SSAUpdater& SSAUpdate, Instruction* inst2replace); 
+    void updateSSA(SSAUpdater& SSAUpdate, Instruction* inst2replace);
 
     // Find the exact clone of the fast inst in the slow path
     Instruction* findSlowInst(Instruction *fastInst, Instruction *initialSlowInst, BasicBlock *slowBB);
@@ -169,7 +172,7 @@ namespace llvm {
                                SmallVector<SyncInst*, 8>& syncInsts  );
 
 
-      
+
 
     // For instruction in the fast path that always dominate the slow path (does not need a slow path),
     // replace the use of the slow path inst version with the one from the fast path
@@ -243,9 +246,9 @@ namespace llvm {
                             DenseMap<DetachInst *, SmallPtrSet<BasicBlock*, 8>>& RDIBB,
                             SSAUpdater& SSAUpdateWorkContext);
 
-    void instrumentMainFcn(Function& F) ; 
+    void instrumentMainFcn(Function& F) ;
 
-  public:    
+  public:
     /// \return Preserved analyses of function \p F after transformation.
     PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
 

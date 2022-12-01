@@ -168,9 +168,14 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   Value* ONE = B.getInt8(1);
   Value* ZERO = B.getInt8(0);  
 
- //#define UI_REGION
+#define UI_REGION
 #ifdef UI_REGION
   B.CreateCall(ui_disable_region);
+#endif
+
+//#define ENABLE_LAZY_ENDISUI
+#ifdef ENABLE_LAZY_ENDISUI
+  B.CreateStore(ZERO, guiOn);
 #endif
 
 #define NO_UNWIND_POLLPFOR
@@ -204,9 +209,13 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   //B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
   B.SetInsertPoint(Latch->getFirstNonPHIOrDbgOrLifetime());
 
+#ifdef ENABLE_LAZY_ENDISUI
+  B.CreateStore(ONE, guiOn);
+#endif
+
 #if 1
   //B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
-  B.SetInsertPoint(Latch->getTerminator());
+  //B.SetInsertPoint(Latch->getTerminator());
   GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(C), 32), *M, true);
   Value* L_ONE = B.getInt64(1);
   auto workExists = B.CreateConstInBoundsGEP2_64(prequestcell, 0, 1 );
