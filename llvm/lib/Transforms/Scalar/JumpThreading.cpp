@@ -1477,6 +1477,7 @@ bool JumpThreadingPass::simplifyPartiallyRedundantLoad(LoadInst *LoadI) {
       // Same for CallBr, Reattach, multiretcall.
       if (isa<IndirectBrInst>(P->getTerminator()) ||
           isa<CallBrInst>(P->getTerminator()) ||
+	  // CP: Should be safe to remove this?
 	  isa<MultiRetCallInst>(P->getTerminator()) ||
           isa<ReattachInst>(P->getTerminator()))
         return false;
