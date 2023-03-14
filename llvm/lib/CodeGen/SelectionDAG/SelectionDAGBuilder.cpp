@@ -2984,6 +2984,7 @@ void SelectionDAGBuilder::visitInvoke(const InvokeInst &I) {
   else if (Fn && Fn->isIntrinsic()) {
     switch (Fn->getIntrinsicID()) {
     default:
+      I.dump();
       llvm_unreachable("Cannot invoke this intrinsic");
     case Intrinsic::donothing:
       // Ignore invokes to @llvm.donothing: jump directly to the next BB.
@@ -2991,6 +2992,8 @@ void SelectionDAGBuilder::visitInvoke(const InvokeInst &I) {
     case Intrinsic::seh_scope_begin:
     case Intrinsic::seh_try_end:
     case Intrinsic::seh_scope_end:
+      break;
+    case Intrinsic::detached_rethrow:
       break;
     case Intrinsic::experimental_patchpoint_void:
     case Intrinsic::experimental_patchpoint_i64:
@@ -3118,7 +3121,7 @@ void SelectionDAGBuilder::visitMultiRetCall(const MultiRetCallInst &I) {
 
     switch (Fn->getIntrinsicID()) {
     default:
-      llvm_unreachable("Cannot invoke this intrinsic");
+      llvm_unreachable("visitMultiRetcall: Cannot invoke this intrinsic");
     case Intrinsic::donothing:
       // Can be used for a potential jump without having to call a function
       // Ignore invokes to @llvm.donothing: jump directly to the next BB.
