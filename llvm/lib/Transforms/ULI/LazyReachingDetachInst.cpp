@@ -306,7 +306,7 @@ unsigned ReachingDetachInst::createWorkList(BasicBlock * entry) {
       detachList.push_back(dyn_cast<DetachInst>(bb->getTerminator()));
     }
 
-    // Check if it contains a detach inst
+    // Check if it contains a sync inst
     if(isa<SyncInst>(bb->getTerminator())) {
       syncList.push_back(dyn_cast<SyncInst>(bb->getTerminator()));
     }
