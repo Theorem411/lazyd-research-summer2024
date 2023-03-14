@@ -56,6 +56,7 @@ using namespace llvm;
 
 
 using unwind_poll_ty = int(void);
+using unwind_poll_jmpimm_ty = int(void*);
 using unwind_poll_pfor_ty = int(long, long, long*, char*);
 using mylongwithoutjmp_callee_ty = void (void**);
 
@@ -832,7 +833,7 @@ namespace {
   // This simply poll a function
   Function* Get__unwindrts_unwind_ulifsim2(Module& M) {
     Function* Fn = nullptr;
-    if (GetOrCreateFunction<unwind_poll_ty>("unwind_ulifsim_llvm", M, Fn))
+    if (GetOrCreateFunction<unwind_poll_jmpimm_ty>("unwind_ulifsim_llvm", M, Fn))
       return Fn;
     LLVMContext& Ctx = M.getContext();
     auto workcontext_ty = ArrayType::get(PointerType::getInt8PtrTy(Ctx), WorkCtxLen2);
@@ -875,6 +876,10 @@ namespace {
     //auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(POLL), WorkExists, {InitiateUnwind},
     //             {B.getInt32(0), BlockAddress::get(CheckForWork, 0), BlockAddress::get(CheckForWork, 1)});
 
+    Function::arg_iterator args = Fn->arg_begin();
+    auto unwindPathEntry = &*args;
+
+
     Function* getSP = Intrinsic::getDeclaration(&M, Intrinsic::x86_read_sp);
     Value* mySP = B.CreateCall(getSP);
     mySP = B.CreateCast(Instruction::IntToPtr, mySP, IntegerType::getInt8Ty(Ctx)->getPointerTo());
@@ -892,8 +897,8 @@ namespace {
     myBP = B.CreateCast(Instruction::IntToPtr, myBP, IntegerType::getInt8Ty(Ctx)->getPointerTo());
 
     auto insertPoint = B.CreateCall(dyn_cast<Function>(stealRequestHandler_poll),
-                                    {BlockAddress::get(CheckForWork), myBP, mySP});
-
+                                    //{BlockAddress::get(CheckForWork), myBP, mySP});
+                                    {unwindPathEntry, myBP, mySP});
     B.CreateBr(ReturnFromPoll);
 
     B.SetInsertPoint(ReturnFromPoll);
@@ -1043,6 +1048,16 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
 
   SmallVector<Instruction*, 4> inst2delete;
 
+  if(!unwindPathEntry || !UnwindPollingType.compare("nop")) {
+    if(EnablePollEpoch && (&BB) == &(F->getEntryBlock())) {
+      auto instr = BB.getFirstNonPHIOrDbgOrLifetime();
+      B.SetInsertPoint(instr);
+      Constant* pollepoch = Get_pollepoch(*M);
+      auto ci = B.CreateCall(pollepoch);
+      //ci->dump();
+    }
+  }
+
   // Search for the intrinsic related to unwind polling
   for (auto it = BB.begin(); it != BB.end(); ++it) {
     auto &instr = *it;
@@ -1087,7 +1102,9 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
     if(fn->getIntrinsicID() == Intrinsic::x86_uli_unwind_poll_pfor2) {
       auto bHaveUnwindAlloc = B.CreateBitCast(call->getArgOperand(3), IntegerType::getInt8Ty(C)->getPointerTo());
       pollLlvm = B.CreateCall(unwind_poll, {call->getArgOperand(0),call->getArgOperand(1), call->getArgOperand(2), bHaveUnwindAlloc});
-    }  else {
+    } else if(!UnwindPollingType.compare("unwind-ulifsim")) {
+      pollLlvm = B.CreateCall(unwind_poll, {BlockAddress::get(unwindPathEntry)});
+    } else {
       pollLlvm = B.CreateCall(unwind_poll);
     }
     BasicBlock* bb = pollLlvm->getParent();
@@ -1273,7 +1290,6 @@ bool HandleUnwindPollPass::runImpl(Function &F) {
   for (auto &BB : F) {
     // If detach have not been lowered, don't lower the poll
     if(!bDetachExists)
-      // Find unwind path entry
       changed |= handleUnwindPoll(BB, unwindPathEntry);
 
     // TODO: handleSaveRestoreCtx is not used, could be removed
