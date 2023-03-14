@@ -1428,6 +1428,7 @@ bool Instruction::extractProfTotalWeight(uint64_t &TotalVal) const {
       (getOpcode() == Instruction::Br || getOpcode() == Instruction::Select ||
        getOpcode() == Instruction::Call || getOpcode() == Instruction::Invoke ||
        getOpcode() == Instruction::IndirectBr ||
+       getOpcode() == Instruction::MultiRetCall || 
        getOpcode() == Instruction::Switch) &&
       "Looking for branch weights on something besides branch");
 
