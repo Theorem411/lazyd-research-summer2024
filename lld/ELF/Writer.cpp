@@ -2220,6 +2220,9 @@ template <class ELFT> void Writer<ELFT>::addStartEndSymbols() {
 
   if (OutputSection *Sec = findSection(".pre_hash_table"))
     Define("__pre_hash_table_start", "__pre_hash_table_end", Sec)
+
+  if (OutputSection *Sec = findSection(".pre_prologepilog_table"))
+    Define("__pre_prologepilog_table_start", "__pre_prologepilog_table_end", Sec);
 }
 
 // If a section name is valid as a C identifier (which is rare because of
