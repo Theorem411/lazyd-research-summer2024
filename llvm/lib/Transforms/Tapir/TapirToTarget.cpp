@@ -65,7 +65,7 @@ public:
 
   bool run();
 
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
+  void getAnalysisUsage(AnalysisUsage &AU) const  {
     AU.addRequired<LoopInfoWrapperPass>();
     AU.addRequired<AssumptionCacheTracker>();
     AU.addRequired<DominatorTreeWrapperPass>();
@@ -531,7 +531,7 @@ bool TapirToTargetImpl::processFunction(
 bool TapirToTargetImpl::run() {
 
   // Store the type of backend used by Tapir
-  M.setTapirTarget(ClTapirTarget);
+  //M.setTapirTarget(ClTapirTarget);
 
   // Add functions that detach to the work list.
   SmallVector<Function *, 4> WorkList;
@@ -567,10 +567,10 @@ bool TapirToTargetImpl::run() {
   while (!WorkList.empty()) {
     // Process the next function.
     Function *F = WorkList.pop_back_val();
-    LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
-    DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(*F).getDomTree();
-    DominanceFrontier &DF = getAnalysis<DominanceFrontierWrapperPass>(*F).getDominanceFrontier();
-    AssumptionCacheTracker &ACT = getAnalysis<AssumptionCacheTracker>();
+    //LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
+    //DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(*F).getDomTree();
+    //DominanceFrontier &DF = getAnalysis<DominanceFrontierWrapperPass>(*F).getDominanceFrontier();
+    //AssumptionCacheTracker &ACT = getAnalysis<AssumptionCacheTracker>();
 
     SmallVector<Function *, 4> NewHelpers;
     Changed |= processFunction(*F, NewHelpers);
