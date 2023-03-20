@@ -39,7 +39,7 @@
 #include <string>
 #include <vector>
 
-#include "llvm/Transforms/Tapir/TapirTypes.h"
+#include "llvm/Transforms/Tapir/TapirTargetIDs.h"
 
 namespace llvm {
 
@@ -178,7 +178,7 @@ public:
       BasicBlock * unwindHandler; ///< Store the unwind handler
   };
    
-  TapirTargetType  TapirType;      ///< Used to indicate the backend used by Tapir
+  TapirTargetID  TapirType;      ///< Used to indicate the backend used by Tapir
   
 
 /// @}
@@ -326,7 +326,7 @@ public:
   }
   
   /// Store the backend used by Tapir (misleading name: setTapirTarget does not change the backend used by Tapir, only store the backend used by Tapir)
-  void setTapirTarget(TapirTargetType tapirTargetType){ TapirType = tapirTargetType; }
+  void setTapirTarget(TapirTargetID tapirTargetType){ TapirType = tapirTargetType; }
 
   /// Append to the module-scope inline assembly blocks.
   /// A trailing newline is added if the input doesn't have one.
