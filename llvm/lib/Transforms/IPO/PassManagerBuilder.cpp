@@ -754,9 +754,9 @@ void PassManagerBuilder::populateModulePassManager(
       MPM.add(createLowerTapirToTargetPass());
       
       // Immediately transform potential jump
-      if(  tapirTarget->isULIorCAS() ) {
-        MPM.add(createHandleInletsPass());
-      }
+      //if(  tapirTarget->isULIorCAS() ) {
+      //  MPM.add(createHandleInletsPass());
+      //}
 
       // The lowering pass may leave cruft around.  Clean it up.
       MPM.add(createCFGSimplificationPass());
@@ -1179,10 +1179,10 @@ void PassManagerBuilder::populateModulePassManager(
 
     // TODO: Separate polling from codegen
     if((ForkDLowering == llvm::ForkDTargetType::LazyD || ForkDLowering == llvm::ForkDTargetType::ULID || ForkDLowering == llvm::ForkDTargetType::SIGUSRD) && !TapirHasBeenLowered) {
-      assert(!tapirTarget && "Can only create lazyD / uliD when -ftapir=serial");
+      //assert(!tapirTarget && "Can only create lazyD / uliD when -ftapir=serial");
       MPM.add(createLazyDTransPass());
     } else if ((ForkDLowering == llvm::ForkDTargetType::EagerD) && !TapirHasBeenLowered) {
-      assert(!tapirTarget && "Can only create eagerD when -ftapir=serial");
+      //assert(!tapirTarget && "Can only create eagerD when -ftapir=serial");
       MPM.add(createEagerDTransPass());
     }
     
