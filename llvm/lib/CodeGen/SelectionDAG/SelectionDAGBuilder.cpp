@@ -2993,8 +2993,6 @@ void SelectionDAGBuilder::visitInvoke(const InvokeInst &I) {
     case Intrinsic::seh_try_end:
     case Intrinsic::seh_scope_end:
       break;
-    case Intrinsic::detached_rethrow:
-      break;
     case Intrinsic::experimental_patchpoint_void:
     case Intrinsic::experimental_patchpoint_i64:
       visitPatchpoint(I, EHPadBB);
