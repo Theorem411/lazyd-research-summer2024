@@ -39,12 +39,12 @@ namespace llvm {
     UNWINDABI();
     Value *lowerGrainsizeCall(CallInst *GrainsizeCall) override final;
 
-    void createSync(SyncInst &inst, ValueToValueMapTy &DetachCtxToStackFrame) override final;
+    void createSync(SyncInst &inst, ValueToValueMapTy &DetachCtxToStackFrame) ;
   
     /// @brief Create the gotstolen path 
     Function *createDetach(DetachInst &Detach,
 			   ValueToValueMapTy &DetachCtxToStackFrame,
-			   DominatorTree &DT, AssumptionCache &AC,  SyncInst * detachSyncPair = nullptr) override final;
+			   DominatorTree &DT, AssumptionCache &AC,  SyncInst * detachSyncPair = nullptr)  ;
 
     /// @brief Create the unwind block here, the prologue to slow path, the epilogue of slow path
     /// the restore entry
