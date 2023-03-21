@@ -4741,15 +4741,15 @@ bool CompilerInvocation::CreateFromArgsImpl(
     LangOpts.ObjCExceptions = 1;
 
 
-  LangOpts.Cilk = Args.hasArg(OPT_fcilkplus);
-  LangOpts.Detach = Args.hasArg(OPT_fdetach);
-  LangOpts.Rhino = Args.hasArg(OPT_frhino);
-  TapirTargetType TapirTarget = parseTapirTarget(Args);
-  if (TapirTarget == TapirTargetType::Last_TapirTargetType)
-    if (const Arg *A = Args.getLastArg(OPT_ftapir_EQ))
-      Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args)
-                                                << A->getValue();
-  LangOpts.TapirTarget = TapirTarget;
+  //LangOpts.Cilk = Args.hasArg(OPT_fcilkplus);
+  //LangOpts.Detach = Args.hasArg(OPT_fdetach);
+  //LangOpts.Rhino = Args.hasArg(OPT_frhino);
+  //TapirTargetID TapirTarget = parseTapirTarget(Args);
+  //if (TapirTarget == TapirTargetID::Last_TapirTargetID)
+  //  if (const Arg *A = Args.getLastArg(OPT_ftapir_EQ))
+  //    Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args)
+  //                                              << A->getValue();
+  //LangOpts.TapirTarget = TapirTarget;
 
   auto fforkd_str = Args.getLastArgValue(OPT_fforkd_EQ);
   LangOpts.ForkDLowering = llvm::StringSwitch<llvm::ForkDTargetType>(fforkd_str)
@@ -4759,8 +4759,8 @@ bool CompilerInvocation::CreateFromArgsImpl(
     .Case("eager", llvm::ForkDTargetType::EagerD)
     .Default(llvm::ForkDTargetType::None);
 
-  if (LangOpts.Cilk && (LangOpts.ObjC1 || LangOpts.ObjC2))
-    Diags.Report(diag::err_drv_cilk_objc);
+  //if (LangOpts.Cilk && (LangOpts.ObjC1 || LangOpts.ObjC2))
+  //  Diags.Report(diag::err_drv_cilk_objc);
 
   if (LangOpts.CUDA) {
     // During CUDA device-side compilation, the aux triple is the

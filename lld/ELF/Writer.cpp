@@ -2219,7 +2219,7 @@ template <class ELFT> void Writer<ELFT>::addStartEndSymbols() {
     Define("__pre_bst_table_start", "__pre_bst_table_end", Sec);
 
   if (OutputSection *Sec = findSection(".pre_hash_table"))
-    Define("__pre_hash_table_start", "__pre_hash_table_end", Sec)
+    Define("__pre_hash_table_start", "__pre_hash_table_end", Sec);
 
   if (OutputSection *Sec = findSection(".pre_prologepilog_table"))
     Define("__pre_prologepilog_table_start", "__pre_prologepilog_table_end", Sec);
