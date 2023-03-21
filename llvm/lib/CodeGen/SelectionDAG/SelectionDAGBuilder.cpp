@@ -3160,6 +3160,7 @@ void SelectionDAGBuilder::visitMultiRetCall(const MultiRetCallInst &I) {
 
   // Prevent from MachineVerifier issue
   Return->setIsMultiRetCallIndirectTarget();  
+  Return->setHasAddressTaken();
   I.getDefaultDest()->setHasAddressTaken(1);
 
   // Update successor info.
