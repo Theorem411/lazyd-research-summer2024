@@ -749,10 +749,10 @@ void PassManagerBuilder::populateModulePassManager(
     addExtensionsToPM(EP_TapirLoopEnd, MPM);
 
 
-    if (TapirTargetID::None != TapirTarget) {
-      MPM.add(createTaskCanonicalizePass());
+    if (TapirTargetID::None != TapirTarget && TapirTargetID::Serial != TapirTarget) {
+      MPM.add(createAnalyzeTapirPass());
       MPM.add(createLowerTapirToTargetPass());
-      
+
       // Immediately transform potential jump
       //if(  tapirTarget->isULIorCAS() ) {
       //  MPM.add(createHandleInletsPass());
@@ -832,8 +832,7 @@ void PassManagerBuilder::populateModulePassManager(
   bool RerunAfterTapirLowering = false;
   bool TapirHasBeenLowered = (TapirTargetID::None == TapirTarget) && (ForkDLowering == llvm::ForkDTargetType::None);
 
-
-  if (DisableTapirOpts && (TapirTargetID::None != TapirTarget)) {
+  if ((TapirTargetID::None != TapirTarget && TapirTargetID::Serial != TapirTarget) && DisableTapirOpts) { // -fdetach
     MPM.add(createTaskCanonicalizePass());
     MPM.add(createLowerTapirToTargetPass());
     TapirHasBeenLowered = true;
@@ -1160,7 +1159,9 @@ void PassManagerBuilder::populateModulePassManager(
 
     MPM.add(createInferFunctionAttrsLegacyPass());
 
-    MPM.add(createLowerTapirToTargetPass());
+    if (TapirTargetID::None != TapirTarget && TapirTargetID::Serial != TapirTarget) {
+      MPM.add(createLowerTapirToTargetPass());
+    }
     if (VerifyTapir)
       // Verify the IR produced by Tapir lowering
       MPM.add(createVerifierPass());
