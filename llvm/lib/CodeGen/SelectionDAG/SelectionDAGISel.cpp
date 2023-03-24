@@ -1675,22 +1675,6 @@ void SelectionDAGISel::SelectAllBasicBlocks(const Function &Fn) {
       if (!PrepareEHLandingPad())
         continue;
 
-  //TODO: Might remove this, keep this for reference
-#if 0
-    // Add a label at the entry of a steal request handler
-    if(Fn.getParent()->StealHandlerExists.lookup(LLVMBB)){
-      MachineBasicBlock *MBB = FuncInfo->MBB;
-      MCSymbol *Label = MF->getLabel();
-      const MCInstrDesc &II = TII->get(TargetOpcode::EH_LABEL);
-
-      BuildMI(*MBB, FuncInfo->InsertPt, SDB->getCurDebugLoc(), II)
-          .addSym(Label);
-
-      // Map steal handler basic block with a its entry label
-      MF->addStealHandler2LabelMap(LLVMBB->getName(), Label);
-    }
-#endif
-
     // Before doing SelectionDAG ISel, see if FastISel has been requested.
     if (FastIS) {
       if (LLVMBB != &Fn.getEntryBlock())

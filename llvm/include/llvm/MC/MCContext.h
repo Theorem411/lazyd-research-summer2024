@@ -77,13 +77,6 @@ namespace llvm {
                            std::vector<const MDNode *> &)>;
     enum Environment { IsMachO, IsELF, IsGOFF, IsCOFF, IsWasm, IsXCOFF };
 
-#if 0
-    //TODO: To delete
-    StringMap<MCSymbol *> StolenHandler2LabelMap; /// Map Got Stolen handler basic block's name to its entry's MC Symbol (label)
-    StringMap<MCSymbol *> StealHandler2LabelMap; /// Map Steal handler basic block's name to its entry's MC Symbol (label)
-    StringMap<MCSymbol *> ReturnAddr2LabelMap;   /// Map Call instruction's name to its return address' MC Symbol (label)
-#endif
-
     // TODO: Refactor?
     // Used to create the prehash table
     SmallVector<std::pair<MCSymbol *, MCSymbol *>, 10> preHashTableEntry;

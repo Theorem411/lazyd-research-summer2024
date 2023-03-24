@@ -711,23 +711,6 @@ MCSymbol * MachineFunction::getLabel(){
     return Label;
 }
 
-#if 0
-/// Map steal handler basic block's name to its entry label
-void MachineFunction::addStealHandler2LabelMap(StringRef name, MCSymbol * label){
-    Ctx.StealHandler2LabelMap[ name ]  = label;
-} 
-
-/// Map stolen handler basic block's name to its entry label
-void MachineFunction::addStolenHandler2LabelMap(StringRef name, MCSymbol * label){
-    Ctx.StolenHandler2LabelMap[ name ]  = label;
-} 
-
-/// Map name of call inst to forkable function to its return address label
-void MachineFunction::addReturnAddr2LabelMap  (StringRef name, MCSymbol * label){
-    Ctx.ReturnAddr2LabelMap[ name ]  = label;
-}
-#endif
-
 /// \}
 
 /// \name Exception Handling

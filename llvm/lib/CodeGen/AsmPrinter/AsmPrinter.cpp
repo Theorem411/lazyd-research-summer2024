@@ -1759,58 +1759,6 @@ bool AsmPrinter::doFinalization(Module &M) {
   // we can conditionalize accesses based on whether or not it is nullptr.
   MF = nullptr;
 
-#if 0
-  // Create the PreHash Section
-  if (!M.CallStealMap.empty()){
-    MCSection *PreHashSection = getObjFileLowering().getPreHashSection();
-    if (PreHashSection){
-      OutStreamer->SwitchSection( PreHashSection);
-      EmitAlignment(2);
-
-      Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());
-      M.getOrInsertGlobal("Pre_Hash_table", VoidPtrTy);
-      GlobalVariable * preHashTable = M.getNamedGlobal("Pre_Hash_table");
-      preHashTable->setLinkage(GlobalValue::ExternalLinkage);
-      MCSymbol *PreHashSym = getSymbol(preHashTable);
-      // Seems to allow the user code to access the Pre_Hash_Table or to used for global variable
-      EmitLinkage(preHashTable, PreHashSym);
-      OutStreamer->EmitLabel(PreHashSym);
-
-       // Populate the content of PreHash table
-
-      for(auto &KV :M.CallStealMap){
-	MCSymbol * raStartLabel = OutContext.ReturnAddr2LabelMap[(KV.first->getName() + "_start").str()];
-	MCSymbol * raEndLabel = OutContext.ReturnAddr2LabelMap[(KV.first->getName() + "_end").str()];
-	MCSymbol * stealLabel = OutContext.StealHandler2LabelMap[KV.second.stealHandler->getName()];
-	MCSymbol * stolenLabel = OutContext.StolenHandler2LabelMap[KV.second.stolenHandler->getName()];
-
-	assert(raStartLabel != NULL);
-	assert(raEndLabel != NULL);
-	assert(stealLabel  != NULL);
-	assert(stolenLabel  != NULL);
-
-	EmitLabelPlusOffset(raStartLabel, 0, 8, false);
-	EmitLabelPlusOffset(raEndLabel, 0, 8, false);
-	EmitLabelPlusOffset(stealLabel, 0, 8, false);
-	EmitLabelPlusOffset(stolenLabel, 0, 8, false);
-
-	// Only used when using the unwinding method
-	if(KV.second.unwindHandler){
-	  MCSymbol * unwindLabel = OutContext.StealHandler2LabelMap[KV.second.unwindHandler->getName()];
-	  assert(unwindLabel != NULL);
-	  EmitLabelPlusOffset(unwindLabel, 0, 8, false);
-	}
-      }
-
-      M.getOrInsertGlobal("Pre_Hash_table_end", VoidPtrTy);
-      GlobalVariable * preHashTableEnd = M.getNamedGlobal("Pre_Hash_table_end");
-      preHashTableEnd->setLinkage(GlobalValue::ExternalLinkage);
-      MCSymbol *PreHashSymEnd = getSymbol(preHashTableEnd);
-      EmitLinkage(preHashTableEnd, PreHashSymEnd);
-      OutStreamer->EmitLabel(PreHashSymEnd);
-    }
-  }
-#else
   /* Generate the Pre_Hash_table in the elf binary
     Entry:
     - Return address of function that can spawn
@@ -1821,36 +1769,16 @@ bool AsmPrinter::doFinalization(Module &M) {
     OutStreamer->SwitchSection( PreHashSection);
     EmitAlignment(2);
     Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());
-#ifdef GLOBAL_TABLE
-    M.getOrInsertGlobal("Pre_Hash_table", VoidPtrTy);
-    GlobalVariable * preHashTable = M.getNamedGlobal("Pre_Hash_table");
-    preHashTable->setLinkage(GlobalValue::ExternalLinkage);
-    MCSymbol *PreHashSym = getSymbol(preHashTable);
-    // Seems to allow the user code to access the Pre_Hash_Table or to used for global variable
-    EmitLinkage(preHashTable, PreHashSym);
-    OutStreamer->EmitLabel(PreHashSym);
-
-#else
     MCSymbol *PreHashSym = OutContext.getOrCreateSymbol(Twine("Pre_Hash_table"));
     OutStreamer->EmitLabel(PreHashSym);
-#endif
 
     for(auto labelPair: OutContext.preHashTableEntry) {
       EmitLabelPlusOffset(labelPair.first, 0, 8, false);
       EmitLabelPlusOffset(labelPair.second, 0, 8, false);
     }
-
-#ifdef GLOBAL_TABLE
-    M.getOrInsertGlobal("Pre_Hash_table_end", VoidPtrTy);
-    GlobalVariable * preHashTableEnd = M.getNamedGlobal("Pre_Hash_table_end");
-    preHashTableEnd->setLinkage(GlobalValue::ExternalLinkage);
-    MCSymbol *PreHashSymEnd = getSymbol(preHashTableEnd);
-    EmitLinkage(preHashTableEnd, PreHashSymEnd);
-    OutStreamer->EmitLabel(PreHashSymEnd);
-#else
     MCSymbol *PreHashSymEnd = OutContext.getOrCreateSymbol(Twine("Pre_Hash_table_end"));
     OutStreamer->EmitLabel(PreHashSymEnd);
-#endif
+
   }
 
   /* Generate the Pre_BST_table in the elf binary
@@ -1866,18 +1794,8 @@ bool AsmPrinter::doFinalization(Module &M) {
     EmitAlignment(2);
 
     Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());
-#ifdef GLOBAL_TABLE
-    M.getOrInsertGlobal("Pre_BST_table", VoidPtrTy);
-    GlobalVariable * preBSTTable = M.getNamedGlobal("Pre_BST_table");
-    preBSTTable->setLinkage(GlobalValue::ExternalLinkage);
-    MCSymbol *PreBSTSym = getSymbol(preBSTTable);
-    // Seems to allow the user code to access the Pre_BST_Table or to used for global variable
-    EmitLinkage(preBSTTable, PreBSTSym);
-    OutStreamer->EmitLabel(PreBSTSym);
-#else
     MCSymbol *PreBSTSym = OutContext.getOrCreateSymbol(Twine("Pre_BST_table"));
     OutStreamer->EmitLabel(PreBSTSym);
-#endif
 
     for(auto labelTuple: OutContext.preBSTTableEntry) {
       EmitLabelPlusOffset(std::get<0>(labelTuple), 0, 8, false);
@@ -1885,17 +1803,8 @@ bool AsmPrinter::doFinalization(Module &M) {
       EmitLabelPlusOffset(std::get<2>(labelTuple), 0, 8, false);
     }
 
-#ifdef GLOBAL_TABLE
-    M.getOrInsertGlobal("Pre_BST_table_end", VoidPtrTy);
-    GlobalVariable * preBSTTableEnd = M.getNamedGlobal("Pre_BST_table_end");
-    preBSTTableEnd->setLinkage(GlobalValue::ExternalLinkage);
-    MCSymbol *PreBSTSymEnd = getSymbol(preBSTTableEnd);
-    EmitLinkage(preBSTTableEnd, PreBSTSymEnd);
-    OutStreamer->EmitLabel(PreBSTSymEnd);
-#else
     MCSymbol *PreBSTSymEnd = OutContext.getOrCreateSymbol(Twine("Pre_BST_table_end"));
     OutStreamer->EmitLabel(PreBSTSymEnd);
-#endif
   }
 
   /* Generate the Pre_PrologEpilog_table in the elf binary
@@ -1910,35 +1819,16 @@ bool AsmPrinter::doFinalization(Module &M) {
     EmitAlignment(2);
 
     Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());
-#ifdef GLOBAL_TABLE
-    M.getOrInsertGlobal("Pre_PrologEpilog_table", VoidPtrTy);
-    GlobalVariable * prePrologEpilogTable = M.getNamedGlobal("Pre_PrologEpilog_table");
-    prePrologEpilogTable->setLinkage(GlobalValue::ExternalLinkage);
-    MCSymbol *PrePrologEpilogSym = getSymbol(prePrologEpilogTable);
-    // Seems to allow the user code to access the Pre_PrologEpilog_Table or to used for global variable
-    EmitLinkage(prePrologEpilogTable, PrePrologEpilogSym);
-    OutStreamer->EmitLabel(PrePrologEpilogSym);
-#else
     MCSymbol *PrePrologEpilogSym = OutContext.getOrCreateSymbol(Twine("Pre_PrologEpilog_table"));
     OutStreamer->EmitLabel(PrePrologEpilogSym);
-#endif
+
     for(auto labelTuple: OutContext.prePrologEpilogEntry) {
       EmitLabelPlusOffset(std::get<0>(labelTuple), 0, 8, false);
       EmitLabelPlusOffset(std::get<1>(labelTuple), 0, 8, false);
     }
-#ifdef GLOBAL_TABLE
-    M.getOrInsertGlobal("Pre_PrologEpilog_table_end", VoidPtrTy);
-    GlobalVariable * prePrologEpilogTableEnd = M.getNamedGlobal("Pre_PrologEpilog_table_end");
-    prePrologEpilogTableEnd->setLinkage(GlobalValue::ExternalLinkage);
-    MCSymbol *PrePrologEpilogSymEnd = getSymbol(prePrologEpilogTableEnd);
-    EmitLinkage(prePrologEpilogTableEnd, PrePrologEpilogSymEnd);
-    OutStreamer->EmitLabel(PrePrologEpilogSymEnd);
-#else
     MCSymbol *PrePrologEpilogSymEnd = OutContext.getOrCreateSymbol(Twine("Pre_PrologEpilog_table_end"));
     OutStreamer->EmitLabel(PrePrologEpilogSymEnd);
-#endif
   }
-#endif
 
   // Gather all GOT equivalent globals in the module. We really need two
   // passes over the globals: one to compute and another to avoid its emission
