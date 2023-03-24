@@ -17,7 +17,6 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Support/Timer.h"
-#include "llvm/Transforms/Tapir/ULIABI.h"
 #include "llvm/Transforms/Tapir/CilkABI.h"
 #include "llvm/Transforms/Tapir/CudaABI.h"
 #include "llvm/Transforms/Tapir/OpenCilkABI.h"
