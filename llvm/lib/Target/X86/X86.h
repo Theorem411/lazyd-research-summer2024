@@ -126,8 +126,8 @@ FunctionPass *createX86DomainReassignmentPass();
 /// encoding when possible in order to reduce code size.
 FunctionPass *createX86EvexToVexInsts();
 
-FunctionPass *createX86ClearReturn();
-void initializeX86ClearReturnPass(PassRegistry &);
+FunctionPass *createX86CreateUICriticalSection();
+void initializeX86CreateUICriticalSectionPass(PassRegistry &);
 
 FunctionPass *createX86SaveRestoreContext();
 void initializeX86SaveRestoreContextPass(PassRegistry &);

@@ -79,7 +79,9 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeX86Target() {
   initializeX86LowerTileCopyPass(PR);
   initializeX86ExpandPseudoPass(PR);
   initializeX86ExecutionDomainFixPass(PR);
-  initializeX86ClearReturnPass(PR);
+  //TODO: CNP is this needed?
+  //initializeX86ExecutionDepsFixPass(PR);
+  initializeX86CreateUICriticalSectionPass(PR);
   initializeX86SaveRestoreContextPass(PR);
   initializeX86CreateUnwindTablePass(PR);
   initializeX86DomainReassignmentPass(PR);
@@ -530,7 +532,7 @@ void X86PassConfig::addPostRegAlloc() {
 }
 
 void X86PassConfig::addPreSched2() { 
-    addPass(createX86ClearReturn()); 
+    addPass(createX86CreateUICriticalSection()); 
     addPass(createX86CreateUnwindTable());
     addPass(createX86ExpandPseudoPass());
     addPass(createX86SaveRestoreContext());

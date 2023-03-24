@@ -83,7 +83,8 @@ set(sources
   X86VZeroUpper.cpp
   X86WinEHState.cpp
   X86InsertWait.cpp
-  X86ClearReturn.cpp
+  X86CallingConv.cpp
+  X86CreateUICriticalSection.cpp
   X86SaveRestoreContext.cpp
   X86CreateUnwindTable.cpp
   )
