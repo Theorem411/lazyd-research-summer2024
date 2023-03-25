@@ -15,10 +15,7 @@
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/TapirTaskInfo.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/Analysis/LoopPass.h"
-#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Dominators.h"
-
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Verifier.h"
@@ -26,13 +23,9 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Transforms/Utils/Cloning.h"
-
-#include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/Transforms/Scalar/SimplifyCFG.h"
 #include "llvm/Transforms/Tapir.h"
 #include "llvm/Transforms/Tapir/LoweringUtils.h"
 #include "llvm/Transforms/Utils/TapirUtils.h"
-
 
 #define DEBUG_TYPE "tapir2target"
 
@@ -65,14 +58,6 @@ public:
 
   bool run();
 
-  void getAnalysisUsage(AnalysisUsage &AU) const  {
-    AU.addRequired<LoopInfoWrapperPass>();
-    AU.addRequired<AssumptionCacheTracker>();
-    AU.addRequired<DominatorTreeWrapperPass>();
-    AU.addRequired<DominanceFrontierWrapperPass>();
-    AU.addRequired<TargetTransformInfoWrapperPass>();
-  }
-
 private:
   bool unifyReturns(Function &F);
   bool processFunction(Function &F, SmallVectorImpl<Function *> &NewHelpers);
@@ -90,21 +75,10 @@ private:
                            DominatorTree &DT, AssumptionCache &AC,
                            TaskInfo &TI);
 
-#if 1
 private:
   TapirTarget *Target = nullptr;
 
   Module &M;
-#else
-char LowerTapirToTarget::ID = 0;
-INITIALIZE_PASS_BEGIN(LowerTapirToTarget, "tapir2target",
-                      "Lower Tapir to Target ABI", false, false)
-INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
-INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(DominanceFrontierWrapperPass)
-INITIALIZE_PASS_END(LowerTapirToTarget, "tapir2target",
-                    "Lower Tapir to Target ABI", false, false)
-#endif
 
   function_ref<DominatorTree &(Function &)> GetDT;
   function_ref<TaskInfo &(Function &)> GetTI;
@@ -153,7 +127,6 @@ bool TapirToTargetImpl::unifyReturns(Function &F) {
   return true;
 }
 
-#if 1
 /// Outline all tasks in this function in post order.
 TFOutlineMapTy
 TapirToTargetImpl::outlineAllTasks(Function &F,
@@ -294,31 +267,6 @@ bool TapirToTargetImpl::processSimpleABI(Function &F, BasicBlock *TFEntry) {
     CallInst *GrainsizeCall = GrainsizeCalls.pop_back_val();
     LLVM_DEBUG(dbgs() << "Lowering grainsize call " << *GrainsizeCall << "\n");
     Target->lowerGrainsizeCall(GrainsizeCall);
-#else
-    tapirTarget->lowerGrainsizeCall(GrainsizeCall);
-    Changed = true;
-  }
-
-  SmallVector<Function *, 4> *NewHelpers = new SmallVector<Function *, 4>();
-  // Process the set of detaches backwards, in order to process the innermost
-  // detached tasks first.
-  while (!Detaches.empty()) {
-    DetachInst *DI = Detaches.pop_back_val();
-
-    SyncInst * detachSyncPair  = nullptr;
-    for(auto SI : Syncs) {
-      if(DT.dominates(DI, SI)){
-	detachSyncPair = SI;
-	break;
-      }
-    }       
-
-    // Lower a detach instruction, and collect the helper function generated in
-    // this process for executing the detached task.
-    Function *Helper = tapirTarget->createDetach(*DI, DetachCtxToStackFrame,
-                                                 DT, AC, detachSyncPair);
-    NewHelpers->push_back(Helper);
-#endif
     Changed = true;
   }
 
@@ -527,12 +475,7 @@ bool TapirToTargetImpl::processFunction(
   return ChangedCFG || !NewHelpers.empty();
 }
 
-
 bool TapirToTargetImpl::run() {
-
-  // Store the type of backend used by Tapir
-  //M.setTapirTarget(ClTapirTarget);
-
   // Add functions that detach to the work list.
   SmallVector<Function *, 4> WorkList;
   {
@@ -567,11 +510,6 @@ bool TapirToTargetImpl::run() {
   while (!WorkList.empty()) {
     // Process the next function.
     Function *F = WorkList.pop_back_val();
-    //LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
-    //DominatorTree &DT = getAnalysis<DominatorTreeWrapperPass>(*F).getDomTree();
-    //DominanceFrontier &DF = getAnalysis<DominanceFrontierWrapperPass>(*F).getDominanceFrontier();
-    //AssumptionCacheTracker &ACT = getAnalysis<AssumptionCacheTracker>();
-
     SmallVector<Function *, 4> NewHelpers;
     Changed |= processFunction(*F, NewHelpers);
 

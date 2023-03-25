@@ -1581,14 +1581,14 @@ void ToolChain::AddForkDRuntimeLibArgs(const ArgList &Args,
     CmdArgs.push_back("-lnuma");
     // -lm   -lunwind_scheduler -lpthread -ldl -lnuma
   }
-  
+
   if(forkdLowering == llvm::ForkDTargetType::SIGUSRD) {
     CmdArgs.push_back("-lpthread");
     CmdArgs.push_back("-lsigusr_scheduler");
     CmdArgs.push_back("-lnuma");
     // -lm   -lunwind_scheduler -lpthread -ldl -lnuma
   }
- 
+
   if(forkdLowering == llvm::ForkDTargetType::EagerD) {
     CmdArgs.push_back("-lpthread");
     CmdArgs.push_back("-leager_scheduler");

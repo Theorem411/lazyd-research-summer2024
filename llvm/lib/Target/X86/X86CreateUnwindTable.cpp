@@ -46,45 +46,45 @@ namespace {
 
   char X86CreateUnwindTable::ID = 0;
 
-  bool X86CreateUnwindTable::runOnMachineFunction(MachineFunction &MF) {        
+  bool X86CreateUnwindTable::runOnMachineFunction(MachineFunction &MF) {
     const Function &Fn = MF.getFunction();
     const Module * M = Fn.getParent();
     const X86Subtarget &STI = MF.getSubtarget<X86Subtarget>();
     const X86RegisterInfo *TRI = STI.getRegisterInfo();
     const X86InstrInfo &TII = *STI.getInstrInfo();
-    DebugLoc DL;        
+    DebugLoc DL;
     unsigned StackPtr = TRI->getStackRegister();
 
     MCSymbol *unwindLabel = nullptr;
     // Add label at the end of call function and unwind path entry
     SmallVector<MachineBasicBlock *, 10> SpawnMBBs;
 
-    // Used to create a table that maps the 
-    for( auto mb = MF.begin(); mb != MF.end(); ++mb ) {      
+    // Used to create a table that maps the
+    for( auto mb = MF.begin(); mb != MF.end(); ++mb ) {
       SpawnMBBs.push_back(&*mb);
       // Add label to unwind path entry
       if( mb->isUnwindPathEntry() ) {
 #if 1
 	MachineBasicBlock::iterator ii = mb->begin();
-	unwindLabel = MF.getLabel();             
+	unwindLabel = MF.getLabel();
 	BuildMI(*mb, ii, DL, TII.get(TargetOpcode::EH_LABEL)).addSym(unwindLabel);
 #else
 	unwindLabel = mb->getSymbol();
 #endif
       }
     }
-    
+
     if(unwindLabel) {
       // Add label at the end of call function
       for (auto spawnMBB : SpawnMBBs) {
 	for (MachineBasicBlock::iterator I = spawnMBB->end(), E = spawnMBB->begin();  I != E;) {
 	  --I;
 	  if (I->isCall()) {
-	    MCSymbol *Label = MF.getLabel();             	  
+	    MCSymbol *Label = MF.getLabel();
 	    auto nextInst = I;
 	    BuildMI(*spawnMBB, ++nextInst, DL, TII.get(TargetOpcode::EH_LABEL)).addSym(Label);
 	    // Use to generate the prehash table in the elf binary
-	    MF.getContext().preHashTableEntry.push_back(std::make_pair(Label,unwindLabel));	    
+	    MF.getContext().preHashTableEntry.push_back(std::make_pair(Label,unwindLabel));
 	  }
 	}
       }

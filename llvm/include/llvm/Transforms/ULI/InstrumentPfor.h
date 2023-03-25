@@ -33,7 +33,7 @@
 #include <stack>
 
 
-namespace llvm {    
+namespace llvm {
   struct InstrumentPforPass : public PassInfoMixin<InstrumentPforPass> {
 public:
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);

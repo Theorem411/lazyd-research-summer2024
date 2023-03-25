@@ -1072,7 +1072,7 @@ public:
 
   /// \name PRSC
   /// \{
-    
+
   /// Return a new label
   MCSymbol * getLabel();
   /// \}

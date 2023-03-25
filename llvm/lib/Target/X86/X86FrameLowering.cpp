@@ -99,26 +99,6 @@ X86FrameLowering::needsFrameIndexResolution(const MachineFunction &MF) const {
 bool X86FrameLowering::hasFP(const MachineFunction &MF) const {
   const MachineFrameInfo &MFI = MF.getFrameInfo();
 
-#if 0
-  outs() << "Name: " << MF.getFunction().getName() << "\n";
-  if(MF.getTarget().Options.DisableFramePointerElim(MF))
-    outs() << "MF.getTarget().Options.DisableFramePointerElim(MF)\n";
-  if(TRI->needsStackRealignment(MF))
-    outs() << "TRI->needsStackRealignment(MF)\n";
-  if(MFI.hasVarSizedObjects())
-    outs() << "MFI.hasVarSizedObjects()\n";
-  if(MFI.isFrameAddressTaken())
-    outs() << "MFI.isFrameAddressTaken()\n";
-  if(MFI.hasOpaqueSPAdjustment())
-    outs() << "MFI.hasOpaqueSPAdjustment()\n";
-  if(MF.getInfo<X86MachineFunctionInfo>()->getForceFramePointer())
-    outs() << "MF.getInfo<X86MachineFunctionInfo>()->getForceFramePointer()\n";
-  if(MF.callsUnwindInit())
-    outs() << "MF.callsUnwindInit()\n";
-  if(MFI.hasCopyImplyingStackAdjustment())
-    outs() << "MFI.hasCopyImplyingStackAdjustment()\n";
-#endif
-
   return (MF.getTarget().Options.DisableFramePointerElim(MF) ||
           TRI->hasStackRealignment(MF) || MFI.hasVarSizedObjects() ||
           MFI.isFrameAddressTaken() || MFI.hasOpaqueSPAdjustment() ||
@@ -1525,7 +1505,6 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     emitSPUpdate(MBB, MBBI, -8, /*InEpilogue=*/false);
   }
 
-
   // If this is x86-64 and the Red Zone is not disabled, if we are a leaf
   // function, and use up to 128 bytes of stack space, don't have a frame
   // pointer, calls, or dynamic alloca then we do not need to adjust the
@@ -1622,45 +1601,6 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     else
       assert(MFI.getOffsetAdjustment() == -(int)NumBytes &&
              "should calculate same local variable offset for funclets");
-
-#if 0
-    // Not needed if use pre hash table
-    // Push the unwind path entry into the stack
-    if(EnablePushPopUnwindPath) {
-      const BasicBlock *LLVM_BB = MBB.getBasicBlock();
-      auto nextMBB = MBB.getNextNode ();
-      if(nextMBB) {
-	const BasicBlock * nextBB = nextMBB->getBasicBlock();
-	if(nextBB) {
-	  const BlockAddress* ba = BlockAddress::lookup (nextBB);
-	  MCSymbol *Label = MF.getLabel();
-	  const MCInstrDesc &II = TII.get(TargetOpcode::EH_LABEL);
-	  BuildMI(MBB, MBBI, DL, II).addSym(Label).setMIFlag(MachineInstr::FrameSetup);
-
-	  if (Label) {
-	    // Save the entry of the unwind path if exists
-	    auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
-	      .addSym(Label).setMIFlag(MachineInstr::FrameSetup);
-	  } else {
-	    auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
-	      .addImm(0).setMIFlag(MachineInstr::FrameSetup);
-	  }
-	} else {
-	  // Save the entry of the unwind path if exists
-	  auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
-	    .addImm(0).setMIFlag(MachineInstr::FrameSetup);
-	}
-      } else {
-	// Save the entry of the unwind path if exists
-	auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
-	  .addImm(0).setMIFlag(MachineInstr::FrameSetup);
-      }
-
-      // Save the entry of the unwind path if exists (for stack alignment purpose)
-      auto ii = BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64i32 : X86::PUSH64i32))
-      	.addImm(0).setMIFlag(MachineInstr::FrameSetup);
-    }
-#endif
 
     // Save EBP/RBP into the appropriate stack slot.
     BuildMI(MBB, MBBI, DL, TII.get(Is64Bit ? X86::PUSH64r : X86::PUSH32r))
@@ -2939,8 +2879,6 @@ bool X86FrameLowering::assignCalleeSavedSpillSlots(
   return true;
 }
 
-// TODO: Chrisma, if callee is only used in unwinder code, don't save it
-
 bool X86FrameLowering::spillCalleeSavedRegisters(
     MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
     ArrayRef<CalleeSavedInfo> CSI, const TargetRegisterInfo *TRI) const {
@@ -3095,7 +3033,6 @@ bool X86FrameLowering::restoreCalleeSavedRegisters(
   return true;
 }
 
-// TODO: Chrisma should this be modified to account for the unwinder
 void X86FrameLowering::determineCalleeSaves(MachineFunction &MF,
                                             BitVector &SavedRegs,
                                             RegScavenger *RS) const {
@@ -3984,7 +3921,6 @@ struct X86FrameSortingComparator {
     // in general. Something to keep in mind, though.
     if (DensityAScaled == DensityBScaled)
       return A.ObjectAlignment < B.ObjectAlignment;
-
     return DensityAScaled < DensityBScaled;
   }
 };

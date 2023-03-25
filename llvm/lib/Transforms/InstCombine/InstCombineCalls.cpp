@@ -2890,7 +2890,7 @@ Instruction *InstCombinerImpl::visitCallBase(CallBase &Call) {
 #if 0
       // TODO: CNP check interface
       // We cannot remove an multiretcall, because it would change the CFG, just
-      // change the callee to a null pointer.            
+      // change the callee to a null pointer.
       if(isa<MultiRetCallInst>(OldCall))
 	cast<MultiRetCallInst>(OldCall)->setCalledFunction(
 						     Constant::getNullValue(CalleeF->getType()));

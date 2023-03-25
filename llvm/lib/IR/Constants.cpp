@@ -1819,7 +1819,7 @@ BlockAddress *BlockAddress::get(Function *F, BasicBlock *BB) {
     F->getContext().pImpl->BlockAddresses[std::make_pair(F, BB)];
 #else
     F->getContext().pImpl->BlockAddresses[std::make_pair(std::make_pair(F, BB), std::make_pair(0,0))];
-#endif  
+#endif
   if (!BA)
     BA = new BlockAddress(F, BB);
 
@@ -1829,7 +1829,7 @@ BlockAddress *BlockAddress::get(Function *F, BasicBlock *BB) {
 
 BlockAddress *BlockAddress::BlockAddress::get(BasicBlock *BB, unsigned successor) {
   Function *F = BB->getParent();
-  BlockAddress *&BA = 
+  BlockAddress *&BA =
 #if 0
     F->getContext().pImpl->BlockAddresses[std::make_pair(F, BB)];
 #else
@@ -1840,21 +1840,21 @@ BlockAddress *BlockAddress::BlockAddress::get(BasicBlock *BB, unsigned successor
   }
 
 #if 1
-  else {    
+  else {
     BA->setIndexOfSucc(successor);
     auto ti = (BB->getTerminator());
     //if(successor != 0)
     //  ti->getSuccessor(0)->AdjustBlockAddressRefCount(1);
-    
+
     //assert(ti && "TI equals null");
     //assert(ti->getSuccessor(successor) && "Successor is null");
     //ti->getSuccessor(successor)->AdjustBlockAddressRefCount(1);
-    
+
     // If basic block have been defined
-    if(ti) {    
+    if(ti) {
       if(successor != 0 && ti->getSuccessor(0))
 	ti->getSuccessor(0)->AdjustBlockAddressRefCount(1);
-  
+
       if(ti->getSuccessor(successor))
 	ti->getSuccessor(successor)->AdjustBlockAddressRefCount(1);
     }
@@ -1874,7 +1874,7 @@ BlockAddress::BlockAddress(Function *F, BasicBlock *BB)
   setValueSubclassData(0);
 #if 1
   this->setReturnSuccessor(0);
-#endif  
+#endif
   BB->AdjustBlockAddressRefCount(1);
 }
 
@@ -1889,22 +1889,22 @@ BlockAddress::BlockAddress(Function *F, BasicBlock *BB, unsigned successor)
   this->setIndexOfSucc(successor);
 #endif
   BB->AdjustBlockAddressRefCount(1);
-  
-  
+
+
   auto ti = (BB->getTerminator());
   //ti->dump();
   //if(successor != 0)
     //ti->getSuccessor(0)->AdjustBlockAddressRefCount(1);
-  
+
   //assert(ti && "TI equals null");
   //assert(ti->getSuccessor(successor) && "Successor is null");
   //ti->getSuccessor(successor)->AdjustBlockAddressRefCount(1);
 
   // If basic block have been defined
-  if(ti) {    
+  if(ti) {
     if(successor != 0 && ti->getSuccessor(0))
       ti->getSuccessor(0)->AdjustBlockAddressRefCount(1);
-  
+
     if(ti->getSuccessor(successor))
       ti->getSuccessor(successor)->AdjustBlockAddressRefCount(1);
   }
@@ -1923,7 +1923,7 @@ BlockAddress *BlockAddress::lookup(const BasicBlock *BB) {
       F->getContext().pImpl->BlockAddresses.lookup(std::make_pair(F, BB));
 #else
       F->getContext().pImpl->BlockAddresses.lookup(std::make_pair(std::make_pair(F, BB), std::make_pair(0,0)));
-#endif  
+#endif
   assert(BA && "Refcount and block address map disagree!");
   return BA;
 }
@@ -1935,17 +1935,17 @@ void BlockAddress::destroyConstantImpl() {
     ->BlockAddresses.erase(std::make_pair(getFunction(), getBasicBlock()));
 #else
     ->BlockAddresses.erase(std::make_pair(std::make_pair(getFunction(), getBasicBlock()), std::make_pair(isReturnSuccessor(), getIndexOfSucc())) );
-#endif  
+#endif
   getBasicBlock()->AdjustBlockAddressRefCount(-1);
 
 #if 1
   unsigned successor = getIndexOfSucc();
   BasicBlock* bb = getBasicBlock();
   TerminatorInst* ti = (bb->getTerminator());
-  
+
   if(successor) {
     //auto bbSucc = (ti)->getSuccessor(successor);
-    //bbSucc->AdjustBlockAddressRefCount(-1);      
+    //bbSucc->AdjustBlockAddressRefCount(-1);
   }
 #endif
 }
@@ -1958,7 +1958,7 @@ Value *BlockAddress::handleOperandChangeImpl(Value *From, Value *To) {
 #if 1
   unsigned isRetSucc = isReturnSuccessor();
   unsigned newIndex = getIndexOfSucc();
-#endif  
+#endif
 
   if (From == NewF)
     NewF = cast<Function>(To->stripPointerCasts());
@@ -1974,7 +1974,7 @@ Value *BlockAddress::handleOperandChangeImpl(Value *From, Value *To) {
     getContext().pImpl->BlockAddresses[std::make_pair(NewF, NewBB)];
 #else
     getContext().pImpl->BlockAddresses[std::make_pair(std::make_pair(NewF, NewBB), std::make_pair(isRetSucc, newIndex))];
-#endif 
+#endif
   if (NewBA)
     return NewBA;
 
@@ -1987,7 +1987,7 @@ Value *BlockAddress::handleOperandChangeImpl(Value *From, Value *To) {
                                                           getBasicBlock()));
 #else
   getContext().pImpl->BlockAddresses.erase(std::make_pair(std::make_pair(getFunction(),getBasicBlock()), std::make_pair(isReturnSuccessor(), getIndexOfSucc()) ) );
-#endif  
+#endif
   NewBA = this;
   setOperand(0, NewF);
   setOperand(1, NewBB);
@@ -1995,7 +1995,7 @@ Value *BlockAddress::handleOperandChangeImpl(Value *From, Value *To) {
   if(isRetSucc) {
     this->setIndexOfSucc(newIndex);
   }
-#endif  
+#endif
   getBasicBlock()->AdjustBlockAddressRefCount(1);
 
   // If we just want to keep the existing value, then return null.

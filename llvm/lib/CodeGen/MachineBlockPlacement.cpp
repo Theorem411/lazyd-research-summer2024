@@ -714,7 +714,7 @@ BranchProbability MachineBlockPlacement::collectViableSuccessors(
     bool SkipSucc = false;
 
     // TODO: No longer needed
-    // If the "landing pad" is a gotstolen handler or slow path entry or unwind path, then consider 
+    // If the "landing pad" is a gotstolen handler or slow path entry or unwind path, then consider
     // it as a viable successor, otherwise it would generate the wrong control flow in backend
     bool bOnlyEHPad = Succ->isEHPad();
     bOnlyEHPad = bOnlyEHPad && ( !( Succ->isGotstolenHandler()  || Succ->isSlowPathEntry() || Succ->isUnwindPathEntry() ));

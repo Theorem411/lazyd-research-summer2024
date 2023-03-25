@@ -522,7 +522,7 @@ enum FunctionCodes {
   FUNC_CODE_INST_BR = 11,     // BR:         [bb#, bb#, cond] or [bb#]
   FUNC_CODE_INST_SWITCH = 12, // SWITCH:     [opty, op0, op1, ...]
   FUNC_CODE_INST_INVOKE = 13, // INVOKE:     [attr, fnty, op0,op1, ...]
-  FUNC_CODE_INST_MULTIRETCALL = 14, // MULTIRETCALL:     [attr, fnty, op0,op1, ...]  
+  FUNC_CODE_INST_MULTIRETCALL = 14, // MULTIRETCALL:     [attr, fnty, op0,op1, ...]
   FUNC_CODE_INST_UNREACHABLE = 15, // UNREACHABLE
 
   FUNC_CODE_INST_PHI = 16, // PHI:        [ty, val0,bb0, ...]

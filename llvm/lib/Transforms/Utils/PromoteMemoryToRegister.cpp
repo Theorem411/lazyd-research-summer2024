@@ -970,7 +970,7 @@ bool llvm::isAllocaParallelPromotable(const AllocaInst *AIP,
     for (pred_iterator PI = pred_begin(BB), E = pred_end(BB);
          PI != E; ++PI) {
       BasicBlock *P = *PI;
-      if (isa<ReattachInst>(P->getTerminator())) 
+      if (isa<ReattachInst>(P->getTerminator()))
         return false;
     }
   }

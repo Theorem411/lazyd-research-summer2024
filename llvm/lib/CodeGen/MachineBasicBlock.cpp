@@ -301,7 +301,7 @@ bool MachineBasicBlock::isMultiRetCall() const {
   bool res =true;
   for (const_succ_iterator I = succ_begin(), E = succ_end(); I != E; ++I)
     res &= (*I)->isMultiRetCallIndirectTarget();
-    
+
   return res && (Successors.size() > 1);
 }
 
@@ -716,15 +716,15 @@ void MachineBasicBlock::updateTerminator(
       if(isMultiRetCall()) {
 	// If the multiretcall, take the branch with the highest probability
 	auto maxProb = BranchProbability::getZero();
-	for (succ_iterator SI = succ_begin(), SE = succ_end(); SI != SE; ++SI) {	  
+	for (succ_iterator SI = succ_begin(), SE = succ_end(); SI != SE; ++SI) {
 	  auto prob = getSuccProbability(SI);
 	  if(prob >= maxProb) {
 	    maxProb = prob;
 	    TBB = *SI;
-	  }	  
+	  }
 	}
 
-      } else {      
+      } else {
 	for (succ_iterator SI = succ_begin(), SE = succ_end(); SI != SE; ++SI) {
 	  if ((*SI)->isEHPad() )
 	    continue;

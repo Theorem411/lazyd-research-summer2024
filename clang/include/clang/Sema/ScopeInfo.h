@@ -783,8 +783,8 @@ public:
 
   ~InletScopeInfo() override;
 
-  static bool classof(const FunctionScopeInfo *FSI) { 
-    return FSI->Kind == SK_Inlet; 
+  static bool classof(const FunctionScopeInfo *FSI) {
+    return FSI->Kind == SK_Inlet;
   }
 };
 

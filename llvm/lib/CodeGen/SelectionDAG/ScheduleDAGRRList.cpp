@@ -586,7 +586,7 @@ void ScheduleDAGRRList::ReleasePredecessors(SUnit *SU) {
         unsigned NestLevel = 0;
         unsigned MaxNest = 0;
         SDNode *N = FindCallSeqStart(Node, NestLevel, MaxNest, TII);
-        
+
 	// TODO: Check this
 	if(!N)
 	  break;

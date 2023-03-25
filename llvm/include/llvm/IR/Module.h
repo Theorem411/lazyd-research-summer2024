@@ -39,8 +39,6 @@
 #include <string>
 #include <vector>
 
-#include "llvm/Transforms/Tapir/TapirTargetIDs.h"
-
 namespace llvm {
 
 class Error;
@@ -171,15 +169,12 @@ public:
         : Behavior(B), Key(K), Val(V) {}
   };
 
-  
+
   struct PreHashEntry {
       BasicBlock * stealHandler;   ///< Store the steal handler
       BasicBlock * stolenHandler;  ///< Store the gotstolen handler
       BasicBlock * unwindHandler; ///< Store the unwind handler
   };
-   
-  TapirTargetID  TapirType;      ///< Used to indicate the backend used by Tapir
-  
 
 /// @}
 /// @name Member Variables
@@ -235,8 +230,6 @@ public:
   DenseMap<BasicBlock*,  bool> StealHandlerExists;   /// If entry exists, then basic block is a steal request handler basic block
   DenseMap<BasicBlock*,  bool> StolenHandlerExists;   /// If entry exists, then basic block is a got-stolen  handler basic block
 
-
-  
 /// @}
 /// @name Module Level Accessors
 /// @{
@@ -324,9 +317,6 @@ public:
     if (!GlobalScopeAsm.empty() && GlobalScopeAsm.back() != '\n')
       GlobalScopeAsm += '\n';
   }
-  
-  /// Store the backend used by Tapir (misleading name: setTapirTarget does not change the backend used by Tapir, only store the backend used by Tapir)
-  void setTapirTarget(TapirTargetID tapirTargetType){ TapirType = tapirTargetType; }
 
   /// Append to the module-scope inline assembly blocks.
   /// A trailing newline is added if the input doesn't have one.

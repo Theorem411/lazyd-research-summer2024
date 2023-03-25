@@ -23,14 +23,14 @@ namespace llvm {
 
 class ReachingStoreReachableLoad  {
  public:
-  
+
   ReachingStoreReachableLoad() {};
 
   void recalculate(Function& F, FunctionAnalysisManager &AM, DominatorTree &DT, LoopInfo &LI);
-  
+
   DenseMap<BasicBlock*, SmallPtrSet<Instruction*, 8>>& getReachingStore() {
     return MapBB2ReachingAlloca;
-  } 
+  }
 
  private:
   SmallVector<BasicBlock*, 4> bbTraverse;
@@ -38,24 +38,24 @@ class ReachingStoreReachableLoad  {
   // Reaching Alloca
   DenseMap<Instruction*, unsigned> mapStr2IdxReachingAlloca;
   SmallVector<Instruction*, 4> mapIdx2StrReachingAlloca;
-  
+
   DenseMap<BasicBlock*, BitVector> mapBB2InValReachingAlloca;
-  DenseMap<BasicBlock*, BitVector> mapBB2OutValReachingAlloca;  
-  
+  DenseMap<BasicBlock*, BitVector> mapBB2OutValReachingAlloca;
+
   DenseMap<BasicBlock*, SmallPtrSet<Instruction*, 8>> MapBB2ReachingAlloca;
 
   // Reaching Alloca
   BitVector unionFcnReachingAlloca (std::vector<BitVector> &values);
   unsigned createWorkListReachingAlloca(BasicBlock * entry);
-  void runFlowReachingAlloca(  BasicBlock * entry, BitVector& initBound  ); 
-  
+  void runFlowReachingAlloca(  BasicBlock * entry, BitVector& initBound  );
+
   // Reaching Store
   DenseMap<Instruction*, DenseMap<Instruction*, unsigned>> mapVal2IdxReachingStore;
   DenseMap<Instruction*, SmallVector<Instruction*, 4>> mapIdx2ValReachingStore;
 
   DenseMap<BasicBlock*, std::vector<BitVector>> mapBB2InValReachingStore;
-  DenseMap<BasicBlock*, std::vector<BitVector>> mapBB2OutValReachingStore;  
-  
+  DenseMap<BasicBlock*, std::vector<BitVector>> mapBB2OutValReachingStore;
+
   SmallVector<unsigned, 4> createWorkListReachingStore(BasicBlock * entry, unsigned nStrPtr);
   void runFlowReachingStore(BasicBlock * entry, SmallVector<unsigned, 4>& idxVal);
   std::vector<BitVector> unionFcnReachingStore (std::vector<std::vector<BitVector>> &values, unsigned nStrPtr);
@@ -78,12 +78,12 @@ public:
    ReachingStoreReachableLoad run(Function &F, FunctionAnalysisManager &);
 
  };
- 
+
 class ReachingStoreReachableLoadWrapperPass : public FunctionPass {
  public:
-  static char ID;  
+  static char ID;
 
-  ReachingStoreReachableLoadWrapperPass() : FunctionPass(ID) { 
+  ReachingStoreReachableLoadWrapperPass() : FunctionPass(ID) {
     outs() << "RSI Initialize 1\n";
     initializeReachingStoreReachableLoadWrapperPassPass(*PassRegistry::getPassRegistry());
     outs() << "RSI Initialize 1\n";
@@ -96,7 +96,7 @@ class ReachingStoreReachableLoadWrapperPass : public FunctionPass {
   bool runOnFunction(Function& F) override;
   void getAnalysisUsage(AnalysisUsage& AU) const;
 
-  //static void registerClangPass(const PassManagerBuilder &, legacy::PassManagerBase &PM);   
+  //static void registerClangPass(const PassManagerBuilder &, legacy::PassManagerBase &PM);
  private:
   ReachingStoreReachableLoad RSI;
 };

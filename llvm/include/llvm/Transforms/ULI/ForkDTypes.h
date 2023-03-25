@@ -51,10 +51,10 @@ namespace llvm {
 
   enum class ForkDTargetType {
     None,
-    LazyD, 
+    LazyD,
     ULID,
-    SIGUSRD,  
-    EagerD 
+    SIGUSRD,
+    EagerD
   };
 
 } // end namespace llvm

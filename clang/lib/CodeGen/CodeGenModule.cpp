@@ -1954,7 +1954,7 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
     if (FD->hasAttr<ULINonAtomicAttr>()) {
       B.addAttribute(llvm::Attribute::ULINonAtomic);
-      
+
       // Also add the user level interrupt if it was not declared
       if (!FD->hasAttr<UserLevelInterruptAttr>()) {
           B.addAttribute(llvm::Attribute::UserLevelInterrupt);

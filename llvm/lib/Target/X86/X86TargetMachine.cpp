@@ -531,8 +531,8 @@ void X86PassConfig::addPostRegAlloc() {
     addPass(createX86LoadValueInjectionLoadHardeningPass());
 }
 
-void X86PassConfig::addPreSched2() { 
-    addPass(createX86CreateUICriticalSection()); 
+void X86PassConfig::addPreSched2() {
+    addPass(createX86CreateUICriticalSection());
     addPass(createX86CreateUnwindTable());
     addPass(createX86ExpandPseudoPass());
     addPass(createX86SaveRestoreContext());

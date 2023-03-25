@@ -79,7 +79,7 @@ BasicBlock::~BasicBlock() {
   if (hasAddressTaken()) {
     //TODO
     // If use is empty, it is indirectly used by blocaddress() []
-    
+
     //assert(!use_empty() && "There should be at least one blockaddress!");
     Constant *Replacement =
       ConstantInt::get(llvm::Type::getInt32Ty(getContext()), 1);

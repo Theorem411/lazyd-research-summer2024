@@ -65,14 +65,14 @@ bool HandleUliPass::runImpl(Function &F) {
     }
 
     BasicBlock & bbFront = F.front();
-    Instruction & iiFront = bbFront.front();                
+    Instruction & iiFront = bbFront.front();
     builder.SetInsertPoint(&iiFront);
 
 
     Argument * arg_end = F.arg_end();
-    // The last 3 variable are used for storing the special register 
+    // The last 3 variable are used for storing the special register
     if(  (F.hasFnAttribute(Attribute::ULINonAtomic)) ){
-        arg_end = F.arg_end() - 3; 
+        arg_end = F.arg_end() - 3;
     }
 
     // Generated code :
@@ -153,12 +153,12 @@ bool HandleUliPass::runImpl(Function &F) {
         summary_changed |= changed;
 
     } // end args loop
-    
+
     // ================================= ULI NON ATOMIC ===============================================
     // check for uli_non_atomic tag
     if ( (F.hasFnAttribute(Attribute::ULINonAtomic)) ) {
         // If a nonatomicpass attribute exists, the last three parameters store the special register
-        Function *rdulirdi =   Intrinsic::getDeclaration(M, Intrinsic::x86_uli_rdrdi);        
+        Function *rdulirdi =   Intrinsic::getDeclaration(M, Intrinsic::x86_uli_rdrdi);
         Function *rduliflags = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_rdflags);
         Function *rduliRA = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_rdRA);
         Function *rduliregs[3] = {rdulirdi, rduliflags, rduliRA};
@@ -167,21 +167,21 @@ bool HandleUliPass::runImpl(Function &F) {
         Function *wruliflags = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_wrflags);
         Function *wruliRA = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_wrRA);
         Function *wruliregs[3] = {wrulirdi, wruliflags, wruliRA};
-        
-        Function *uliAtomic =  Intrinsic::getDeclaration(M, Intrinsic::x86_uli_atomic);
-        
 
-        
-        // Insert restoring the uli special register before the prologue and an enable uli atomic before restoring the special register 
+        Function *uliAtomic =  Intrinsic::getDeclaration(M, Intrinsic::x86_uli_atomic);
+
+
+
+        // Insert restoring the uli special register before the prologue and an enable uli atomic before restoring the special register
         BasicBlock & bbBack = F.back();
-        Instruction & iiBack = bbBack.back();        
+        Instruction & iiBack = bbBack.back();
         BasicBlock::iterator bIt = builder.GetInsertPoint();
         builder.SetInsertPoint(&iiBack);
-        
+
         //-------------------------------------------------------------
         // Generated code :
         // ...
-        // End user code 
+        // End user code
         // ...
         // Set recursive uli / interruptable uli / nonatomic uli = false
         // write to uli register rdi (last param - 2)
@@ -192,13 +192,13 @@ bool HandleUliPass::runImpl(Function &F) {
         // ...
 
 
-        
+
         builder.CreateCall( uliAtomic,  {builder.getInt64(1)} );
-   
+
         int ii = 0;
         Argument * v = NULL;
         for (v = F.arg_end()-3; v != F.arg_end(); v++){
-            // If parameters is a pointer, then convert it to long unsigned.        
+            // If parameters is a pointer, then convert it to long unsigned.
             if (v->getType()->isPointerTy()){
                 ret = builder.CreateCast(Instruction::PtrToInt, v, Type::getInt64Ty(ctx));
                 builder.CreateCall( wruliregs[ii], {ret}   );
@@ -223,7 +223,7 @@ bool HandleUliPass::runImpl(Function &F) {
         // ...
         // last param -2 = read from uli register rdi
         // last param -1 = read from uli register flags
-        // last param = read from uli register return address 
+        // last param = read from uli register return address
 
 
         ii =0;
@@ -236,7 +236,7 @@ bool HandleUliPass::runImpl(Function &F) {
                 // Handle integer
                 // Get the content of the argument from uli special register
                 ret = builder.CreateCall( rduliregs[ii] );
-                
+
                 // Truncate the type if necessary
                 if (!v->getType()->isIntegerTy(64)){
                     ret = builder.CreateCast(Instruction::Trunc, ret, v->getType());
@@ -247,7 +247,7 @@ bool HandleUliPass::runImpl(Function &F) {
                 // Sort of "hack", there should be a better way to pass the value
 
                 // ret = read from uli special register
-                ret = builder.CreateCall( rduliregs[ii] );         
+                ret = builder.CreateCall( rduliregs[ii] );
 
                 // Create : float * tmp_var
                 Value * tmp_var = builder.CreateAlloca(Type::getDoubleTy(ctx)->getPointerTo());
@@ -293,7 +293,7 @@ bool HandleUliPass::runImpl(Function &F) {
         //-------------------------------------------------------------
 
         //-------------------------------------------------------------
-        
+
         // Generate code :
         // ...
         // Saving uli register to last 3 parameters
@@ -302,29 +302,29 @@ bool HandleUliPass::runImpl(Function &F) {
         // Set recursive uli / interruptable uli / nonatomic uli = true
         // ...
         // ...
-        // Begin User code 
+        // Begin User code
         // ...
-        
+
         // Insert a disable uli atomic after the uli_rdnextpc instruction
         Function::iterator b = F.begin();
         for (BasicBlock::iterator i = b->begin(); i != b->end(); ++i) {
             CallInst * call_inst = NULL;
             Function * fn = NULL;
-            
+
             if((call_inst = dyn_cast<CallInst>(i))
                && (fn = call_inst->getCalledFunction())
                && (fn->getIntrinsicID() == Intrinsic::x86_uli_rdRA)){
-                
+
                 builder.SetInsertPoint(i->getNextNode());
                 builder.CreateCall( uliAtomic,  {builder.getInt64(0)} );
-                
+
                 break;
 
             }
         }
-        //-------------------------------------------------------------          
+        //-------------------------------------------------------------
     }
-    
+
     return summary_changed;
 
 }

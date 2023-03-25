@@ -40,9 +40,9 @@ void ReachingDetachInst::runFlow(BasicBlock * entry, BitVector& initBound ) {
     for(auto pBB : bbTraverse) {
       BitVector bbOutput;
       std::vector<BitVector> predBasicBlockValues;
-      for( pred_iterator PI = pred_begin(pBB); PI != pred_end(pBB); PI++ ) {                
+      for( pred_iterator PI = pred_begin(pBB); PI != pred_end(pBB); PI++ ) {
 	BasicBlock* pred = *PI;
-	
+
 	// If one of the predecessor is a sync instruction, in is empty
 	if(isa<SyncInst>(pred->getTerminator())) {
 	  predBasicBlockValues.push_back(initBound);
@@ -50,11 +50,11 @@ void ReachingDetachInst::runFlow(BasicBlock * entry, BitVector& initBound ) {
 	  predBasicBlockValues.push_back(mapBB2OutVal[pred]);
 	}
       }
-      
+
       // If entry
       if(pBB == entry) {
 	predBasicBlockValues.push_back(initBound);
-      } 
+      }
       bbOutput = unionFcn(predBasicBlockValues);
       mapBB2InVal[pBB] = bbOutput;
 
@@ -76,7 +76,7 @@ void ReachingDetachInst::runFlowWithoutLoop( DominatorTree &DT, BasicBlock * ent
     for(auto pBB : bbTraverse) {
       BitVector bbOutput;
       std::vector<BitVector> predBasicBlockValues;
-      for( pred_iterator PI = pred_begin(pBB); PI != pred_end(pBB); PI++ ) {                
+      for( pred_iterator PI = pred_begin(pBB); PI != pred_end(pBB); PI++ ) {
 	BasicBlock* pred = *PI;
 
 	// Ignore self loop
@@ -91,11 +91,11 @@ void ReachingDetachInst::runFlowWithoutLoop( DominatorTree &DT, BasicBlock * ent
 	}
 
       }
-      
+
       // If entry
       if(pBB == entry) {
 	predBasicBlockValues.push_back(initBound);
-      } 
+      }
       bbOutput = unionFcn(predBasicBlockValues);
       mapBB2InValLoop[pBB] = bbOutput;
 
@@ -110,9 +110,9 @@ void ReachingDetachInst::runFlowWithoutLoop( DominatorTree &DT, BasicBlock * ent
 }
 
 void ReachingDetachInst::orderDetach(SmallVector<BasicBlock*, 4>& normalCfgBB, DenseMap<BasicBlock*, BitVector>& mapBB2Val, SmallVector<BasicBlock*, 4>& bbOrder, SmallVector<DetachInst*, 4>& bbOrderInst) {
-  SmallVector<BasicBlock*, 4> bbList;  
-  SmallVector<BasicBlock*, 4> bbTmp;  
-  ValueMap<BasicBlock*, bool> haveVisited;  
+  SmallVector<BasicBlock*, 4> bbList;
+  SmallVector<BasicBlock*, 4> bbTmp;
+  ValueMap<BasicBlock*, bool> haveVisited;
 
   bbList.clear();
   do {
@@ -120,19 +120,19 @@ void ReachingDetachInst::orderDetach(SmallVector<BasicBlock*, 4>& normalCfgBB, D
       // Inform the basic block that has dependency on it that it has been visited
       for(auto pBB : bbList) {
 	unsigned pos = mapBB2idx[pBB];
-	for (auto pBB2 : normalCfgBB) {	  
-	  mapBB2Val[pBB2].reset(pos); 
-	}	
+	for (auto pBB2 : normalCfgBB) {
+	  mapBB2Val[pBB2].reset(pos);
+	}
       }
       bbList.clear();
     }
     for (auto pBB : normalCfgBB) {
-      if(haveVisited.lookup(pBB)) 
+      if(haveVisited.lookup(pBB))
 	continue;
-      
-      BitVector val = mapBB2Val[pBB]; 
+
+      BitVector val = mapBB2Val[pBB];
       if(isReady(val)) {
-	bbTmp.push_back(pBB);    
+	bbTmp.push_back(pBB);
 	bbList.push_back(pBB);
 	haveVisited[pBB] = true;
       }
@@ -144,11 +144,11 @@ void ReachingDetachInst::orderDetach(SmallVector<BasicBlock*, 4>& normalCfgBB, D
     bbOrder.push_back(pBB);
     bbOrderInst.push_back(dyn_cast<DetachInst>(pBB->getTerminator()));
   }
-  
+
 }
 
 void ReachingDetachInst::createOrderOfDetach( LoopInfo &LI, BitVector& initBB ) {
-  // Create an order of detach starting from bottom to top  
+  // Create an order of detach starting from bottom to top
   // Separate loop from normal control flow
   SmallVector<BasicBlock*, 4> normalCfgBB;
   SmallVector<BasicBlock*, 4> normalCfgOrderBB;
@@ -159,14 +159,14 @@ void ReachingDetachInst::createOrderOfDetach( LoopInfo &LI, BitVector& initBB ) 
   // Create a copy for temporary use
   DenseMap<BasicBlock*, BitVector> mapBB2InValCopy;
   DenseMap<BasicBlock*, BitVector> mapBB2InValLoopCopy;
-  
+
   DenseMap<BasicBlock*, bool> haveVisited;
-  DenseMap<BasicBlock*, bool> haveVisited2;  
+  DenseMap<BasicBlock*, bool> haveVisited2;
 
   // Seperate detach based on whether it is in a loop or not
   for (auto di : detachList) {
     BasicBlock* parent = di->getParent();
-    BitVector value = mapBB2InVal[parent]; 
+    BitVector value = mapBB2InVal[parent];
     unsigned pos = mapBB2idx[parent];
     if (value[pos] == 1) {
       // It's a loop
@@ -178,9 +178,9 @@ void ReachingDetachInst::createOrderOfDetach( LoopInfo &LI, BitVector& initBB ) 
     mapBB2InValLoopCopy[parent] = mapBB2InValLoop[parent];
     haveVisited[parent] = false;
   }
-  
+
 #if 1
-  
+
   for (auto di : detachList) {
     BasicBlock* parent  =di->getParent();
     bbSeqOrder.push_back(parent);
@@ -189,18 +189,18 @@ void ReachingDetachInst::createOrderOfDetach( LoopInfo &LI, BitVector& initBB ) 
 
 #else
   // TODO: In matmul, when TRE enabled, one out of 4 detach instructions is not process
-  // Process the sequential cfg 
+  // Process the sequential cfg
   orderDetach(normalCfgBB, mapBB2InValCopy, bbSeqOrder, bbSeqOrderInst);
-    
-  DEBUG (dbgs() << " Order of Detach  \n");	
-  for(auto pBB : bbSeqOrder) {   
-    DEBUG (dbgs() << "Basicblock  : "<< pBB->getName() << "\n");	
+
+  DEBUG (dbgs() << " Order of Detach  \n");
+  for(auto pBB : bbSeqOrder) {
+    DEBUG (dbgs() << "Basicblock  : "<< pBB->getName() << "\n");
   }
 
   auto loopOrder = LI.getLoopsInPreorder();
   for(auto it = loopOrder.rbegin(); it != loopOrder.rend() ; it++) {
     Loop * loops = *it;
-    DEBUG (dbgs() << "Loops  : "<< loops->getName() << "\n");	    
+    DEBUG (dbgs() << "Loops  : "<< loops->getName() << "\n");
 
     bbCurrentLoop.clear();
     for(auto pBB : loopCfgBB) {
@@ -209,11 +209,11 @@ void ReachingDetachInst::createOrderOfDetach( LoopInfo &LI, BitVector& initBB ) 
       }
 
       if(loops->contains(pBB)){
-	haveVisited[pBB] = true;	
+	haveVisited[pBB] = true;
 	bbCurrentLoop.push_back(pBB);
-      }     
+      }
     }
-    
+
     BitVector mask = initBB;
     for(auto pBB : bbCurrentLoop) {
       unsigned pos = mapBB2idx[pBB];
@@ -230,13 +230,13 @@ void ReachingDetachInst::createOrderOfDetach( LoopInfo &LI, BitVector& initBB ) 
     //------------------------------------------------
     orderDetach(bbCurrentLoop, mapBB2InValLoopCopy, bbLoopOrder, bbLoopOrderInst);
     //------------------------------------------------
-  }  
+  }
 #endif
 
-  DEBUG (dbgs() << " Order of loop  \n");	
+  DEBUG (dbgs() << " Order of loop  \n");
   for( auto it = bbLoopOrder.begin(); it != bbLoopOrder.end() ; it++) {
     auto pBB  = *it;
-    DEBUG (dbgs() << "Loop block  : "<< pBB->getName() << "\n");	
+    DEBUG (dbgs() << "Loop block  : "<< pBB->getName() << "\n");
   }
 
 }
@@ -256,16 +256,16 @@ bool ReachingDetachInst::isReaching(BasicBlock * src, BasicBlock * dst) {
     // Visit basic block
     bb = bbList.back();
     bbList.pop_back();
-    
+
     // Basic block already visited, skip
     if(haveVisited.lookup(bb)){
       continue;
     }
 
     // Mark bb as visited
-    haveVisited[bb] = true;    
-    
-    for( succ_iterator SI = succ_begin(bb); SI != succ_end(bb); SI++ ) {                
+    haveVisited[bb] = true;
+
+    for( succ_iterator SI = succ_begin(bb); SI != succ_end(bb); SI++ ) {
       BasicBlock* succ = *SI;
       // Find dst, return true
       if(succ == dst)
@@ -295,12 +295,12 @@ unsigned ReachingDetachInst::createWorkList(BasicBlock * entry) {
     }
 
     // Perform some initialization on the basic block
-    haveVisited[bb] = true;    
+    haveVisited[bb] = true;
     bbTraverse.push_back(bb);
     // Create a map from basic block to idx
-    mapBB2idx[bb] = idx;    
+    mapBB2idx[bb] = idx;
     idx++;
-    
+
     // Check if it contains a detach inst
     if(isa<DetachInst>(bb->getTerminator())) {
       detachList.push_back(dyn_cast<DetachInst>(bb->getTerminator()));
@@ -311,7 +311,7 @@ unsigned ReachingDetachInst::createWorkList(BasicBlock * entry) {
       syncList.push_back(dyn_cast<SyncInst>(bb->getTerminator()));
     }
 
-    for( succ_iterator SI = succ_begin(bb); SI != succ_end(bb); SI++ ) {                
+    for( succ_iterator SI = succ_begin(bb); SI != succ_end(bb); SI++ ) {
       BasicBlock* succ = *SI;
       bbList.push_back(succ);
     }
@@ -322,7 +322,7 @@ unsigned ReachingDetachInst::createWorkList(BasicBlock * entry) {
 
 void ReachingDetachInst::recalculate(Function& F, FunctionAnalysisManager &AM, DominatorTree &DT, LoopInfo &LI) {
   // Get the entry of the basic block
-  BasicBlock* entry = &F.getEntryBlock();  
+  BasicBlock* entry = &F.getEntryBlock();
 
   MapDetachToPath.clear();
   MapSyncToPath.clear();
@@ -340,14 +340,14 @@ void ReachingDetachInst::recalculate(Function& F, FunctionAnalysisManager &AM, D
   bbSeqOrderInst.clear();
   bbLoopOrderInst.clear();
 
-  
+
   // Create the order of updating the basic block
   // while initializing a few data structure
   unsigned  idx = createWorkList(entry);
 
-  // Initialize the entry 
+  // Initialize the entry
   BitVector initBound = BitVector(idx, false);
-  BitVector initBB = BitVector(idx, false);  
+  BitVector initBB = BitVector(idx, false);
   for(auto pBB : bbTraverse) {
     mapBB2InVal[pBB] = initBB;
     mapBB2OutVal[pBB] = initBB;
@@ -361,12 +361,12 @@ void ReachingDetachInst::recalculate(Function& F, FunctionAnalysisManager &AM, D
   // Start performing the data flow analyze excluding loop (removing backedge)
   //-------------------------------------------------------------------------
   runFlowWithoutLoop(DT, entry, initBound);
-  
+
   // Can be optimize: performance of loop
   // Insert result into analysis
   for(auto di : detachList) {
     BasicBlock * parent = di->getParent();
-    BitVector value = mapBB2InVal[parent]; 
+    BitVector value = mapBB2InVal[parent];
     for (uint i = 0; i < value.size(); i++) {
       if (value[i]) {
 	for (auto pBB : bbTraverse) {
@@ -375,14 +375,14 @@ void ReachingDetachInst::recalculate(Function& F, FunctionAnalysisManager &AM, D
 	  if(v[i] == 1 && isReaching(pBB, parent)) {
 	    MapDetachToPath[di].insert(pBB);
 	  }
-	}	
+	}
       }
     }
   }
 
   for(auto si : syncList) {
     BasicBlock * parent = si->getParent();
-    BitVector value = mapBB2InVal[parent]; 
+    BitVector value = mapBB2InVal[parent];
     for (uint i = 0; i < value.size(); i++) {
       if (value[i]) {
 	for (auto pBB : bbTraverse) {
@@ -391,28 +391,28 @@ void ReachingDetachInst::recalculate(Function& F, FunctionAnalysisManager &AM, D
 	  if(v[i] == 1 && isReaching(pBB, parent)) {
 	    MapSyncToPath[si].insert(pBB);
 	  }
-	}	
+	}
       }
     }
   }
 
-  
+
   // Traverse the BB and look if there is a reaching detach
   for(auto pBB : bbTraverse) {
     DEBUG (dbgs() << "================================\n");
     DEBUG (dbgs() << "Fcn: "<< F.getName() << " Basicblock : "<< pBB->getName() << "\n");
-    BitVector value = mapBB2InVal[pBB]; 
+    BitVector value = mapBB2InVal[pBB];
     for (uint i = 0; i < value.size(); i++) {
       if (value[i]) {
-	DEBUG (dbgs() << "Basicblock reaching to it : "<< bbTraverse[i]->getName() << "\n");	
+	DEBUG (dbgs() << "Basicblock reaching to it : "<< bbTraverse[i]->getName() << "\n");
       }
     }
   }
-  
+
   // Find the reaching detach basic block
   for(auto di : detachList) {
     BasicBlock * parent = di->getParent();
-    BitVector value = mapBB2InVal[parent]; 
+    BitVector value = mapBB2InVal[parent];
     for (uint i = 0; i < value.size(); i++) {
       if (value[i]) {
 	// Detach with index i reaches detach with basic block: parent
@@ -420,7 +420,7 @@ void ReachingDetachInst::recalculate(Function& F, FunctionAnalysisManager &AM, D
       }
     }
   }
-  
+
   createOrderOfDetach(LI, initBB);
 
   return;
@@ -480,7 +480,7 @@ void ReachingDetachInstWrapperPass::getAnalysisUsage(AnalysisUsage& AU) const {
 
   AU.addPreserved<LoopInfoWrapperPass>();
   AU.addPreserved<DominatorTreeWrapperPass>();
-    
+
   //AU.setPreservesAll();
 }
 
@@ -516,7 +516,7 @@ RegisterStandardPasses RegisterClangPass(PassManagerBuilder::EP_EarlyAsPossible,
 ReachingDetachInst ReachingDetachInstAnalysis::run(Function &F,
                                          FunctionAnalysisManager &AM) {
   ReachingDetachInst RDI;
-  
+
   DominatorTree &DT = AM.getResult<DominatorTreeAnalysis>(F);
   LoopInfo &LI = AM.getResult<LoopAnalysis>(F);
 

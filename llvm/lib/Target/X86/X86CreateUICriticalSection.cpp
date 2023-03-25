@@ -27,7 +27,7 @@
 // Replace the X86::UI_DISABLE_REGION and X86::UI_ENABLE_REGION with a label.
 // This create the UI critical section region
 // The intended use is to disable and enable UI (create the critical section)
-// TODO: Make sure the order intended by the programmer is not modified. 
+// TODO: Make sure the order intended by the programmer is not modified.
 
 using namespace llvm;
 

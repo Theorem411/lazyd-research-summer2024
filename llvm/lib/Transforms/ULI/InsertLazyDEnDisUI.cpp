@@ -103,11 +103,11 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F) {
   GlobalVariable* guiOn = GetGlobalVariable("uiOn", TypeBuilder<char, false>::get(C), *M, true);
   IRBuilder<> B(F.getContext());
   Value* ONE = B.getInt8(1);
-  Value* ZERO = B.getInt8(0);  
+  Value* ZERO = B.getInt8(0);
 
   auto stui = Intrinsic::getDeclaration(M, Intrinsic::x86_ui_stui);
   auto clui = Intrinsic::getDeclaration(M, Intrinsic::x86_ui_clui);
-  
+
   // Overhead to inflate the cost of storing uiOn
   Constant* OVERHEAD = Get_overhead(*M);
 
@@ -117,13 +117,13 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F) {
     if (DetachInst* DI = dyn_cast<DetachInst>(BB.getTerminator())) {
       // Insert clui before detach
       B.SetInsertPoint(DI);
-      
+
       if(EnableStuiClui) {
 	B.CreateCall(clui);
       } else {
-	B.CreateStore(ZERO, guiOn, true);   
+	B.CreateStore(ZERO, guiOn, true);
       }
-      
+
       BasicBlock* detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
       for ( Instruction &II : *detachBlock) {
 	if( CallInst* CI = dyn_cast<CallInst>(&II) ) {
@@ -143,7 +143,7 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F) {
   }
 
   //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // Instrument prologue and epilogue to insert parallel runtime call  
+  // Instrument prologue and epilogue to insert parallel runtime call
   B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
 
   // Insert enable after prologue and function call
@@ -166,7 +166,7 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F) {
     if(EnableStuiClui)
       B.CreateCall(clui);
     else
-      B.CreateStore(ZERO, guiOn, true);   
+      B.CreateStore(ZERO, guiOn, true);
   }
 
   // Insert disable before epilogue and function call
@@ -181,7 +181,7 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F) {
 
       if(isa<CallInst>(&II) && forkCallInsts.find(dyn_cast<CallInst>(&II)) == forkCallInsts.end()) {
 	instrumentedCall.push_back(dyn_cast<CallInst>(&II));
-		
+
       } else if(isa<InvokeInst>(&II)) {
 	assert(0 && "Not supported yet");
 
@@ -190,7 +190,7 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F) {
 
 	if (isa<IntrinsicInst>(mrc->getCalledFunction()))
 	  continue;
-	
+
 	//instrumentedMrc.push_back(mrc);
       }
     }
@@ -202,9 +202,9 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F) {
       B.CreateCall(clui);
     else
       B.CreateStore(ZERO, guiOn, true);
-	
+
     B.SetInsertPoint(ci->getNextNode());
-	
+
     if(EnableStuiClui)
       B.CreateCall(stui);
     else
@@ -213,16 +213,16 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F) {
 
   for(auto mrc: instrumentedMrc) {
     B.SetInsertPoint(mrc);
-    
+
     if(EnableStuiClui)
       B.CreateCall(clui);
     else
       B.CreateStore(ZERO, guiOn, true);
-	
+
     auto bb0 = mrc->getDefaultDest();
 
-    B.SetInsertPoint(bb0->getFirstNonPHIOrDbgOrLifetime()->getNextNode());	
-	
+    B.SetInsertPoint(bb0->getFirstNonPHIOrDbgOrLifetime()->getNextNode());
+
     if(EnableStuiClui)
       B.CreateCall(stui);
     else

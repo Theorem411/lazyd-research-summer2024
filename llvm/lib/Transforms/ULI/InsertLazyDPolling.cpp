@@ -92,12 +92,12 @@ bool InsertLazyDPollingPass::instrumentLoop (Loop& L) {
 bool InsertLazyDPollingPass::insertPollingAtLoop(Loop &L) {
   SmallVector<Loop *, 8> VisitStack = {&L};
   Function *F = L.getHeader()->getParent();
-  
+
   bool Changed = false;
 
   instrumentLoop(L);
-  
-  // Still in development, don't use function. 
+
+  // Still in development, don't use function.
   while (!VisitStack.empty()) {
     Loop *CurrentLoop = VisitStack.pop_back_val();
     auto &SubLoops    = CurrentLoop->getSubLoops();
@@ -105,7 +105,7 @@ bool InsertLazyDPollingPass::insertPollingAtLoop(Loop &L) {
     if (!SubLoops.empty()) {
       for (Loop *SubLoop : SubLoops)
 	VisitStack.push_back(SubLoop);
-    } 
+    }
   }
 
   return Changed;
@@ -119,7 +119,7 @@ bool InsertLazyDPollingPass::runImpl(Function &F,
   LI = LI_;
 
   //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // Instrument prologue and epilogue to insert parallel runtime call  
+  // Instrument prologue and epilogue to insert parallel runtime call
   IRBuilder<> B(F.getContext());
   B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
   Module *M = F.getParent();

@@ -927,6 +927,7 @@ static std::string typeComparisonErrorMessage(StringRef Message, Type *Ty1,
 }
 
 /// parseAliasOrIFunc:
+
 ///   ::= GlobalVar '=' OptionalLinkage OptionalPreemptionSpecifier
 ///                     OptionalVisibility OptionalDLLStorageClass
 ///                     OptionalThreadLocal OptionalUnnamedAddr
@@ -1450,11 +1451,11 @@ bool LLParser::parseFnAttributeValuePairs(AttrBuilder &B,
     case lltok::kw_no_stacklet_check:
       B.addAttribute(Attribute::NoStackletCheck); break;
     case lltok::kw_uli_non_atomic:
-      B.addAttribute(Attribute::ULINonAtomic); break;  
+      B.addAttribute(Attribute::ULINonAtomic); break;
     case lltok::kw_no_unwind_path:
-      B.addAttribute(Attribute::NoUnwindPath); break;  
-  
-  
+      B.addAttribute(Attribute::NoUnwindPath); break;
+
+
     // Error handling.
     case lltok::kw_inreg:
     case lltok::kw_signext:
@@ -3359,12 +3360,12 @@ bool LLParser::parseValID(ValID &ID, PerFunctionState *PFS, Type *ExpectedTy) {
     }
 
 #if 1
-    // Get additional information     
+    // Get additional information
     if(!ParseToken(lltok::kw_successor, "")) {
       Value *V;
       if (ParseTypeAndValue(V, PFS))
 	return true;
-	
+
       if(!isa<ConstantInt>(V))
 	return true;
 
@@ -3373,13 +3374,13 @@ bool LLParser::parseValID(ValID &ID, PerFunctionState *PFS, Type *ExpectedTy) {
       ID.ConstantVal = BlockAddress::get(BB, successor);
       ID.Kind = ValID::t_Constant;
       return false;
-      
+
     } else {
       ID.ConstantVal = BlockAddress::get(F, BB);
       ID.Kind = ValID::t_Constant;
       return false;
-    } 
-#else    
+    }
+#else
     ID.ConstantVal = BlockAddress::get(F, BB);
     ID.Kind = ValID::t_Constant;
     return false;
@@ -6797,7 +6798,7 @@ bool LLParser::ParseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS) {
 
   // parse the destination list.
   SmallVector<BasicBlock *, 16> IndirectDests;
- 
+
   if (Lex.getKind() != lltok::rsquare) {
     BasicBlock *DestBB;
     if (ParseTypeAndBasicBlock(DestBB, PFS))
@@ -6813,7 +6814,7 @@ bool LLParser::ParseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS) {
       // Needed to create a symbol that can be used to be passed around and jump to
       DestBB->setHasAddressTaken(1);
     }
-  }    
+  }
 
   if (ParseToken(lltok::rsquare, "expected ']' at end of block list"))
     return true;

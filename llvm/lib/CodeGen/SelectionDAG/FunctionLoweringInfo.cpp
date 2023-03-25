@@ -281,7 +281,7 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
       }
       if (isa<FuncletPadInst>(PadInst))
         assert(&*BB.begin() == PadInst && "WinEHPrepare failed to demote PHIs");
-    }        
+    }
 
     MachineBasicBlock *MBB = mf.CreateMachineBasicBlock(&BB);
     MBBMap[&BB] = MBB;
@@ -306,10 +306,10 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
 	if(fn && fn->getIntrinsicID() ==  Intrinsic::var_annotation) {
 	  assert(isa<ConstantInt>(call_inst->getArgOperand(3)));
 	  auto intVal = dyn_cast<ConstantInt>(call_inst->getArgOperand(3));
-	  if(intVal->getSExtValue() == 0 || intVal->getSExtValue() == 2 || intVal->getSExtValue() == 3) {  
-	    MBB->setIsEHPad();	  
-	    
-	    // Identify which path does this basic block belongs to 
+	  if(intVal->getSExtValue() == 0 || intVal->getSExtValue() == 2 || intVal->getSExtValue() == 3) {
+	    MBB->setIsEHPad();
+
+	    // Identify which path does this basic block belongs to
 	    if(intVal->getSExtValue() == 0) {
 	      MBB->setIsGotstolenHandler();
 	    } else if (intVal->getSExtValue() == 2) {
@@ -322,7 +322,7 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
       }
     }
     // --------------------------------------------
-    
+
     // Create Machine PHI nodes for LLVM PHI nodes, lowering them as
     // appropriate.
     for (const PHINode &PN : BB.phis()) {

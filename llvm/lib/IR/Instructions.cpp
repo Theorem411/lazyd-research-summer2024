@@ -1001,15 +1001,15 @@ void MultiRetCallInst::init(FunctionType *FTy, Value *Fn, BasicBlock *Fallthroug
 			    ArrayRef<OperandBundleDef> Bundles,
 			    const Twine &NameStr) {
   this->FTy = FTy;
-  
-  assert((int)getNumOperands() == ComputeNumOperands(Args.size(), IndirectDests.size(), CountBundleInputs(Bundles)) && "NumOperands not set up?");
-	 
 
-  NumIndirectDests = IndirectDests.size();	 
+  assert((int)getNumOperands() == ComputeNumOperands(Args.size(), IndirectDests.size(), CountBundleInputs(Bundles)) && "NumOperands not set up?");
+
+
+  NumIndirectDests = IndirectDests.size();
   setDefaultDest(Fallthrough);
   for (unsigned i = 0; i != NumIndirectDests; ++i)
    setIndirectDest(i, IndirectDests[i]);
-  setCalledFunction(Fn);	 
+  setCalledFunction(Fn);
 
 #ifndef NDEBUG
   assert(((Args.size() == FTy->getNumParams()) ||
@@ -1017,7 +1017,7 @@ void MultiRetCallInst::init(FunctionType *FTy, Value *Fn, BasicBlock *Fallthroug
          "Calling a function with bad signature");
 
   for (unsigned i = 0, e = Args.size(); i != e; i++)
-    assert((i >= FTy->getNumParams() || 
+    assert((i >= FTy->getNumParams() ||
             FTy->getParamType(i) == Args[i]->getType()) &&
            "Calling a function with a bad signature!");
 #endif
@@ -1036,7 +1036,7 @@ void MultiRetCallInst::updateArgBlockAddresses(unsigned i, BasicBlock *B) {
   if (BasicBlock *OldBB = getIndirectDest(i)) {
     // TODO: Check why I need the parent
     BlockAddress *Old = BlockAddress::get(OldBB->getParent(), OldBB);
-    BlockAddress *New = BlockAddress::get(OldBB->getParent(), B);    
+    BlockAddress *New = BlockAddress::get(OldBB->getParent(), B);
     for (unsigned ArgNo = 0, e = getNumArgOperands(); ArgNo != e; ++ArgNo)
       if (dyn_cast<BlockAddress>(getArgOperand(ArgNo)) == Old)
 	setArgOperand(ArgNo, New);
@@ -1450,31 +1450,31 @@ RetPadInst::RetPadInst(Value *MultiRetCallVal, const Twine &NameStr, Instruction
   : RetPadInst(MultiRetCallVal->getType(), MultiRetCallVal, NameStr, InsertBefore) {}
 
 RetPadInst::RetPadInst(Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd)
-  : RetPadInst(MultiRetCallVal->getType(), MultiRetCallVal, NameStr, InsertAtEnd) {} 
+  : RetPadInst(MultiRetCallVal->getType(), MultiRetCallVal, NameStr, InsertAtEnd) {}
 
-RetPadInst::RetPadInst(Type *Ty, Value *MultiRetCallVal, const Twine &NameStr, Instruction *InsertBefore) 
+RetPadInst::RetPadInst(Type *Ty, Value *MultiRetCallVal, const Twine &NameStr, Instruction *InsertBefore)
   : Instruction(Ty, Instruction::RetPad, nullptr, 0, InsertBefore) {
   AssertOK();
   setName(NameStr);
 }
 
-RetPadInst::RetPadInst(Type *Ty, Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd) 
+RetPadInst::RetPadInst(Type *Ty, Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd)
   : Instruction(Ty, Instruction::RetPad, nullptr, 0, InsertAtEnd) {
   AssertOK();
-  setName(NameStr);  
-} 
+  setName(NameStr);
+}
 
-RetPadInst::RetPadInst(Type *Ty, const Twine &NameStr, Instruction *InsertBefore) 
+RetPadInst::RetPadInst(Type *Ty, const Twine &NameStr, Instruction *InsertBefore)
   : Instruction(Ty, Instruction::RetPad, nullptr, 0, InsertBefore) {
   AssertOK();
-  setName(NameStr);  
-} 
+  setName(NameStr);
+}
 
-RetPadInst::RetPadInst(Type *Ty, const Twine &NameStr, BasicBlock *InsertAtEnd) 
+RetPadInst::RetPadInst(Type *Ty, const Twine &NameStr, BasicBlock *InsertAtEnd)
   : Instruction(Ty, Instruction::RetPad, nullptr, 0, InsertAtEnd) {
   AssertOK();
-  setName(NameStr);  
-} 
+  setName(NameStr);
+}
 
 RetPadInst* RetPadInst::Create(Type* Ty, const Twine &NameStr, Instruction *InsertBefore) {
   return new RetPadInst(Ty, NameStr, InsertBefore);

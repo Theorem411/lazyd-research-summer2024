@@ -1188,7 +1188,7 @@ public:
     return Insert(
 		  MultiRetCallInst::Create(Ty, Callee, DefaultDest, IndirectDests, Args,
 				     OpBundles), Name);
-  }  
+  }
 
   MultiRetCallInst *CreateMultiRetCall(Function *Callee,
 				       BasicBlock *DefaultDest,
@@ -1206,7 +1206,7 @@ public:
 			   const Twine &Name = "") {
     return CreateMultiRetCall(Callee->getFunctionType(), Callee, DefaultDest, IndirectDests, Args, Name);
   }
-  
+
   /// \brief Create an retpad instruction
   RetPadInst* CreateRetPad(MultiRetCallInst* MultiRetCall, const Twine &Name = "") {
     return Insert(RetPadInst::Create(MultiRetCall, Name));

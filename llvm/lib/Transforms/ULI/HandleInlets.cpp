@@ -63,7 +63,7 @@ bool HandleInletsPass::handlePotentialJump(BasicBlock &BB) {
 
     it->eraseFromParent();
     auto afterBB = BB.splitBasicBlock(afterPotentialJump);
-    
+
     auto terminator = BB.getTerminator();
 
     auto OpaqueTrueTy = FunctionType::get(BoolTy, false);

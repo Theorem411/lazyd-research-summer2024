@@ -1440,7 +1440,7 @@ public:
   DenseMap<std::pair<const Function *, const BasicBlock *>, BlockAddress *>
       BlockAddresses;
 #else
-  // Add key: <does it return a successor, which successor> 
+  // Add key: <does it return a successor, which successor>
   DenseMap<std::pair <std::pair<const Function *, const BasicBlock *>, std::pair<unsigned, unsigned>>, BlockAddress *>
     BlockAddresses;
 #endif  

@@ -145,7 +145,7 @@ void SerializeDetach(DetachInst *DI, Task *T, bool ReplaceWithTaskFrame = false,
                      DominatorTree *DT = nullptr);
 
 /// RemoveSync - Remove the sync inst by the specified
-/// detach instruction.  
+/// detach instruction.
 BranchInst *RemoveSync(DetachInst *HeadDetach);
 
 /// Get the entry basic block to the detached context that contains
@@ -250,7 +250,7 @@ public:
     ST_SEQ,
     ST_DAC,
     ST_HYBRID,
-    ST_END,    
+    ST_END,
   };
 
 private:

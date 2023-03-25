@@ -852,7 +852,7 @@ class BlockAddress final : public Constant {
 
   BlockAddress(Function *F, BasicBlock *BB);
   BlockAddress(Function *F, BasicBlock *BB, unsigned successor);
-  
+
   // Define blockaddress operand
 #define BLOCKADDRESS_OP 2
 
@@ -861,7 +861,7 @@ class BlockAddress final : public Constant {
 #else
   // 0. Function
   // 1. Basic block
-  // 2. SubClassData: SSSS SSSS SSSS SSS E. E=0 -> return block address E=1 -> return successor of block address. Value form from S = which successor 
+  // 2. SubClassData: SSSS SSSS SSSS SSS E. E=0 -> return block address E=1 -> return successor of block address. Value form from S = which successor
   void *operator new(size_t s) { return User::operator new(s, BLOCKADDRESS_OP); }
 #endif
 
@@ -878,7 +878,7 @@ public:
   /// block must be embedded into a function.
   static BlockAddress *get(BasicBlock *BB);
 
-  /// Return a Blockaddress corresponding to the terminator instruction. The basic 
+  /// Return a Blockaddress corresponding to the terminator instruction. The basic
   /// block must be embedded into a function.
   static BlockAddress *get(BasicBlock *BB, unsigned successor);
 
@@ -895,7 +895,7 @@ public:
 
 #if 1
   unsigned isReturnSuccessor() const { return getSubclassDataFromValue() & 0x1; }
-  unsigned getIndexOfSucc() const { 
+  unsigned getIndexOfSucc() const {
     return (getSubclassDataFromValue() >> 0x1) & 0xFFFF;
   }
 
@@ -907,13 +907,13 @@ public:
     setValueSubclassData( (v&0x1) | getSubclassDataFromValue());
   }
 
-  BasicBlock *getBasicBlockorSuccessor() const { 
+  BasicBlock *getBasicBlockorSuccessor() const {
     BasicBlock* bb = getBasicBlock();
     if(isReturnSuccessor()) {
       unsigned successor = getIndexOfSucc();
-      TerminatorInst* ti = (bb->getTerminator());         
+      TerminatorInst* ti = (bb->getTerminator());
 
-      //outs() << "Getbasicblocksuccessor\n";      
+      //outs() << "Getbasicblocksuccessor\n";
       //ti->dump();
       //outs() << "bb: " << bb->getName() <<  "\n";
       //bbSucc->dump();
@@ -922,10 +922,10 @@ public:
 
       //bbSucc->AdjustBlockAddressRefCount(1);
 
-      return bbSucc;      
+      return bbSucc;
     } else  {
       return bb;
-    }  
+    }
   }
 #endif
 

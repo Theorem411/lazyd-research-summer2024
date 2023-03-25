@@ -2826,7 +2826,7 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
 
       // Get the correct field of the environment struct
       int EnvStructIndex = FD->inletCaptureEnvironmentFieldIndex(VD);
-      
+
       if (EnvStructIndex != -1) {
         Address addr = Builder.CreateStructGEP(InletEnvAlloca, EnvStructIndex, /*offset=*/CharUnits::fromQuantity(0), "inlet.localaccess.addr");
 

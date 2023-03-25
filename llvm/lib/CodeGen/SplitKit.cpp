@@ -115,7 +115,7 @@ InsertPointAnalysis::computeLastInsertPoint(const LiveInterval &CurLI,
 	LIP.second = LIS.getInstructionIndex(*I);
         break;
       } else if ( TLI->isSaveContextOpcode(*I) ) {
-	// For the case that we encounter a save context + multireturncall (similar to setjmp)  
+	// For the case that we encounter a save context + multireturncall (similar to setjmp)
 	LIP.second = LIS.getInstructionIndex(*I);
         break;
       }

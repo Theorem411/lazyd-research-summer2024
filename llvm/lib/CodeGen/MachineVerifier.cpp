@@ -663,12 +663,12 @@ MachineVerifier::visitMachineBasicBlockBefore(const MachineBasicBlock *MBB) {
     report("MBB has more than one landing pad successor", MBB);
 #else
   // When we have spawn fcn, landingpadsucc > 1 and it should not have a personality function
-  if (LandingPadSuccs.size() > 1 && F.hasPersonalityFn() ) {     
+  if (LandingPadSuccs.size() > 1 && F.hasPersonalityFn() ) {
     if (LandingPadSuccs.size() > 1 &&
 	!(AsmInfo &&
 	  AsmInfo->getExceptionHandlingType() == ExceptionHandling::SjLj &&
 	  BB && isa<SwitchInst>(BB->getTerminator())) &&
-	!isFuncletEHPersonality(classifyEHPersonality(F.getPersonalityFn()))) 
+	!isFuncletEHPersonality(classifyEHPersonality(F.getPersonalityFn())))
       report("MBB has more than one landing pad successor", MBB);
   }
 #endif
@@ -3241,7 +3241,7 @@ void MachineVerifier::verifyStackFrame() {
         BBState.ExitValue -= TII->getFrameTotalSize(I);
         BBState.ExitIsSetup = true;
       }
-      
+
       // TODO: Fix this hack
       if (I.getOpcode() == FrameDestroyOpcode) {
         int Size = TII->getFrameTotalSize(I);

@@ -184,7 +184,7 @@ public:
 #if 0
     // Color the basic block related to slowpath and unwind code in the generated dot file. In UnwindABI.cpp, remove #if 0 #else #end. In SelectionDAGBuilder, do not add label on forkable function
     O << "\tNode" << static_cast<const void*>(Node) << " [shape=record,";
-    
+
 
     if (!DTraits.renderGraphFromBottomUp()) {
       std::string info = DOT::EscapeString(DTraits.getNodeLabel(Node, G));
@@ -192,7 +192,7 @@ public:
       // Check if slow path
       if ( nameBB.find("slowPath") != std::string::npos) {
 	O << "style=filled,fillcolor=\"#00ff005f\",";
-      }      
+      }
       // Check if gotstolen basic block
       else if  (nameBB.find("gotstolenhandler") != std::string::npos) {
 	O << "style=filled,fillcolor=\"#0000ff5f\",";

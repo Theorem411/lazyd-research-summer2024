@@ -1164,7 +1164,7 @@ void TargetPassConfig::addMachinePasses() {
 
   // Run register allocation and passes that are tightly coupled with it,
   // including phi elimination and scheduling.
-  
+
   // TODO:
   // If there is an instance of multiretcall, use the optimized version, as the fast reg alloc doesn not allow live inst?
 

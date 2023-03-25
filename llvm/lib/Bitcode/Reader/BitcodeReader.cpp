@@ -4940,13 +4940,13 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
       I = new UnreachableInst(Context);
       InstructionList.push_back(I);
       break;
-    case bitc::FUNC_CODE_INST_RETPAD: { // RETPAD: [opty, op]      
+    case bitc::FUNC_CODE_INST_RETPAD: { // RETPAD: [opty, op]
       // TODO: Check if this code is correct
       unsigned Idx = 0;
       Type *Ty = getTypeByID(Record[Idx++]);
       if (!Ty)
         return error("Invalid record");
-      
+
       //I = new RetPadInst(Ty, nullptr);
       //InstructionList.push_back(I);
       break;

@@ -354,19 +354,19 @@ void PEI::calculateCallFrameInfo(MachineFunction &MF) {
     for (MachineBasicBlock *SMBB : BB->successors()) {
       if (SMBB->isGotstolenHandler()) {
 	//outs() << "Gotstolen handler found: " << SMBB->getName() <<"\n";
-	// Get the predecessor 
+	// Get the predecessor
 	for (MachineBasicBlock *PMBB : BB->predecessors()) {
 	  //outs() << "Predecessors for got handler found: " << PMBB->getName() <<"\n";
 	  for (MachineBasicBlock::iterator I = PMBB->end(), E = PMBB->begin(); I != E;) {
 	    --I;
 	    if (TII.isFrameInstr(*I)) {
-	      unsigned Size = TII.getFrameSize(*I);		
+	      unsigned Size = TII.getFrameSize(*I);
 	      //outs() << "Gotstolen handler name : " << SMBB->getName() << "Spawn name: " << PMBB->getName() << "Size: " << Size << "\n";
 	      //I->dump();
 	      PMBB->mapAdjToGotStolen[&*I] = SMBB->getFirstNonPHI();
 	      break;
 	    }
-	  }	  
+	  }
 	}
       }
     }

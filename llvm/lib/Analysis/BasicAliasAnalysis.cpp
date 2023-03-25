@@ -922,7 +922,6 @@ ModRefInfo BasicAAResult::getModRefInfo(const CallBase *Call,
           !CI->getAttributes().hasAttrSomewhere(Attribute::ByVal))
         return ModRefInfo::NoModRef;
 
-
   // Stack restore is able to modify unescaped dynamic allocas. Assume it may
   // modify them even though the alloca is not escaped.
   if (auto *AI = dyn_cast<AllocaInst>(Object))

@@ -31,7 +31,7 @@ public:
 
   void recalculate(Function& F);
 private:
-  
+
   bool ignoreInst(Instruction* I);
   BitVector unionFcn (std::vector<BitVector> &values);
   BitVector livenessTrans(BitVector &value, std::vector<BitVector> &genAndKill);
@@ -61,9 +61,9 @@ public:
 
 class LiveVariableWrapperPass : public FunctionPass {
  public:
-  static char ID;  
+  static char ID;
 
-  LiveVariableWrapperPass() : FunctionPass(ID) { 
+  LiveVariableWrapperPass() : FunctionPass(ID) {
     outs() << "Live Initialize 1\n";
     initializeLiveVariableWrapperPassPass(*PassRegistry::getPassRegistry());
     outs() << "Live Initialize 2\n";
@@ -76,8 +76,8 @@ class LiveVariableWrapperPass : public FunctionPass {
   bool runOnFunction(Function& F) override;
   void getAnalysisUsage(AnalysisUsage& AU) const;
 
-  //static void registerClangPass(const PassManagerBuilder &, legacy::PassManagerBase &PM); 
-  
+  //static void registerClangPass(const PassManagerBuilder &, legacy::PassManagerBase &PM);
+
  private:
   LiveVariable LV;
 };

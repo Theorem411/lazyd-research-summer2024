@@ -381,7 +381,7 @@ bool X86ExpandPseudo::ExpandMI(MachineBasicBlock &MBB,
   case X86::ULIREPLYN: {
     // Replace pseudo with machine iret
     MachineOperand &SrcAddr = MBBI->getOperand(0);
-    
+
     BuildMI(MBB, MBBI, DL,
             TII->get( X86::ULIREPLY ) ).addReg(SrcAddr.getReg());
     MBB.erase(MBBI);
@@ -392,7 +392,7 @@ bool X86ExpandPseudo::ExpandMI(MachineBasicBlock &MBB,
     // Replace pseudo with machine iret
     MachineOperand &SrcAddr0 = MBBI->getOperand(0);
     MachineOperand &SrcAddr1 = MBBI->getOperand(1);
-    
+
     MachineInstrBuilder MIB = BuildMI(MBB, MBBI, DL,
 		  TII->get( X86::ULISEND ) );
 

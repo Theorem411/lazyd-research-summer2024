@@ -255,7 +255,7 @@ CallInst *createCallMatchingInvoke(InvokeInst *II);
 CallInst *changeToCall(InvokeInst *II, DomTreeUpdater *DTU = nullptr);
 
 /// This function is used to run GVN in the middle of a pass.
-/// Able to remove redundant loads  
+/// Able to remove redundant loads
 bool runOldGVN(bool NoLoads, Function &F, AssumptionCache &RunAC, DominatorTree &RunDT,
 	       const TargetLibraryInfo &RunTLI, AAResults &RunAA,
 	       MemoryDependenceResults *RunMD, LoopInfo *LI,

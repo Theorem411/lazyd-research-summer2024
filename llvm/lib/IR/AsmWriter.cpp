@@ -1444,7 +1444,7 @@ static void WriteConstantInternal(raw_ostream &Out, const Constant *CV,
 
     if(BA->isReturnSuccessor()) {
       Out << " successor ";
-      unsigned succIndex = BA->getIndexOfSucc();      
+      unsigned succIndex = BA->getIndexOfSucc();
       Out << ' ';
       TypePrinter.print(Type::getInt32Ty(BA->getBasicBlock()->getContext()), Out);
       Out << ' ';

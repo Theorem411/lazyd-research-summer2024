@@ -94,16 +94,16 @@ namespace llvm {
     Value* lowerGrainsizeCall(CallInst *GrainsizeCall);
     void replaceUses(Instruction *liveVar, Instruction *slowLiveVar);
     void simplifyFcn(Function &F);
-    void postProcessCfg(Function &F);    
+    void postProcessCfg(Function &F);
     void createParallelRegion(Function& F, SmallVector<DetachInst*, 4> bbOrder, DenseMap<DetachInst *, SmallPtrSet<BasicBlock*, 8>>& RDIPath, DenseMap<DetachInst *, SmallPtrSet<BasicBlock*, 8>>& RDIBB, DenseMap<SyncInst *, SmallPtrSet<BasicBlock*, 8>>& RSIPath, SmallPtrSet<BasicBlock*, 32>& parallelRegions, SmallPtrSet<BasicBlock*, 32>& frontierParallelRegions, SmallPtrSet<BasicBlock*, 32>& exitParallelRegions);
-    
-    void initializeParallelCtx(Function& F, SmallVector<DetachInst*, 4> bbOrder, DenseMap<DetachInst *, SmallPtrSet<BasicBlock*, 8>>& RDIPath, DenseMap<DetachInst *, SmallPtrSet<BasicBlock*, 8>>& RDIBB, Value* readyctx, Value* ownerAlloc, SmallPtrSet<BasicBlock*, 32>& parallelRegions, SmallPtrSet<BasicBlock*, 32>& frontierParallelRegions);    
+
+    void initializeParallelCtx(Function& F, SmallVector<DetachInst*, 4> bbOrder, DenseMap<DetachInst *, SmallPtrSet<BasicBlock*, 8>>& RDIPath, DenseMap<DetachInst *, SmallPtrSet<BasicBlock*, 8>>& RDIBB, Value* readyctx, Value* ownerAlloc, SmallPtrSet<BasicBlock*, 32>& parallelRegions, SmallPtrSet<BasicBlock*, 32>& frontierParallelRegions);
     void instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder,  SmallVector<SyncInst*, 8>& syncInsts, Value* ownerAlloc, Value* joincntrAlloc, Value* readyctx);
-    
+
     void deinitializeParallelCtx(Function& F, Value* joincntrAlloc, Value* readyctx, SmallPtrSet<BasicBlock*, 32>& exitParallelRegions);
     void instrumentMainFcn(Function& F);
 
-  public:    
+  public:
     /// \return Preserved analyses of function \p F after transformation.
     PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
 

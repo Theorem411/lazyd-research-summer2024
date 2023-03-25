@@ -2065,7 +2065,7 @@ void Sema::PushFunctionScope( bool isInlet ) {
     InletScopeInfo *ISI = new InletScopeInfo(getDiagnostics());
     FunctionScopes.push_back(ISI);
     if (LangOpts.OpenMP)
-      pushOpenMPFunctionRegion();          
+      pushOpenMPFunctionRegion();
     return;
   } else if(FunctionScopes.size() == 1) {
     FunctionScopes.back()->Clear();

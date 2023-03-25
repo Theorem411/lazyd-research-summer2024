@@ -139,7 +139,7 @@ bool ULIPollingInsertionPass::instrumentLoop (Loop& L) {
 bool ULIPollingInsertionPass::insertPollingAtLoop(Loop &L) {
   SmallVector<Loop *, 8> VisitStack = {&L};
   Function *F = L.getHeader()->getParent();
-  
+
   bool Changed = false;
 
   instrumentLoop(L);
@@ -185,9 +185,9 @@ bool ULIPollingInsertionPass::runImpl(Function &F,
   insertPollingAtFunction(F);
   for (Loop *L : *LI)
     insertPollingAtLoop(*L);
-#else  
+#else
   //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  // Instrument prologue and epilogue to insert parallel runtime call  
+  // Instrument prologue and epilogue to insert parallel runtime call
   IRBuilder<> B(F.getContext());
   B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
   Module *M = F.getParent();

@@ -2578,7 +2578,7 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
     // is the processor id the message is coming from)
     const FunctionDecl *FD = cast<FunctionDecl>(CurCodeDecl);
 
-    bool isUserLevelInterrupt = llvm::any_of(FD->attrs(), 
+    bool isUserLevelInterrupt = llvm::any_of(FD->attrs(),
         [](Attr *attr) { return attr->getKind() == attr::UserLevelInterrupt; }
         );
 

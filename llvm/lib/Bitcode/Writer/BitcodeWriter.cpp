@@ -3046,8 +3046,8 @@ void ModuleBitcodeWriter::writeInstruction(const Instruction &I,
 #if 0
     // TODO: Check if this code is correct
     Code = bitc::FUNC_CODE_INST_RETPAD;
-    if (!pushValueAndType(I.getOperand(0), InstID, Vals)) 
-      AbbrevToUse = FUNCTION_INST_RETPAD_ABBREV;    
+    if (!pushValueAndType(I.getOperand(0), InstID, Vals))
+      AbbrevToUse = FUNCTION_INST_RETPAD_ABBREV;
     Vals.push_back(VE.getTypeID(I.getType()));
 #endif
     break;

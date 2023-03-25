@@ -1135,7 +1135,7 @@ static const Value *getCanonicalTaskFrameCreate(const BasicBlock *BB) {
 }
 
 /// RemoveSync - Remove the sync inst by the specified
-/// detach instruction.  
+/// detach instruction.
 BranchInst *llvm::RemoveSync(DetachInst *HeadDetach) {
   Value *SyncRegion = HeadDetach->getSyncRegion();
   // Check the Tapir instructions contained in this sync region.  Look for a

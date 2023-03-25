@@ -3146,12 +3146,12 @@ public:
       : FunctionPass(ID), Impl(GVNOptions().setMemDep(!NoMemDepAnalysis)) {
     initializeGVNLegacyPassPass(*PassRegistry::getPassRegistry());
   }
-  
+
   // Run GVN using arguments provided by the caller
   bool runGVN(Function &F, AssumptionCache &RunAC, DominatorTree &RunDT,
 	      const TargetLibraryInfo &RunTLI, AAResults &RunAA,
 	      MemoryDependenceResults *RunMD, LoopInfo *LI,
-	      OptimizationRemarkEmitter *RunORE) {    
+	      OptimizationRemarkEmitter *RunORE) {
     return Impl.runImpl(F, RunAC, RunDT, RunTLI, RunAA, RunMD, LI, RunORE);
   }
 
