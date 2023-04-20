@@ -3126,10 +3126,10 @@ void SelectionDAGBuilder::visitMultiRetCall(const MultiRetCallInst &I) {
       break;
 
 
-    case Intrinsic::x86_uli_save_callee_nosp:
-    case Intrinsic::x86_uli_save_context_nosp:
-    case Intrinsic::x86_uli_save_context:
-    case Intrinsic::x86_uli_save_callee:
+    case Intrinsic::uli_save_callee_nosp:
+    case Intrinsic::uli_save_context_nosp:
+    case Intrinsic::uli_save_context:
+    case Intrinsic::uli_save_callee:
       const char *RenameFn = nullptr;
       if (Function *F = I.getCalledFunction()) {
         if (F->isDeclaration()) {
@@ -3150,7 +3150,7 @@ void SelectionDAGBuilder::visitMultiRetCall(const MultiRetCallInst &I) {
     assert(0 && "MultiRetCall does not lower OB_deopt\n");
   } else {
     // Need one for multi return call
-    LowerMultiRetCallPrologueTo(&I, getValue(Callee), false, nullptr);
+    LowerMultiRetCallPrologueTo(I, getValue(Callee), false, nullptr);
   }
 
   // Without setHasAddressTaken(1)
@@ -3210,14 +3210,14 @@ void SelectionDAGBuilder::visitRetPad(const RetPadInst &I) {
   const Value *Callee(MRCI->getCalledValue());
 
   // Create DAG for the remaining of the function call
-  LowerMultiRetCallEpilogueTo(MRCI, getValue(Callee), false, nullptr);
+  LowerMultiRetCallEpilogueTo(*MRCI, getValue(Callee), false, nullptr);
 
   // Perform the copy of rax/eax to other register. Used for epilogue
   // If the value of the invoke is used outside of its defining block, make it
   // available as a virtual register.
   // We already took care of the exported value for the statepoint instruction
   // during call to the LowerStatepoint.
-  if (!isStatepoint(I)) {
+  if (!isa<GCStatepointInst>(I)) {
     if (!MRCI->getType()->isVoidTy()) {
 
 
@@ -5216,7 +5216,7 @@ void SelectionDAGBuilder::visitTargetIntrinsic(const MultiRetCallInst &I, unsign
                                         TLI.getPointerTy(DAG.getDataLayout())));
 
   // Add all operands of the call to the operand list.
-  for (unsigned i = 0, e = I.getNumArgOperands(); i != e; ++i) {
+  for (unsigned i = 0, e = I.arg_size(); i != e; ++i) {
     SDValue Op = getValue(I.getArgOperand(i));
     Ops.push_back(Op);
   }
@@ -8135,15 +8135,15 @@ void SelectionDAGBuilder::LowerCallTo(const CallBase &CB, SDValue Callee,
   }
 }
 
-void SelectionDAGBuilder::LowerMultiRetCallPrologueTo(ImmutableCallSite CS, SDValue Callee,
+void SelectionDAGBuilder::LowerMultiRetCallPrologueTo(const MultiRetCallInst &CB, SDValue Callee,
                                       bool isTailCall,
                                       const BasicBlock *EHPadBB) {
   auto &DL = DAG.getDataLayout();
-  FunctionType *FTy = CS.getFunctionType();
-  Type *RetTy = CS.getType();
+  FunctionType *FTy = CB.getFunctionType();
+  Type *RetTy = CB.getType();
 
   TargetLowering::ArgListTy Args;
-  Args.reserve(CS.arg_size());
+  Args.reserve(CB.arg_size());
 
   const Value *SwiftErrorVal = nullptr;
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
@@ -8151,7 +8151,7 @@ void SelectionDAGBuilder::LowerMultiRetCallPrologueTo(ImmutableCallSite CS, SDVa
   // We can't tail call inside a function with a swifterror argument. Lowering
   // does not support this yet. It would have to move into the swifterror
   // register before the call.
-  auto *Caller = CS.getInstruction()->getParent()->getParent();
+  auto *Caller = CB.getParent()->getParent();
 
 #if 0
   if (TLI.supportSwiftError() &&
@@ -8159,10 +8159,9 @@ void SelectionDAGBuilder::LowerMultiRetCallPrologueTo(ImmutableCallSite CS, SDVa
     isTailCall = false;
 #endif
 
-  for (ImmutableCallSite::arg_iterator i = CS.arg_begin(), e = CS.arg_end();
-       i != e; ++i) {
+  for (auto I = CB.arg_begin(), E = CB.arg_end(); I != E; ++I) {
     TargetLowering::ArgListEntry Entry;
-    const Value *V = *i;
+    const Value *V = *I;
 
     // Skip empty types
     if (V->getType()->isEmptyTy())
@@ -8171,18 +8170,15 @@ void SelectionDAGBuilder::LowerMultiRetCallPrologueTo(ImmutableCallSite CS, SDVa
     SDValue ArgNode = getValue(V);
     Entry.Node = ArgNode; Entry.Ty = V->getType();
 
-    Entry.setAttributes(&CS, i - CS.arg_begin());
+    Entry.setAttributes(&CB, I - CB.arg_begin());
 
     // Use swifterror virtual register as input to the call.
     if (Entry.IsSwiftError && TLI.supportSwiftError()) {
       SwiftErrorVal = V;
       // We find the virtual register for the actual swifterror argument.
       // Instead of using the Value, we use the virtual register instead.
-      Entry.Node = DAG.getRegister(FuncInfo
-                                       .getOrCreateSwiftErrorVRegUseAt(
-                                           CS.getInstruction(), FuncInfo.MBB, V)
-                                       .first,
-                                   EVT(TLI.getPointerTy(DL)));
+      Entry.Node = DAG.getRegister(SwiftError.getOrCreateVRegUseAt(&CB, FuncInfo.MBB, V),
+                          EVT(TLI.getPointerTy(DL)));
     }
 
     Args.push_back(Entry);
@@ -8210,22 +8206,24 @@ void SelectionDAGBuilder::LowerMultiRetCallPrologueTo(ImmutableCallSite CS, SDVa
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(getCurSDLoc())
       .setChain(getRoot())
-      .setCallee(RetTy, FTy, Callee, std::move(Args), CS)
+      .setCallee(RetTy, FTy, Callee, std::move(Args), CB)
       .setTailCall(isTailCall)
-      .setConvergent(CS.isConvergent());
+      .setConvergent(CB.isConvergent())
+      .setIsPreallocated(
+          CB.countOperandBundlesOfType(LLVMContext::OB_preallocated) != 0);
 
   lowerMultiRetCallPrologue(CLI, EHPadBB);
 }
 
-void SelectionDAGBuilder::LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDValue Callee,
+void SelectionDAGBuilder::LowerMultiRetCallEpilogueTo(const MultiRetCallInst &CB, SDValue Callee,
                                       bool isTailCall,
                                       const BasicBlock *EHPadBB) {
   auto &DL = DAG.getDataLayout();
-  FunctionType *FTy = CS.getFunctionType();
-  Type *RetTy = CS.getType();
+  FunctionType *FTy = CB.getFunctionType();
+  Type *RetTy = CB.getType();
 
   TargetLowering::ArgListTy Args;
-  Args.reserve(CS.arg_size());
+  Args.reserve(CB.arg_size());
 
   const Value *SwiftErrorVal = nullptr;
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
@@ -8241,10 +8239,9 @@ void SelectionDAGBuilder::LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDVa
 #endif
 
 #if 1
-  for (ImmutableCallSite::arg_iterator i = CS.arg_begin(), e = CS.arg_end();
-       i != e; ++i) {
+  for (auto I = CB.arg_begin(), E = CB.arg_end(); I != E; ++I) {
     TargetLowering::ArgListEntry Entry;
-    const Value *V = *i;
+    const Value *V = *I;
 
     // Skip empty types
     if (V->getType()->isEmptyTy())
@@ -8253,18 +8250,16 @@ void SelectionDAGBuilder::LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDVa
     SDValue ArgNode = getValue(V);
     Entry.Node = ArgNode; Entry.Ty = V->getType();
 
-    Entry.setAttributes(&CS, i - CS.arg_begin());
+    Entry.setAttributes(&CB, I - CB.arg_begin());
 
     // Use swifterror virtual register as input to the call.
     if (Entry.IsSwiftError && TLI.supportSwiftError()) {
       SwiftErrorVal = V;
       // We find the virtual register for the actual swifterror argument.
       // Instead of using the Value, we use the virtual register instead.
-      Entry.Node = DAG.getRegister(FuncInfo
-                                       .getOrCreateSwiftErrorVRegUseAt(
-                                           CS.getInstruction(), FuncInfo.MBB, V)
-                                       .first,
-                                   EVT(TLI.getPointerTy(DL)));
+      Entry.Node = DAG.getRegister(SwiftError.getOrCreateVRegUseAt(&CB, FuncInfo.MBB, V),
+				   EVT(TLI.getPointerTy(DL)));
+
     }
 
     Args.push_back(Entry);
@@ -8294,16 +8289,18 @@ void SelectionDAGBuilder::LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDVa
   TargetLowering::CallLoweringInfo CLI(DAG);
   CLI.setDebugLoc(getCurSDLoc())
       .setChain(getRoot())
-      .setCallee(RetTy, FTy, Callee, std::move(Args), CS)
+      .setCallee(RetTy, FTy, Callee, std::move(Args), CB)
       .setTailCall(isTailCall)
-      .setConvergent(CS.isConvergent());
+      .setConvergent(CB.isConvergent())
+      .setIsPreallocated(
+          CB.countOperandBundlesOfType(LLVMContext::OB_preallocated) != 0);
+
 
   std::pair<SDValue, SDValue> Result = lowerMultiRetCallEpilogue(CLI, EHPadBB);
 
   if (Result.first.getNode()) {
-    const Instruction *Inst = CS.getInstruction();
-    Result.first = lowerRangeToAssertZExt(DAG, *Inst, Result.first);
-    setValue(Inst, Result.first);
+    Result.first = lowerRangeToAssertZExt(DAG, CB, Result.first);
+    setValue(&CB, Result.first);
   }
 
 #if 0
@@ -8315,7 +8312,7 @@ void SelectionDAGBuilder::LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDVa
     SDValue Src = CLI.InVals.back();
     unsigned VReg; bool CreatedVReg;
     std::tie(VReg, CreatedVReg) =
-        FuncInfo.getOrCreateSwiftErrorVRegDefAt(CS.getInstruction());
+        FuncInfo.getOrCreateSwiftErrorVRegDefAt(CB.getInstruction());
     SDValue CopyNode = CLI.DAG.getCopyToReg(Result.second, CLI.DL, VReg, Src);
     // We update the virtual register for the actual swifterror argument.
     if (CreatedVReg)
@@ -10205,7 +10202,7 @@ TargetLowering::LowerCallTo(TargetLowering::CallLoweringInfo &CLI) const {
     //        "sret demotion is incompatible with inalloca");
     uint64_t TySize = DL.getTypeAllocSize(CLI.RetTy);
     Align Alignment = DL.getPrefTypeAlign(CLI.RetTy);
-    MachineFunction &MF = CLI.DAG.getMachineFunction();
+     MachineFunction &MF = CLI.DAG.getMachineFunction();
     DemoteStackIdx =
         MF.getFrameInfo().CreateStackObject(TySize, Alignment, false);
     Type *StackSlotPtrType = PointerType::get(CLI.RetTy,
@@ -10581,7 +10578,7 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
 
 #if 1 // Seems to be needed
   SmallVector<ISD::OutputArg, 4> Outs;
-  GetReturnInfo(CLI.RetTy, getReturnAttrs(CLI), Outs, *this, DL);
+  GetReturnInfo(CLI.CallConv, CLI.RetTy, getReturnAttrs(CLI), Outs, *this, DL);
 
   bool CanLowerReturn =
       this->CanLowerReturn(CLI.CallConv, CLI.DAG.getMachineFunction(),
@@ -10595,9 +10592,9 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
     // assert(!CS.hasInAllocaArgument() &&
     //        "sret demotion is incompatible with inalloca");
     uint64_t TySize = DL.getTypeAllocSize(CLI.RetTy);
-    unsigned Align = DL.getPrefTypeAlignment(CLI.RetTy);
+    Align Alignment = DL.getPrefTypeAlign(CLI.RetTy);
     MachineFunction &MF = CLI.DAG.getMachineFunction();
-    DemoteStackIdx = MF.getFrameInfo().CreateStackObject(TySize, Align, false);
+    DemoteStackIdx = MF.getFrameInfo().CreateStackObject(TySize, Alignment, false);
     Type *StackSlotPtrType = PointerType::getUnqual(CLI.RetTy);
 
     DemoteStackSlot = CLI.DAG.getFrameIndex(DemoteStackIdx, getFrameIndexTy(DL));
@@ -10613,7 +10610,7 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
     Entry.IsReturned = false;
     Entry.IsSwiftSelf = false;
     Entry.IsSwiftError = false;
-    Entry.Alignment = Align;
+    Entry.Alignment = Alignment;
     CLI.getArgs().insert(CLI.getArgs().begin(), Entry);
     CLI.NumFixedArgs += 1;
     CLI.RetTy = Type::getVoidTy(CLI.RetTy->getContext());
@@ -10625,9 +10622,9 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
     for (unsigned I = 0, E = RetTys.size(); I != E; ++I) {
       EVT VT = RetTys[I];
       MVT RegisterVT =
-          getRegisterTypeForCallingConv(CLI.RetTy->getContext(), VT);
+     	  getRegisterTypeForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
       unsigned NumRegs =
-          getNumRegistersForCallingConv(CLI.RetTy->getContext(), VT);
+	  getNumRegistersForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
       for (unsigned i = 0; i != NumRegs; ++i) {
         ISD::InputArg MyFlags;
         MyFlags.VT = RegisterVT;
@@ -10740,9 +10737,9 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
         Flags.setInConsecutiveRegs();
       Flags.setOrigAlign(OriginalAlignment);
 
-      MVT PartVT = getRegisterTypeForCallingConv(CLI.RetTy->getContext(), VT);
+      MVT PartVT = getRegisterTypeForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
       unsigned NumParts =
-          getNumRegistersForCallingConv(CLI.RetTy->getContext(), VT);
+          getNumRegistersForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
       SmallVector<SDValue, 4> Parts(NumParts);
       ISD::NodeType ExtendKind = ISD::ANY_EXTEND;
 
@@ -10845,7 +10842,7 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
 #endif
 
   SmallVector<ISD::OutputArg, 4> Outs;
-  GetReturnInfo(CLI.RetTy, getReturnAttrs(CLI), Outs, *this, DL);
+  GetReturnInfo(CLI.CallConv, CLI.RetTy, getReturnAttrs(CLI), Outs, *this, DL);
 
   bool CanLowerReturn =
       this->CanLowerReturn(CLI.CallConv, CLI.DAG.getMachineFunction(),
@@ -10858,9 +10855,9 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
     // assert(!CS.hasInAllocaArgument() &&
     //        "sret demotion is incompatible with inalloca");
     uint64_t TySize = DL.getTypeAllocSize(CLI.RetTy);
-    unsigned Align = DL.getPrefTypeAlignment(CLI.RetTy);
+    Align Alignment = DL.getPrefTypeAlign(CLI.RetTy);
     MachineFunction &MF = CLI.DAG.getMachineFunction();
-    DemoteStackIdx = MF.getFrameInfo().CreateStackObject(TySize, Align, false);
+    DemoteStackIdx = MF.getFrameInfo().CreateStackObject(TySize, Alignment, false);
     Type *StackSlotPtrType = PointerType::getUnqual(CLI.RetTy);
 
     DemoteStackSlot = CLI.DAG.getFrameIndex(DemoteStackIdx, getFrameIndexTy(DL));
@@ -10876,7 +10873,7 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
     Entry.IsReturned = false;
     Entry.IsSwiftSelf = false;
     Entry.IsSwiftError = false;
-    Entry.Alignment = Align;
+    Entry.Alignment = Alignment;
     CLI.getArgs().insert(CLI.getArgs().begin(), Entry);
     CLI.NumFixedArgs += 1;
     CLI.RetTy = Type::getVoidTy(CLI.RetTy->getContext());
@@ -10888,9 +10885,9 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
     for (unsigned I = 0, E = RetTys.size(); I != E; ++I) {
       EVT VT = RetTys[I];
       MVT RegisterVT =
-          getRegisterTypeForCallingConv(CLI.RetTy->getContext(), VT);
+          getRegisterTypeForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
       unsigned NumRegs =
-          getNumRegistersForCallingConv(CLI.RetTy->getContext(), VT);
+          getNumRegistersForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
       for (unsigned i = 0; i != NumRegs; ++i) {
         ISD::InputArg MyFlags;
         MyFlags.VT = RegisterVT;
@@ -11002,9 +10999,9 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
         Flags.setInConsecutiveRegs();
       Flags.setOrigAlign(OriginalAlignment);
 
-      MVT PartVT = getRegisterTypeForCallingConv(CLI.RetTy->getContext(), VT);
+      MVT PartVT = getRegisterTypeForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
       unsigned NumParts =
-          getNumRegistersForCallingConv(CLI.RetTy->getContext(), VT);
+          getNumRegistersForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
       SmallVector<SDValue, 4> Parts(NumParts);
       ISD::NodeType ExtendKind = ISD::ANY_EXTEND;
 
@@ -11138,9 +11135,9 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
     for (unsigned I = 0, E = RetTys.size(); I != E; ++I) {
       EVT VT = RetTys[I];
       MVT RegisterVT =
-          getRegisterTypeForCallingConv(CLI.RetTy->getContext(), VT);
+          getRegisterTypeForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
       unsigned NumRegs =
-          getNumRegistersForCallingConv(CLI.RetTy->getContext(), VT);
+          getNumRegistersForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
 
       ReturnValues.push_back(getCopyFromParts(CLI.DAG, CLI.DL, &InVals[CurReg],
                                               NumRegs, RegisterVT, VT, nullptr,

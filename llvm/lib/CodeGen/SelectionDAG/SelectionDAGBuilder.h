@@ -362,10 +362,10 @@ public:
   void LowerCallTo(const CallBase &CB, SDValue Callee, bool IsTailCall,
                    bool IsMustTailCall, const BasicBlock *EHPadBB = nullptr);
 
-  void LowerMultiRetCallPrologueTo(ImmutableCallSite CS, SDValue Callee, bool IsTailCall,
+  void LowerMultiRetCallPrologueTo(const MultiRetCallInst &CB, SDValue Callee, bool IsTailCall,
                    const BasicBlock *EHPadBB = nullptr);
 
-  void LowerMultiRetCallEpilogueTo(ImmutableCallSite CS, SDValue Callee, bool IsTailCall,
+  void LowerMultiRetCallEpilogueTo(const MultiRetCallInst &CB, SDValue Callee, bool IsTailCall,
                    const BasicBlock *EHPadBB = nullptr);
 
 
