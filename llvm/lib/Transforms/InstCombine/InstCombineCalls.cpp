@@ -2627,8 +2627,8 @@ Instruction *InstCombinerImpl::visitCallBrInst(CallBrInst &CBI) {
 }
 
 // MultiRetCallInst simplification
-Instruction *InstCombiner::visitMultiRetCallInst(MultiRetCallInst &II) {
-  return visitCallSite(&II);
+Instruction *InstCombinerImpl::visitMultiRetCallInst(MultiRetCallInst &II) {
+  return visitCallBase(II);
 }
 
 
@@ -2911,12 +2911,7 @@ Instruction *InstCombinerImpl::visitCallBase(CallBase &Call) {
       replaceInstUsesWith(Call, PoisonValue::get(Call.getType()));
 
     if (Call.isTerminator()) {
-      // Can't remove an invoke or callbr because we cannot change the CFG.
-      return nullptr;
-    }
-
-    if (isa<MultiRetCallInst>(CS.getInstruction())) {
-      // Can't remove an multiretcall because we cannot change the CFG.
+      // Can't remove an invoke or callbr or multiretcall because we cannot change the CFG.
       return nullptr;
     }
 
@@ -3323,7 +3318,7 @@ bool InstCombinerImpl::transformConstExprCastCall(CallBase &Call) {
     NewCall = Builder.CreateCallBr(Callee, CBI->getDefaultDest(),
                                    CBI->getIndirectDests(), Args, OpBundles);
   } else if (MultiRetCallInst *II = dyn_cast<MultiRetCallInst>(Caller)) {
-    NewCS = Builder.CreateMultiRetCall(Callee, II->getDefaultDest(), II->getIndirectDests(), Args, OpBundles);
+    NewCall = Builder.CreateMultiRetCall(Callee, II->getDefaultDest(), II->getIndirectDests(), Args, OpBundles);
   } else {
     NewCall = Builder.CreateCall(Callee, Args, OpBundles);
     cast<CallInst>(NewCall)->setTailCallKind(
@@ -3509,7 +3504,7 @@ InstCombinerImpl::transformCallThroughTrampoline(CallBase &Call,
                                CBI->getIndirectDests(), NewArgs, OpBundles);
         cast<CallBrInst>(NewCaller)->setCallingConv(CBI->getCallingConv());
         cast<CallBrInst>(NewCaller)->setAttributes(NewPAL);
-      } else if(MultiRetCallInst *II = dyn_cast<MultiRetCallInst>(Caller)) {
+      } else if(MultiRetCallInst *II = dyn_cast<MultiRetCallInst>(&Call)) {
 	NewCaller =
 	  MultiRetCallInst::Create(NewFTy, NewCallee, II->getDefaultDest(),
 			     II->getIndirectDests(), NewArgs, OpBundles);

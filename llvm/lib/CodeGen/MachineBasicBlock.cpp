@@ -381,6 +381,8 @@ void MachineBasicBlock::print(raw_ostream &OS, ModuleSlotTracker &MST,
   const TargetInstrInfo &TII = *getParent()->getSubtarget().getInstrInfo();
   bool HasLineAttributes = false;
 
+#if 0
+  // TOOD: CNP is this needed
   // Debug for multiretcall
   const char *Comma = "";
   if (const BasicBlock *LBB = getBasicBlock()) {
@@ -388,13 +390,7 @@ void MachineBasicBlock::print(raw_ostream &OS, ModuleSlotTracker &MST,
     LBB->printAsOperand(OS, /*PrintType=*/false, MST);
     Comma = ", ";
   }
-  if (isEHPad()) { OS << Comma << "EH LANDING PAD"; Comma = ", "; }
-  if (isMultiRetCallIndirectTarget()) { OS << Comma << "MULTIRETCALL INDIRECT TARGET"; Comma = ", "; }
-  if (hasAddressTaken()) { OS << Comma << "ADDRESS TAKEN"; Comma = ", "; }
-  if (Alignment)
-    OS << Comma << "Align " << Alignment << " (" << (1u << Alignment)
-       << " bytes)";
-
+#endif
 
   // Print the preds of this block according to the CFG.
   if (!pred_empty() && IsStandalone) {
@@ -547,6 +543,13 @@ void MachineBasicBlock::printName(raw_ostream &os, unsigned printNameFlags,
       os << "landing-pad";
       hasAttributes = true;
     }
+
+    if (isMultiRetCallIndirectTarget()) {
+      os << (hasAttributes ? ", " : " (");
+      os << "multiretcallir-indirect-target";
+      hasAttributes = true;
+    }
+
     if (isInlineAsmBrIndirectTarget()) {
       os << (hasAttributes ? ", " : " (");
       os << "inlineasm-br-indirect-target";
@@ -708,7 +711,7 @@ void MachineBasicBlock::updateTerminator(
           PreviousLayoutSuccessor->isEHPad() || PreviousLayoutSuccessor->isMultiRetCallIndirectTarget())
 	return;
 #else
-      // TODO: Is this needed? 
+      // TODO: Is this needed?
       // The block has an unconditional fallthrough. If its successor is not its
       // layout successor, insert a branch. First we have to locate the only
       // non-landing-pad successor, as that is the fallthrough block.
@@ -1461,6 +1464,9 @@ void MachineBasicBlock::replacePhiUsesWith(MachineBasicBlock *Old,
         MO.setMBB(New);
     }
 }
+
+// TODO: CNP where is this repalced
+#if 0
 /// Various pieces of code can cause excess edges in the CFG to be inserted.  If
 /// we have proven that MBB can only branch to DestA and DestB, remove any other
 /// MBB successors from the CFG.  DestA and DestB can be null.
@@ -1517,6 +1523,8 @@ bool MachineBasicBlock::CorrectExtraCFGEdges(MachineBasicBlock *DestA,
       ++SI;
     }
 }
+
+#endif
 
 
 /// Find the next valid DebugLoc starting at MBBI, skipping any DBG_VALUE

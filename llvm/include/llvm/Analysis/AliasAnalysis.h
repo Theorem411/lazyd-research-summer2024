@@ -754,6 +754,8 @@ public:
     return getModRefInfo(Call, MemoryLocation(P, Size));
   }
 
+  // TODO: CNP delete since is handled by CallBase
+#if 0
   /// getModRefInfo (for MultiRetCall) - Return information about whether
   /// a particular MultiRetCall modifies or reads the specified memory location.
   ModRefInfo getModRefInfo(const MultiRetCallInst *M, const MemoryLocation &Loc) {
@@ -764,6 +766,7 @@ public:
   ModRefInfo getModRefInfo(const MultiRetCallInst *M, const Value *P, uint64_t Size) {
     return getModRefInfo(M, MemoryLocation(P, Size));
   }
+#endif
 
   /// getModRefInfo (for detaches) - Return information about whether
   /// a particular detach modifies or reads the specified memory location.

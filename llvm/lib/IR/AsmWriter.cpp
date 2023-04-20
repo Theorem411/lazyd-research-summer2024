@@ -1446,9 +1446,9 @@ static void WriteConstantInternal(raw_ostream &Out, const Constant *CV,
       Out << " successor ";
       unsigned succIndex = BA->getIndexOfSucc();
       Out << ' ';
-      TypePrinter.print(Type::getInt32Ty(BA->getBasicBlock()->getContext()), Out);
+      WriterCtx.TypePrinter->print(Type::getInt32Ty(BA->getBasicBlock()->getContext()), Out);
       Out << ' ';
-      WriteAsOperandInternal(Out, ConstantInt::get(Type::getInt32Ty(BA->getBasicBlock()->getContext()), succIndex), &TypePrinter, Machine,  Context);
+      WriteAsOperandInternal(Out, ConstantInt::get(Type::getInt32Ty(BA->getBasicBlock()->getContext()), succIndex), WriterCtx);
     }
 
     return;
@@ -4280,7 +4280,7 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
       PrintCallingConv(II->getCallingConv(), Out);
     }
 
-    if (PAL.hasAttributes(AttributeList::ReturnIndex))
+    if (PAL.hasRetAttrs())
       Out << ' ' << PAL.getAsString(AttributeList::ReturnIndex);
 
     // If possible, print out the short form of the multiretcall instruction. We can
@@ -4293,15 +4293,22 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
     writeOperand(Operand, false);
     Out << '(';
 
-    for (unsigned op = 0, Eop = II->getNumArgOperands(); op < Eop; ++op) {
+    for (unsigned op = 0, Eop = CI->arg_size(); op < Eop; ++op) {
       if (op)
         Out << ", ";
-      writeParamOperand(II->getArgOperand(op), PAL.getParamAttributes(op));
+      writeParamOperand(CI->getArgOperand(op), PAL.getParamAttrs(op));
     }
 
+    // Emit an ellipsis if this is a musttail call in a vararg function.  This
+    // is only to aid readability, musttail calls forward varargs by default.
+    if (CI->isMustTailCall() && CI->getParent() &&
+        CI->getParent()->getParent() &&
+        CI->getParent()->getParent()->isVarArg())
+      Out << ", ...";
+
     Out << ')';
-    if (PAL.hasAttributes(AttributeList::FunctionIndex))
-      Out << " #" << Machine.getAttributeGroupSlot(PAL.getFnAttributes());
+    if (PAL.hasFnAttrs())
+      Out << " #" << Machine.getAttributeGroupSlot(PAL.getFnAttrs());
 
     writeOperandBundles(II);
 

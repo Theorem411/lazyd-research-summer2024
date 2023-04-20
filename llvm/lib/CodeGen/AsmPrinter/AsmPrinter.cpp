@@ -82,7 +82,6 @@
 #include "llvm/IR/PseudoProbe.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
-#include "llvm/IR/TypeBuilder.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCDirectives.h"
@@ -1767,17 +1766,17 @@ bool AsmPrinter::doFinalization(Module &M) {
   if(!OutContext.preHashTableEntry.empty()) {
     MCSection *PreHashSection = getObjFileLowering().getPreHashSection();
     OutStreamer->SwitchSection( PreHashSection);
-    EmitAlignment(2);
-    Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());
+    emitAlignment(Align(2));
+    Type *VoidPtrTy = Type::getInt8PtrTy(M.getContext());
     MCSymbol *PreHashSym = OutContext.getOrCreateSymbol(Twine("Pre_Hash_table"));
-    OutStreamer->EmitLabel(PreHashSym);
+    OutStreamer->emitLabel(PreHashSym);
 
     for(auto labelPair: OutContext.preHashTableEntry) {
-      EmitLabelPlusOffset(labelPair.first, 0, 8, false);
-      EmitLabelPlusOffset(labelPair.second, 0, 8, false);
+      emitLabelPlusOffset(labelPair.first, 0, 8, false);
+      emitLabelPlusOffset(labelPair.second, 0, 8, false);
     }
     MCSymbol *PreHashSymEnd = OutContext.getOrCreateSymbol(Twine("Pre_Hash_table_end"));
-    OutStreamer->EmitLabel(PreHashSymEnd);
+    OutStreamer->emitLabel(PreHashSymEnd);
 
   }
 
@@ -1791,20 +1790,19 @@ bool AsmPrinter::doFinalization(Module &M) {
   if(!OutContext.preBSTTableEntry.empty()) {
     MCSection *PreBSTSection = getObjFileLowering().getPreBSTSection();
     OutStreamer->SwitchSection( PreBSTSection);
-    EmitAlignment(2);
-
-    Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());
+    emitAlignment(Align(2));
+    Type *VoidPtrTy = Type::getInt8PtrTy(M.getContext());
     MCSymbol *PreBSTSym = OutContext.getOrCreateSymbol(Twine("Pre_BST_table"));
-    OutStreamer->EmitLabel(PreBSTSym);
+    OutStreamer->emitLabel(PreBSTSym);
 
     for(auto labelTuple: OutContext.preBSTTableEntry) {
-      EmitLabelPlusOffset(std::get<0>(labelTuple), 0, 8, false);
-      EmitLabelPlusOffset(std::get<1>(labelTuple), 0, 8, false);
-      EmitLabelPlusOffset(std::get<2>(labelTuple), 0, 8, false);
+      emitLabelPlusOffset(std::get<0>(labelTuple), 0, 8, false);
+      emitLabelPlusOffset(std::get<1>(labelTuple), 0, 8, false);
+      emitLabelPlusOffset(std::get<2>(labelTuple), 0, 8, false);
     }
 
     MCSymbol *PreBSTSymEnd = OutContext.getOrCreateSymbol(Twine("Pre_BST_table_end"));
-    OutStreamer->EmitLabel(PreBSTSymEnd);
+    OutStreamer->emitLabel(PreBSTSymEnd);
   }
 
   /* Generate the Pre_PrologEpilog_table in the elf binary
@@ -1816,18 +1814,17 @@ bool AsmPrinter::doFinalization(Module &M) {
   if(!OutContext.prePrologEpilogEntry.empty()) {
     MCSection *PrePrologEpilogSection = getObjFileLowering().getPrePrologEpilogSection();
     OutStreamer->SwitchSection( PrePrologEpilogSection);
-    EmitAlignment(2);
-
-    Type *VoidPtrTy = TypeBuilder<void*, false>::get(M.getContext());
+    emitAlignment(Align(2));
+    Type *VoidPtrTy = Type::getInt8PtrTy(M.getContext());
     MCSymbol *PrePrologEpilogSym = OutContext.getOrCreateSymbol(Twine("Pre_PrologEpilog_table"));
-    OutStreamer->EmitLabel(PrePrologEpilogSym);
+    OutStreamer->emitLabel(PrePrologEpilogSym);
 
     for(auto labelTuple: OutContext.prePrologEpilogEntry) {
-      EmitLabelPlusOffset(std::get<0>(labelTuple), 0, 8, false);
-      EmitLabelPlusOffset(std::get<1>(labelTuple), 0, 8, false);
+      emitLabelPlusOffset(std::get<0>(labelTuple), 0, 8, false);
+      emitLabelPlusOffset(std::get<1>(labelTuple), 0, 8, false);
     }
     MCSymbol *PrePrologEpilogSymEnd = OutContext.getOrCreateSymbol(Twine("Pre_PrologEpilog_table_end"));
-    OutStreamer->EmitLabel(PrePrologEpilogSymEnd);
+    OutStreamer->emitLabel(PrePrologEpilogSymEnd);
   }
 
   // Gather all GOT equivalent globals in the module. We really need two
