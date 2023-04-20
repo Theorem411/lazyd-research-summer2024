@@ -277,6 +277,8 @@ CallBase *CallBase::Create(CallBase *CB, ArrayRef<OperandBundleDef> Bundles,
     return InvokeInst::Create(cast<InvokeInst>(CB), Bundles, InsertPt);
   case Instruction::CallBr:
     return CallBrInst::Create(cast<CallBrInst>(CB), Bundles, InsertPt);
+  case Instruction::MultiRetCall:
+    return MultiRetCallInst::Create(cast<MultiRetCallInst>(CB), Bundles, InsertPt);
   default:
     llvm_unreachable("Unknown CallBase sub-class!");
   }
@@ -298,7 +300,7 @@ CallBase *CallBase::Create(CallBase *CI, OperandBundleDef OpB,
 Function *CallBase::getCaller() { return getParent()->getParent(); }
 
 unsigned CallBase::getNumSubclassExtraOperandsDynamic() const {
-  assert(getOpcode() == Instruction::CallBr && "Unexpected opcode!");
+  assert((getOpcode() == Instruction::CallBr || getOpcode() == Instruction::MultiRetCall)  && "Unexpected opcode!");
   return cast<CallBrInst>(this)->getNumIndirectDests() + 1;
 }
 
@@ -1008,8 +1010,8 @@ void MultiRetCallInst::init(FunctionType *FTy, Value *Fn, BasicBlock *Fallthroug
   NumIndirectDests = IndirectDests.size();
   setDefaultDest(Fallthrough);
   for (unsigned i = 0; i != NumIndirectDests; ++i)
-   setIndirectDest(i, IndirectDests[i]);
-  setCalledFunction(Fn);
+    setIndirectDest(i, IndirectDests[i]);
+  setCalledOperand(Fn);
 
 #ifndef NDEBUG
   assert(((Args.size() == FTy->getNumParams()) ||
@@ -1037,18 +1039,16 @@ void MultiRetCallInst::updateArgBlockAddresses(unsigned i, BasicBlock *B) {
     // TODO: Check why I need the parent
     BlockAddress *Old = BlockAddress::get(OldBB->getParent(), OldBB);
     BlockAddress *New = BlockAddress::get(OldBB->getParent(), B);
-    for (unsigned ArgNo = 0, e = getNumArgOperands(); ArgNo != e; ++ArgNo)
+    for (unsigned ArgNo = 0, e = arg_size(); ArgNo != e; ++ArgNo)
       if (dyn_cast<BlockAddress>(getArgOperand(ArgNo)) == Old)
 	setArgOperand(ArgNo, New);
   }
 }
 
 MultiRetCallInst::MultiRetCallInst(const MultiRetCallInst &II)
-    : TerminatorInst(II.getType(), Instruction::MultiRetCall,
-                     OperandTraits<MultiRetCallInst>::op_end(this) -
-                         II.getNumOperands(),
-                     II.getNumOperands()),
-      Attrs(II.Attrs), FTy(II.FTy) {
+  : CallBase(II.Attrs, II.FTy, II.getType(), Instruction::MultiRetCall,
+             OperandTraits<CallBase>::op_end(this) - II.getNumOperands(),
+             II.getNumOperands()) {
   setCallingConv(II.getCallingConv());
   std::copy(II.op_begin(), II.op_end(), op_begin());
   std::copy(II.bundle_op_info_begin(), II.bundle_op_info_end(),
@@ -1070,110 +1070,6 @@ MultiRetCallInst *MultiRetCallInst::Create(MultiRetCallInst *II, ArrayRef<Operan
   NewII->setDebugLoc(II->getDebugLoc());
   NewII->NumIndirectDests = II->NumIndirectDests;
   return NewII;
-}
-
-Value *MultiRetCallInst::getReturnedArgOperand() const {
-  unsigned Index;
-
-  if (Attrs.hasAttrSomewhere(Attribute::Returned, &Index) && Index)
-    return getArgOperand(Index - AttributeList::FirstArgIndex);
-  if (const Function *F = getCalledFunction())
-    if (F->getAttributes().hasAttrSomewhere(Attribute::Returned, &Index) &&
-        Index)
-      return getArgOperand(Index - AttributeList::FirstArgIndex);
-
-  return nullptr;
-}
-
-bool MultiRetCallInst::hasRetAttr(Attribute::AttrKind Kind) const {
-  if (Attrs.hasAttribute(AttributeList::ReturnIndex, Kind))
-    return true;
-
-  // Look at the callee, if available.
-  if (const Function *F = getCalledFunction())
-    return F->getAttributes().hasAttribute(AttributeList::ReturnIndex, Kind);
-  return false;
-}
-
-bool MultiRetCallInst::paramHasAttr(unsigned i, Attribute::AttrKind Kind) const {
-  assert(i < getNumArgOperands() && "Param index out of bounds!");
-
-  if (Attrs.hasParamAttribute(i, Kind))
-    return true;
-  if (const Function *F = getCalledFunction())
-    return F->getAttributes().hasParamAttribute(i, Kind);
-  return false;
-}
-
-bool MultiRetCallInst::dataOperandHasImpliedAttr(unsigned i,
-                                           Attribute::AttrKind Kind) const {
-  // There are getNumOperands() - 3 data operands.  The last three operands are
-  // the callee and the two successor basic blocks.
-  assert(i < (getNumOperands() - 2) && "Data operand index out of bounds!");
-
-  // The attribute A can either be directly specified, if the operand in
-  // question is an invoke argument; or be indirectly implied by the kind of its
-  // containing operand bundle, if the operand is a bundle operand.
-
-  if (i == AttributeList::ReturnIndex)
-    return hasRetAttr(Kind);
-
-  // FIXME: Avoid these i - 1 calculations and update the API to use zero-based
-  // indices.
-  if (i < (getNumArgOperands() + 1))
-    return paramHasAttr(i - 1, Kind);
-
-  assert(hasOperandBundles() && i >= (getBundleOperandsStartIndex() + 1) &&
-         "Must be either an invoke argument or an operand bundle!");
-  return bundleOperandHasAttr(i - 1, Kind);
-}
-
-void MultiRetCallInst::addAttribute(unsigned i, Attribute::AttrKind Kind) {
-  AttributeList PAL = getAttributes();
-  PAL = PAL.addAttribute(getContext(), i, Kind);
-  setAttributes(PAL);
-}
-
-void MultiRetCallInst::addAttribute(unsigned i, Attribute Attr) {
-  AttributeList PAL = getAttributes();
-  PAL = PAL.addAttribute(getContext(), i, Attr);
-  setAttributes(PAL);
-}
-
-void MultiRetCallInst::addParamAttr(unsigned ArgNo, Attribute::AttrKind Kind) {
-  AttributeList PAL = getAttributes();
-  PAL = PAL.addParamAttribute(getContext(), ArgNo, Kind);
-  setAttributes(PAL);
-}
-
-void MultiRetCallInst::removeAttribute(unsigned i, Attribute::AttrKind Kind) {
-  AttributeList PAL = getAttributes();
-  PAL = PAL.removeAttribute(getContext(), i, Kind);
-  setAttributes(PAL);
-}
-
-void MultiRetCallInst::removeAttribute(unsigned i, StringRef Kind) {
-  AttributeList PAL = getAttributes();
-  PAL = PAL.removeAttribute(getContext(), i, Kind);
-  setAttributes(PAL);
-}
-
-void MultiRetCallInst::removeParamAttr(unsigned ArgNo, Attribute::AttrKind Kind) {
-  AttributeList PAL = getAttributes();
-  PAL = PAL.removeParamAttribute(getContext(), ArgNo, Kind);
-  setAttributes(PAL);
-}
-
-void MultiRetCallInst::addDereferenceableAttr(unsigned i, uint64_t Bytes) {
-  AttributeList PAL = getAttributes();
-  PAL = PAL.addDereferenceableAttr(getContext(), i, Bytes);
-  setAttributes(PAL);
-}
-
-void MultiRetCallInst::addDereferenceableOrNullAttr(unsigned i, uint64_t Bytes) {
-  AttributeList PAL = getAttributes();
-  PAL = PAL.addDereferenceableOrNullAttr(getContext(), i, Bytes);
-  setAttributes(PAL);
 }
 
 //===----------------------------------------------------------------------===//

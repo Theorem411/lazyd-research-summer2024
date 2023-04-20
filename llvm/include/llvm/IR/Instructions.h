@@ -62,8 +62,9 @@ class AllocaInst : public UnaryInstruction {
   using AlignmentField = AlignmentBitfieldElementT<0>;
   using UsedWithInAllocaField = BoolBitfieldElementT<AlignmentField::NextBit>;
   using SwiftErrorField = BoolBitfieldElementT<UsedWithInAllocaField::NextBit>;
-  static_assert(Bitfield::areContiguous<AlignmentField, UsedWithInAllocaField,
-                                        SwiftErrorField>(),
+  using ForkStorageField = BoolBitfieldElementT<SwiftErrorField::NextBit>;
+  static_assert(Bitfield::areContiguous<AlignmentField, UsedWithInAllocaField, SwiftErrorField,
+                                        ForkStorageField>(),
                 "Bitfields must be contiguous");
 
 protected:
@@ -151,16 +152,10 @@ public:
   /// Specify whether this alloca is used to represent a swifterror.
   void setSwiftError(bool V) { setSubclassData<SwiftErrorField>(V); }
 
-  /// Return true if this alloca is used as a swifterror argument to a call.
-  bool isForkStorage() const {
-    return getSubclassDataFromInstruction() & 128 ;
-  }
-
+  /// Return true if this alloca is used as for fork storage
+  bool isForkStorage() const { return getSubclassData<ForkStorageField>(); }
   /// Specify whether this alloca is used for fork storage
-  void setForkStorage(bool V) {
-    setInstructionSubclassData((getSubclassDataFromInstruction() & ~128) |
-                               (V ? 128 : 0));    
-  }
+  void setForkStorage(bool V) { setSubclassData<ForkStorageField>(V); }
 
   // Methods for support type inquiry through isa, cast, and dyn_cast:
   static bool classof(const Instruction *I) {
@@ -4223,9 +4218,7 @@ CallBrInst::CallBrInst(FunctionType *Ty, Value *Func, BasicBlock *DefaultDest,
 /// MultiRet instruction.  The SubclassData field is used to hold the
 /// calling convention of the call.
 ///
-class MultiRetCallInst : public TerminatorInst,
-                         public OperandBundleUser<MultiRetCallInst, User::op_iterator> {
-  friend class OperandBundleUser<MultiRetCallInst, User::op_iterator>;
+class MultiRetCallInst : public CallBase {
   unsigned NumIndirectDests;
   AttributeList Attrs;
   FunctionType *FTy;
@@ -4235,26 +4228,27 @@ class MultiRetCallInst : public TerminatorInst,
   /// Construct an MultiRetCallInst given a range of arguments.
   ///
   /// Construct an MultiRetCallInst from a range of arguments
-  inline MultiRetCallInst(Value *Func, BasicBlock *Fallthrough, 
-		    ArrayRef<BasicBlock* > IndirectDests, 
+  inline MultiRetCallInst(Value *Func, BasicBlock *Fallthrough,
+		    ArrayRef<BasicBlock* > IndirectDests,
 		    ArrayRef<Value *> Args, ArrayRef<OperandBundleDef> Bundles,
-                    unsigned Values, const Twine &NameStr,
+                    int NumOperands, const Twine &NameStr,
                     Instruction *InsertBefore)
       : MultiRetCallInst(cast<FunctionType>(
                        cast<PointerType>(Func->getType())->getElementType()),
-                   Func, Fallthrough, IndirectDests, Args, Bundles, Values, NameStr,
+                   Func, Fallthrough, IndirectDests, Args, Bundles, NumOperands, NameStr,
                    InsertBefore) {}
 
   inline MultiRetCallInst(FunctionType *Ty, Value *Func, BasicBlock *Fallthrough,
                     ArrayRef<BasicBlock* > IndirectDests, ArrayRef<Value *> Args,
-                    ArrayRef<OperandBundleDef> Bundles, unsigned Values,
+                    ArrayRef<OperandBundleDef> Bundles, int NumOperands,
                     const Twine &NameStr, Instruction *InsertBefore);
   /// Construct an MultiRetCallInst given a range of arguments.
   ///
   /// Construct an MultiRetCallInst from a range of arguments
-  inline MultiRetCallInst(Value *Func, BasicBlock *Fallthrough, ArrayRef<BasicBlock* > IndirectDests,
-                    ArrayRef<Value *> Args, ArrayRef<OperandBundleDef> Bundles,
-                    unsigned Values, const Twine &NameStr,
+  inline MultiRetCallInst(FunctionType *Ty, Value *Func, BasicBlock *Fallthrough,
+                    ArrayRef<BasicBlock* > IndirectDests, ArrayRef<Value *> Args,
+                    ArrayRef<OperandBundleDef> Bundles,
+                    int NumOperands, const Twine &NameStr,
                     BasicBlock *InsertAtEnd);
 
   bool hasDescriptor() const { return HasDescriptor; }
@@ -4273,7 +4267,7 @@ class MultiRetCallInst : public TerminatorInst,
 
   /// Should the Indirect Destinations change, scan + update the Arg list.
   void updateArgBlockAddresses(unsigned i, BasicBlock *B);
-  
+
   /// Compute the number of operands to allocate.
   static int ComputeNumOperands(int NumArgs, int NumIndirectDests,
 				int NumBundleInputs = 0) {
@@ -4326,7 +4320,7 @@ public:
                             Instruction *InsertBefore = nullptr) {
     unsigned Values = unsigned(Args.size()) + CountBundleInputs(Bundles) +
       2 + unsigned(IndirectDests.size());
-    
+
     unsigned DescriptorBytes = Bundles.size() * sizeof(BundleOpInfo);
 
     return new (Values, DescriptorBytes)
@@ -4339,7 +4333,7 @@ public:
                             ArrayRef<Value *> Args, const Twine &NameStr,
                             BasicBlock *InsertAtEnd) {
     unsigned Values = unsigned(Args.size()) + 2 + unsigned(IndirectDests.size());
-    return new (Values) MultiRetCallInst(Func, Fallthrough, IndirectDests, Args, None,
+    return new (Values) MultiRetCallInst(cast<FunctionType>(cast<PointerType>(Func->getType())->getElementType()), Func, Fallthrough, IndirectDests, Args, None,
                                    Values, NameStr, InsertAtEnd);
   }
 
@@ -4347,12 +4341,12 @@ public:
                             ArrayRef<BasicBlock* > IndirectDests, ArrayRef<Value *> Args,
                             ArrayRef<OperandBundleDef> Bundles,
                             const Twine &NameStr, BasicBlock *InsertAtEnd) {
-    unsigned Values = unsigned(Args.size()) + CountBundleInputs(Bundles) + 
+    unsigned Values = unsigned(Args.size()) + CountBundleInputs(Bundles) +
       2 + unsigned(IndirectDests.size());
     unsigned DescriptorBytes = Bundles.size() * sizeof(BundleOpInfo);
 
     return new (Values, DescriptorBytes)
-        MultiRetCallInst(Func, Fallthrough, IndirectDests, Args, Bundles, Values, NameStr,
+        MultiRetCallInst(cast<FunctionType>(cast<PointerType>(Func->getType())->getElementType()), Func, Fallthrough, IndirectDests, Args, Bundles, Values, NameStr,
                    InsertAtEnd);
   }
 
@@ -4366,15 +4360,9 @@ public:
                             Instruction *InsertPt = nullptr);
 
   /// Provide fast operand accessors
-  DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
+  //DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
 
-  FunctionType *getFunctionType() const { return FTy; }
-
-  void mutateFunctionType(FunctionType *FTy) {
-    mutateType(FTy->getReturnType());
-    this->FTy = FTy;
-  }
-
+#if 0
   /// Return the number of multiretcall arguments.
   ///
   unsigned getNumArgOperands() const {
@@ -4392,9 +4380,6 @@ public:
     setOperand(i, v);
   }
 
-  /// Return the iterator pointing to the beginning of the argument list.
-  op_iterator arg_begin() { return op_begin(); }
-
   /// Return the iterator pointing to the end of the argument list.
   op_iterator arg_end() {
     // [ invoke args ], [ operand bundles ], [ indirect destination ], normal dest, callee
@@ -4405,9 +4390,6 @@ public:
   iterator_range<op_iterator> arg_operands() {
     return make_range(arg_begin(), arg_end());
   }
-
-  /// Return the iterator pointing to the beginning of the argument list.
-  const_op_iterator arg_begin() const { return op_begin(); }
 
   /// Return the iterator pointing to the end of the argument list.
   const_op_iterator arg_end() const {
@@ -4433,255 +4415,12 @@ public:
   /// If one of the arguments has the 'returned' attribute, return its
   /// operand value. Otherwise, return nullptr.
   Value *getReturnedArgOperand() const;
-
-  /// getCallingConv/setCallingConv - Get or set the calling convention of this
-  /// function call.
-  CallingConv::ID getCallingConv() const {
-    return static_cast<CallingConv::ID>(getSubclassDataFromInstruction());
-  }
-  void setCallingConv(CallingConv::ID CC) {
-    auto ID = static_cast<unsigned>(CC);
-    assert(!(ID & ~CallingConv::MaxID) && "Unsupported calling convention");
-    setInstructionSubclassData(ID);
-  }
-
-  /// Return the parameter attributes for this invoke.
-  ///
-  AttributeList getAttributes() const { return Attrs; }
-
-  /// Set the parameter attributes for this invoke.
-  ///
-  void setAttributes(AttributeList A) { Attrs = A; }
-
-  /// adds the attribute to the list of attributes.
-  void addAttribute(unsigned i, Attribute::AttrKind Kind);
-
-  /// adds the attribute to the list of attributes.
-  void addAttribute(unsigned i, Attribute Attr);
-
-  /// Adds the attribute to the indicated argument
-  void addParamAttr(unsigned ArgNo, Attribute::AttrKind Kind);
-
-  /// removes the attribute from the list of attributes.
-  void removeAttribute(unsigned i, Attribute::AttrKind Kind);
-
-  /// removes the attribute from the list of attributes.
-  void removeAttribute(unsigned i, StringRef Kind);
-
-  /// Removes the attribute from the given argument
-  void removeParamAttr(unsigned ArgNo, Attribute::AttrKind Kind);
-
-  /// adds the dereferenceable attribute to the list of attributes.
-  void addDereferenceableAttr(unsigned i, uint64_t Bytes);
-
-  /// adds the dereferenceable_or_null attribute to the list of
-  /// attributes.
-  void addDereferenceableOrNullAttr(unsigned i, uint64_t Bytes);
-
-  /// Determine whether this call has the given attribute.
-  bool hasFnAttr(Attribute::AttrKind Kind) const {
-    assert(Kind != Attribute::NoBuiltin &&
-           "Use CallInst::isNoBuiltin() to check for Attribute::NoBuiltin");
-    return hasFnAttrImpl(Kind);
-  }
-
-  /// Determine whether this call has the given attribute.
-  bool hasFnAttr(StringRef Kind) const {
-    return hasFnAttrImpl(Kind);
-  }
-
-  /// Determine whether the return value has the given attribute.
-  bool hasRetAttr(Attribute::AttrKind Kind) const;
-
-  /// Determine whether the argument or parameter has the given attribute.
-  bool paramHasAttr(unsigned ArgNo, Attribute::AttrKind Kind) const;
-
-  /// Get the attribute of a given kind at a position.
-  Attribute getAttribute(unsigned i, Attribute::AttrKind Kind) const {
-    return getAttributes().getAttribute(i, Kind);
-  }
-
-  /// Get the attribute of a given kind at a position.
-  Attribute getAttribute(unsigned i, StringRef Kind) const {
-    return getAttributes().getAttribute(i, Kind);
-  }
-
-  /// Return true if the data operand at index \p i has the attribute \p
-  /// A.
-  ///
-  /// Data operands include invoke arguments and values used in operand bundles,
-  /// but does not include the invokee operand, or the two successor blocks.
-  /// This routine dispatches to the underlying AttributeList or the
-  /// OperandBundleUser as appropriate.
-  ///
-  /// The index \p i is interpreted as
-  ///
-  ///  \p i == Attribute::ReturnIndex  -> the return value
-  ///  \p i in [1, arg_size + 1)  -> argument number (\p i - 1)
-  ///  \p i in [arg_size + 1, data_operand_size + 1) -> bundle operand at index
-  ///     (\p i - 1) in the operand list.
-  bool dataOperandHasImpliedAttr(unsigned i, Attribute::AttrKind Kind) const;
-
-  /// Extract the alignment of the return value.
-  unsigned getRetAlignment() const { return Attrs.getRetAlignment(); }
-
-  /// Extract the alignment for a call or parameter (0=unknown).
-  unsigned getParamAlignment(unsigned ArgNo) const {
-    return Attrs.getParamAlignment(ArgNo);
-  }
-
-  /// Extract the number of dereferenceable bytes for a call or
-  /// parameter (0=unknown).
-  uint64_t getDereferenceableBytes(unsigned i) const {
-    return Attrs.getDereferenceableBytes(i);
-  }
-
-  /// Extract the number of dereferenceable_or_null bytes for a call or
-  /// parameter (0=unknown).
-  uint64_t getDereferenceableOrNullBytes(unsigned i) const {
-    return Attrs.getDereferenceableOrNullBytes(i);
-  }
-
-  /// @brief Determine if the return value is marked with NoAlias attribute.
-  bool returnDoesNotAlias() const {
-    return Attrs.hasAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
-  }
-
-  /// Return true if the call should not be treated as a call to a
-  /// builtin.
-  bool isNoBuiltin() const {
-    // We assert in hasFnAttr if one passes in Attribute::NoBuiltin, so we have
-    // to check it by hand.
-    return hasFnAttrImpl(Attribute::NoBuiltin) &&
-      !hasFnAttrImpl(Attribute::Builtin);
-  }
-
-  /// Determine if the call requires strict floating point semantics.
-  bool isStrictFP() const { return hasFnAttr(Attribute::StrictFP); }
-
-  /// Return true if the call should not be inlined.
-  bool isNoInline() const { return hasFnAttr(Attribute::NoInline); }
-  void setIsNoInline() {
-    addAttribute(AttributeList::FunctionIndex, Attribute::NoInline);
-  }
-
-  /// Determine if the call does not access memory.
-  bool doesNotAccessMemory() const {
-    return hasFnAttr(Attribute::ReadNone);
-  }
-  void setDoesNotAccessMemory() {
-    addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
-  }
-
-  /// Determine if the call does not access or only reads memory.
-  bool onlyReadsMemory() const {
-    return doesNotAccessMemory() || hasFnAttr(Attribute::ReadOnly);
-  }
-  void setOnlyReadsMemory() {
-    addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
-  }
-
-  /// Determine if the call does not access or only writes memory.
-  bool doesNotReadMemory() const {
-    return doesNotAccessMemory() || hasFnAttr(Attribute::WriteOnly);
-  }
-  void setDoesNotReadMemory() {
-    addAttribute(AttributeList::FunctionIndex, Attribute::WriteOnly);
-  }
-
-  /// @brief Determine if the call access memmory only using it's pointer
-  /// arguments.
-  bool onlyAccessesArgMemory() const {
-    return hasFnAttr(Attribute::ArgMemOnly);
-  }
-  void setOnlyAccessesArgMemory() {
-    addAttribute(AttributeList::FunctionIndex, Attribute::ArgMemOnly);
-  }
-
-  /// @brief Determine if the function may only access memory that is
-  /// inaccessible from the IR.
-  bool onlyAccessesInaccessibleMemory() const {
-    return hasFnAttr(Attribute::InaccessibleMemOnly);
-  }
-  void setOnlyAccessesInaccessibleMemory() {
-    addAttribute(AttributeList::FunctionIndex, Attribute::InaccessibleMemOnly);
-  }
-
-  /// @brief Determine if the function may only access memory that is
-  /// either inaccessible from the IR or pointed to by its arguments.
-  bool onlyAccessesInaccessibleMemOrArgMem() const {
-    return hasFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
-  }
-  void setOnlyAccessesInaccessibleMemOrArgMem() {
-    addAttribute(AttributeList::FunctionIndex, Attribute::InaccessibleMemOrArgMemOnly);
-  }
-
-  /// Determine if the call cannot return.
-  bool doesNotReturn() const { return hasFnAttr(Attribute::NoReturn); }
-  void setDoesNotReturn() {
-    addAttribute(AttributeList::FunctionIndex, Attribute::NoReturn);
-  }
-
-  /// Determine if the call cannot unwind.
-  bool doesNotThrow() const { return hasFnAttr(Attribute::NoUnwind); }
-  void setDoesNotThrow() {
-    addAttribute(AttributeList::FunctionIndex, Attribute::NoUnwind);
-  }
-
-  /// Determine if the invoke cannot be duplicated.
-  bool cannotDuplicate() const {return hasFnAttr(Attribute::NoDuplicate); }
-  void setCannotDuplicate() {
-    addAttribute(AttributeList::FunctionIndex, Attribute::NoDuplicate);
-  }
-
-  /// Determine if the invoke is convergent
-  bool isConvergent() const { return hasFnAttr(Attribute::Convergent); }
-  void setConvergent() {
-    addAttribute(AttributeList::FunctionIndex, Attribute::Convergent);
-  }
-  void setNotConvergent() {
-    removeAttribute(AttributeList::FunctionIndex, Attribute::Convergent);
-  }
-
-  /// Determine if the call returns a structure through first
-  /// pointer argument.
-  bool hasStructRetAttr() const {
-    if (getNumArgOperands() == 0)
-      return false;
-
-    // Be friendly and also check the callee.
-    return paramHasAttr(0, Attribute::StructRet);
-  }
-
-  /// Determine if any call argument is an aggregate passed by value.
-  bool hasByValArgument() const {
-    return Attrs.hasAttrSomewhere(Attribute::ByVal);
-  }
-
-  /// Return the function called, or null if this is an
-  /// indirect function invocation.
-  ///
-  Function *getCalledFunction() const {
-    return dyn_cast<Function>(Op<-1>());
-  }
+#endif
 
   /// Get a pointer to the function that is invoked by this
   /// instruction
   const Value *getCalledValue() const { return Op<-1>(); }
         Value *getCalledValue()       { return Op<-1>(); }
-
-  /// Set the function called.
-  void setCalledFunction(Value* Fn) {
-    setCalledFunction(
-        cast<FunctionType>(cast<PointerType>(Fn->getType())->getElementType()),
-        Fn);
-  }
-  void setCalledFunction(FunctionType *FTy, Value *Fn) {
-    this->FTy = FTy;
-    assert(FTy == cast<FunctionType>(
-                      cast<PointerType>(Fn->getType())->getElementType()));
-    Op<-1>() = Fn;
-  }
 
   /// Return the number of multiretcall indirect's dest labels
   ///
@@ -4691,16 +4430,16 @@ public:
   ///
   Value *getIndirectDestLabel(unsigned i) const {
     assert(i < getNumIndirectDests() && "Out of bounds!");
-    return getOperand(i + getNumArgOperands() + getNumTotalBundleOperands() +
+    return getOperand(i + arg_size() + getNumTotalBundleOperands() +
 		      1);
   }
- 
+
   Value *getIndirectDestLabelUse(unsigned i) const {
     assert(i < getNumIndirectDests() && "Out of bounds!");
-    return getOperandUse(i + getNumArgOperands() + getNumTotalBundleOperands() +
+    return getOperandUse(i + arg_size() + getNumTotalBundleOperands() +
 			 1);
   }
- 
+
   // Return the destination basic blocks...
   BasicBlock *getDefaultDest() const {
     return cast<BasicBlock>(*(&Op<-1>() - getNumIndirectDests() - 1));
@@ -4725,19 +4464,19 @@ public:
     updateArgBlockAddresses(i, B);
     *(&Op<-1>() - getNumIndirectDests() + i) = reinterpret_cast<Value *>(B);
   }
- 
+
   BasicBlock *getSuccessor(unsigned i) const {
     assert(i < getNumSuccessors() + 1 &&
 	   "Successor # out of range for callbr!");
     return i == 0 ? getDefaultDest() : getIndirectDest(i - 1);
   }
- 
+
   void setSuccessor(unsigned i, BasicBlock *NewSucc) {
     assert(i < getNumIndirectDests() + 1 &&
 	   "Successor # out of range for callbr!");
     return i == 0 ? setDefaultDest(NewSucc) : setIndirectDest(i - 1, NewSucc);
   }
- 
+
   unsigned getNumSuccessors() const { return getNumIndirectDests() + 1; }
 
   // Methods for support type inquiry through isa, cast, and dyn_cast:
@@ -4750,55 +4489,45 @@ public:
   }
 
 private:
-  template <typename AttrKind> bool hasFnAttrImpl(AttrKind Kind) const {
-    if (Attrs.hasAttribute(AttributeList::FunctionIndex, Kind))
-      return true;
-
-    // Operand bundles override attributes on the called function, but don't
-    // override attributes directly present on the invoke instruction.
-    if (isFnAttrDisallowedByOpBundle(Kind))
-      return false;
-
-    if (const Function *F = getCalledFunction())
-      return F->getAttributes().hasAttribute(AttributeList::FunctionIndex,
-                                             Kind);
-    return false;
-  }
-
   // Shadow Instruction::setInstructionSubclassData with a private forwarding
   // method so that subclasses cannot accidentally use it.
-  void setInstructionSubclassData(unsigned short D) {
-    Instruction::setInstructionSubclassData(D);
+  template <typename Bitfield>
+  void setSubclassData(typename Bitfield::Type Value) {
+    Instruction::setSubclassData<Bitfield>(Value);
   }
 };
 
-template <>
-struct OperandTraits<MultiRetCallInst> : public VariadicOperandTraits<MultiRetCallInst, 3> {
-};
 
-MultiRetCallInst::MultiRetCallInst(FunctionType *Ty, Value *Func, BasicBlock *Fallthrough,
-                       ArrayRef<BasicBlock* > IndirectDests, ArrayRef<Value *> Args,
-                       ArrayRef<OperandBundleDef> Bundles, unsigned Values,
+MultiRetCallInst::MultiRetCallInst(FunctionType *Ty, Value *Func, BasicBlock *DefaultDest,
+                       ArrayRef<BasicBlock *> IndirectDests,
+                       ArrayRef<Value *> Args,
+                       ArrayRef<OperandBundleDef> Bundles, int NumOperands,
                        const Twine &NameStr, Instruction *InsertBefore)
-    : TerminatorInst(Ty->getReturnType(), Instruction::MultiRetCall,
-                     OperandTraits<MultiRetCallInst>::op_end(this) - Values, Values,
-                     InsertBefore) {
-  init(Ty, Func, Fallthrough, IndirectDests, Args, Bundles, NameStr);
+    : CallBase(Ty->getReturnType(), Instruction::CallBr,
+               OperandTraits<CallBase>::op_end(this) - NumOperands, NumOperands,
+               InsertBefore) {
+  init(Ty, Func, DefaultDest, IndirectDests, Args, Bundles, NameStr);
 }
 
-MultiRetCallInst::MultiRetCallInst(Value *Func, BasicBlock *Fallthrough,
-                       ArrayRef<BasicBlock* > IndirectDests, ArrayRef<Value *> Args,
-                       ArrayRef<OperandBundleDef> Bundles, unsigned Values,
+MultiRetCallInst::MultiRetCallInst(FunctionType *Ty, Value *Func, BasicBlock *DefaultDest,
+                       ArrayRef<BasicBlock *> IndirectDests,
+                       ArrayRef<Value *> Args,
+                       ArrayRef<OperandBundleDef> Bundles, int NumOperands,
                        const Twine &NameStr, BasicBlock *InsertAtEnd)
-    : TerminatorInst(
-          cast<FunctionType>(cast<PointerType>(Func->getType())
-                                 ->getElementType())->getReturnType(),
-          Instruction::MultiRetCall, OperandTraits<MultiRetCallInst>::op_end(this) - Values,
-          Values, InsertAtEnd) {
-  init(Func, Fallthrough, IndirectDests, Args, Bundles, NameStr);
+    : CallBase(Ty->getReturnType(), Instruction::CallBr,
+               OperandTraits<CallBase>::op_end(this) - NumOperands, NumOperands,
+               InsertAtEnd) {
+  init(Ty, Func, DefaultDest, IndirectDests, Args, Bundles, NameStr);
 }
 
-DEFINE_TRANSPARENT_OPERAND_ACCESSORS(MultiRetCallInst, Value)
+
+
+  //template <>
+  //struct OperandTraits<MultiRetCallInst> : public VariadicOperandTraits<MultiRetCallInst, 3> {
+  //};
+
+
+  //DEFINE_TRANSPARENT_OPERAND_ACCESSORS(MultiRetCallInst, Value)
 
 //===----------------------------------------------------------------------===//
 //                              ResumeInst Class
@@ -5668,14 +5397,14 @@ public:
     return isa<Instruction>(V) && classof(cast<Instruction>(V));
   }
 
-  /// Constructors - 
+  /// Constructors -
   static RetPadInst *Create(Value *MultiRetCallVal, const Twine &NameStr, Instruction *InsertBefore = nullptr);
   static RetPadInst *Create(Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd);
-  
+
   static RetPadInst* Create(Type* Ty, const Twine &NameStr, Instruction *InsertBefore = nullptr);
   static RetPadInst* Create(Type* Ty, const Twine &NameStr, BasicBlock *InsertAtEnd);
 
-private:  
+private:
 };
 
 //===----------------------------------------------------------------------===//
