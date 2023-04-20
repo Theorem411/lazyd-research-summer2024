@@ -843,7 +843,7 @@ void Verifier::visitGlobalAlias(const GlobalAlias &GA) {
 
 void Verifier::visitGlobalIFunc(const GlobalIFunc &GI) {
   // Pierce through ConstantExprs and GlobalAliases and check that the resolver
-  // has a Function 
+  // has a Function
   const Function *Resolver = GI.getResolverFunction();
   Assert(Resolver, "IFunc must have a Function resolver", &GI);
 
@@ -4686,7 +4686,7 @@ void Verifier::visitInstruction(Instruction &I) {
       };
 
       // Check to make sure that the "address of" an intrinsic function is never
-#if 1
+
       // TODO: CP convert multiretcall to CBI
       // taken. Ignore cases where the address of the intrinsic function is used
       // as the argument of operand bundle "clang.arc.attachedcall" as those
@@ -4695,13 +4695,6 @@ void Verifier::visitInstruction(Instruction &I) {
               (CBI && &CBI->getCalledOperandUse() == &I.getOperandUse(i)) ||
               IsAttachedCallOperand(F, CBI, i)),
              "Cannot take the address of an intrinsic!", &I);
-#else
-      // taken.
-      Assert(
-          !F->isIntrinsic() ||
-             i == (isa<CallInst>(I) ? e - 1 : isa<InvokeInst>(I) ? e - 3 : isa<MultiRetCallInst>(I)? e - 1 : 0),
-          "Cannot take the address of an intrinsic!", &I);
-#endif
       Assert(
           !F->isIntrinsic() || isa<CallInst>(I) ||
               F->getIntrinsicID() == Intrinsic::donothing ||
@@ -4709,10 +4702,10 @@ void Verifier::visitInstruction(Instruction &I) {
               F->getIntrinsicID() == Intrinsic::seh_try_end ||
               F->getIntrinsicID() == Intrinsic::seh_scope_begin ||
               F->getIntrinsicID() == Intrinsic::seh_scope_end ||
-              F->getIntrinsicID() == Intrinsic::x86_uli_save_context_nosp ||
-              F->getIntrinsicID() == Intrinsic::x86_uli_save_callee_nosp ||
-              F->getIntrinsicID() == Intrinsic::x86_uli_save_context ||
-              F->getIntrinsicID() == Intrinsic::x86_uli_save_callee ||
+	      F->getIntrinsicID() == Intrinsic::uli_save_context_nosp ||
+	      F->getIntrinsicID() == Intrinsic::uli_save_callee_nosp ||
+	      F->getIntrinsicID() == Intrinsic::uli_save_context ||
+	      F->getIntrinsicID() == Intrinsic::uli_save_callee ||
               F->getIntrinsicID() == Intrinsic::coro_resume ||
               F->getIntrinsicID() == Intrinsic::coro_destroy ||
               F->getIntrinsicID() == Intrinsic::experimental_patchpoint_void ||
