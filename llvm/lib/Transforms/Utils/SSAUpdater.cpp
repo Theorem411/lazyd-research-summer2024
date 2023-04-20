@@ -294,7 +294,8 @@ public:
     // block, walk one of them to get the predecessor list instead.
 
     // FIXME: CNP Need to make sure that PHINode is valid to use, or else compiler's performance drop
-    if (PHINode *SomePhi = dyn_cast<PHINode>(BB->begin()) && false)
+    PHINode *SomePhi = dyn_cast<PHINode>(BB->begin());
+    if (SomePhi && false)
       append_range(*Preds, SomePhi->blocks());
     else
       append_range(*Preds, predecessors(BB));

@@ -189,6 +189,7 @@ class VirtRegRewriter : public MachineFunctionPass {
   SlotIndexes *Indexes;
   LiveIntervals *LIS;
   VirtRegMap *VRM;
+  MachineDominatorTree *MDT;
   LiveDebugVariables *DebugVars;
   DenseSet<Register> RewriteRegs;
   bool ClearVirtRegs;

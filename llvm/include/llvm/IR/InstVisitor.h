@@ -223,6 +223,7 @@ public:
   RetTy visitCallInst(CallInst &I)                { DELEGATE(CallBase); }
   RetTy visitInvokeInst(InvokeInst &I)            { DELEGATE(CallBase); }
   RetTy visitCallBrInst(CallBrInst &I)            { DELEGATE(CallBase); }
+  RetTy visitMultiRetCallInst(MultiRetCallInst &I) { DELEGATE(CallBase); }
 
   // While terminators don't have a distinct type modeling them, we support
   // intercepting them with dedicated a visitor callback.
@@ -264,10 +265,6 @@ public:
   }
 
   RetTy visitTerminator(Instruction &I)    { DELEGATE(Instruction);}
-
-  RetTy visitMultiRetCallInst(MultiRetCallInst &I) {
-    return static_cast<SubClass*>(this)->visitCallSite(&I);
-  }
 
   // Next level propagators: If the user does not overload a specific
   // instruction type, they can overload one of these to get the whole class

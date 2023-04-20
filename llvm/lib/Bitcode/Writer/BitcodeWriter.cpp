@@ -3084,7 +3084,7 @@ void ModuleBitcodeWriter::writeInstruction(const Instruction &I,
     FunctionType *FTy = II->getFunctionType();
 
     if (II->hasOperandBundles())
-      writeOperandBundles(II, InstID);
+      writeOperandBundles(*II, InstID);
 
     Code = bitc::FUNC_CODE_INST_MULTIRETCALL;
 
@@ -3104,7 +3104,7 @@ void ModuleBitcodeWriter::writeInstruction(const Instruction &I,
 
     // Emit type/value pairs for varargs params.
     if (FTy->isVarArg()) {
-      for (unsigned i = FTy->getNumParams(), e = II->getNumArgOperands();
+      for (unsigned i = FTy->getNumParams(), e = II->arg_size();
            i != e; ++i)
         pushValueAndType(I.getOperand(i), InstID, Vals); // vararg
     }

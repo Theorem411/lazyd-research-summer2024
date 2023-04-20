@@ -33,7 +33,7 @@
 
 def llvm_global_i8ptr_ty  : LLVMQualPointerType<llvm_i8_ty, 1>;  // (global)i8*
 def llvm_shared_i8ptr_ty  : LLVMQualPointerType<llvm_i8_ty, 3>;  // (shared)i8*
-def llvm_i64ptr_ty        : LLVMPointerType<llvm_i64_ty>;        // i64*
+//def llvm_i64ptr_ty        : LLVMPointerType<llvm_i64_ty>;        // i64*
 def llvm_any_i64ptr_ty    : LLVMAnyPointerType<llvm_i64_ty>;     // (space)i64*
 def llvm_shared_i64ptr_ty : LLVMQualPointerType<llvm_i64_ty, 3>; // (shared)i64*
 

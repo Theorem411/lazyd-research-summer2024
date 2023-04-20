@@ -1425,6 +1425,8 @@ def int_experimental_widenable_condition : DefaultAttrsIntrinsic<[llvm_i1_ty], [
 // NOP: calls/invokes to this intrinsic are removed by codegen
 def int_donothing : DefaultAttrsIntrinsic<[], [], [IntrNoMem, IntrWillReturn]>;
 
+
+
 // This instruction has no actual effect, though it is treated by the optimizer
 // has having opaque side effects. This may be inserted into loops to ensure
 // that they are not removed even if they turn out to be empty, for languages
@@ -2011,6 +2013,26 @@ def int_ptrauth_blend : Intrinsic<[llvm_i64_ty],
 def int_ptrauth_sign_generic : Intrinsic<[llvm_i64_ty],
                                          [llvm_i64_ty, llvm_i64_ty],
                                          [IntrNoMem]>;
+
+// TODO: CNP update this
+def int_uli_save_context : GCCBuiltin<"__builtin_uli_save_context">,
+       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+def int_uli_save_callee : GCCBuiltin<"__builtin_uli_save_callee">,
+       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+def int_uli_save_callee_nosp : GCCBuiltin<"__builtin_uli_save_callee_nosp">,
+       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+def int_uli_save_context_nosp : GCCBuiltin<"__builtin_uli_save_context_nosp">,
+       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+def int_uli_restore_context : GCCBuiltin<"__builtin_uli_restore_context">,
+      Intrinsic<[], [llvm_ptr_ty], []>;
+def int_uli_restore_callee : GCCBuiltin<"__builtin_uli_restore_callee">,
+       Intrinsic<[], [llvm_ptr_ty], []>;
+def int_uli_change_returnaddress : GCCBuiltin<"__builtin_uli_change_returnaddress">,
+       Intrinsic<[], [llvm_ptr_ty], []>;
+def int_uli_save_returnaddress : GCCBuiltin<"__builtin_uli_save_returnaddress">,
+       Intrinsic<[], [llvm_ptr_ty], []>;
+
+
 
 //===----------------------------------------------------------------------===//
 

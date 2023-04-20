@@ -2116,7 +2116,7 @@ MachineBlockPlacement::findBestLoopTopHelper(
     if(Pred->isMultiRetCallIndirectTarget())
       continue;
 
-    DEBUG(dbgs() << "    header pred: " << getBlockName(Pred) << ", has "
+    LLVM_DEBUG(dbgs() << "    header pred: " << getBlockName(Pred) << ", has "
                  << Pred->succ_size() << " successors, ";
           MBFI->printBlockFreq(dbgs(), Pred) << " freq\n");
 

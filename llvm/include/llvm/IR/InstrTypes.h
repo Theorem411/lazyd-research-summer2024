@@ -1206,6 +1206,8 @@ protected:
       return 2;
     case Instruction::CallBr:
       return getNumSubclassExtraOperandsDynamic();
+    case Instruction::MultiRetCall:
+      return getNumSubclassExtraOperandsDynamic();
     }
     llvm_unreachable("Invalid opcode!");
   }
@@ -1247,7 +1249,8 @@ public:
   static bool classof(const Instruction *I) {
     return I->getOpcode() == Instruction::Call ||
            I->getOpcode() == Instruction::Invoke ||
-           I->getOpcode() == Instruction::CallBr;
+           I->getOpcode() == Instruction::CallBr ||
+           I->getOpcode() == Instruction::MultiRetCall;
   }
   static bool classof(const Value *V) {
     return isa<Instruction>(V) && classof(cast<Instruction>(V));

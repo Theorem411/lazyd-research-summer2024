@@ -105,6 +105,8 @@ InsertPointAnalysis::computeLastInsertPoint(const LiveInterval &CurLI,
       }
     }
 
+    auto TLI = MBB.getParent()->getSubtarget().getTargetLowering();
+
     // TODO: CNP, do we need this?
     // There may not be a call instruction (?) in which case we ignore LPad.
     LIP.second = LIP.first;

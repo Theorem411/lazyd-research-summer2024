@@ -315,22 +315,22 @@ def ZExt : EnumAttr<"zeroext", [ParamAttr, RetAttr]>;
 def MustProgress : EnumAttr<"mustprogress", [FnAttr]>;
 
 /// this function is a forkable function
-def Forkable : EnumAttr<"forkable">;
+def Forkable : EnumAttr<"forkable", [FnAttr]>;
 
 /// Function cannot has ULI polling.
-def ULINoPolling : EnumAttr<"uli_no_polling">;
+def ULINoPolling : EnumAttr<"uli_no_polling", [FnAttr]>;
 
 /// this function is a user_level_interrupt
-def UserLevelInterrupt : EnumAttr<"user_level_interrupt">;
+def UserLevelInterrupt : EnumAttr<"user_level_interrupt", [FnAttr]>;
 
 // this function is a uli_non_atomic
-def ULINonAtomic : EnumAttr<"uli_non_atomic">;
+def ULINonAtomic : EnumAttr<"uli_non_atomic", [FnAttr]>;
 
 /// disable stacklet checking for this function
-def NoStackletCheck : EnumAttr<"no_stacklet_check">;
+def NoStackletCheck : EnumAttr<"no_stacklet_check", [FnAttr]>;
 
 /// disable creating an unwind path this function
-def NoUnwindPath : EnumAttr<"no_unwind_path">;
+def NoUnwindPath : EnumAttr<"no_unwind_path", [FnAttr]>;
 
 
 /// Target-independent string attributes.

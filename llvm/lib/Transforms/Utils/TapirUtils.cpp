@@ -20,7 +20,6 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
-#include "llvm/IR/Intrinsics.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
@@ -1132,47 +1131,6 @@ static const Value *getCanonicalTaskFrameCreate(const BasicBlock *BB) {
         isCanonicalTaskFrameCreate(II))
       return II;
   return nullptr;
-}
-
-/// RemoveSync - Remove the sync inst by the specified
-/// detach instruction.
-BranchInst *llvm::RemoveSync(DetachInst *HeadDetach) {
-  Value *SyncRegion = HeadDetach->getSyncRegion();
-  // Check the Tapir instructions contained in this sync region.  Look for a
-  // single sync instruction among those Tapir instructions.  Meanwhile,
-  // verify that the only detach instruction in this sync region is the detach
-  // in theloop header.  If these conditions are met, then we assume that the
-  // sync applies to this loop.  Otherwise, something more complicated is
-  // going on, and we give up.
-  SyncInst *LoopSync = nullptr;
-  bool SingleSyncJustForLoop = true;
-  for (User *U : SyncRegion->users()) {
-    // Skip the detach in the loop header.
-    if (HeadDetach == U) continue;
-    // Remember the first sync instruction we find.  If we find multiple sync
-    // instructions, then something nontrivial is going on.
-    if (SyncInst *SI = dyn_cast<SyncInst>(U)) {
-      if (!LoopSync)
-	LoopSync = SI;
-      else
-	SingleSyncJustForLoop = false;
-    }
-    // If we find a detach instruction that is not the loop header's, then
-    // something nontrivial is going on.
-    if (isa<DetachInst>(U))
-      SingleSyncJustForLoop = false;
-  }
-  if (LoopSync && SingleSyncJustForLoop) {
-    BranchInst * brSyncSucc = BranchInst::Create(LoopSync->getSuccessor(0));
-    // Replace the sync with a branch.
-    ReplaceInstWithInst(LoopSync, brSyncSucc);
-  } else if (!LoopSync) {
-    DEBUG(dbgs() << "No sync found for this loop.\n");
-    return nullptr;
-  } else {
-    DEBUG(dbgs() << "No single sync found that only affects this loop.\n");
-    return nullptr;
-  }
 }
 
 /// GetDetachedCtx - Get the entry basic block to the detached context

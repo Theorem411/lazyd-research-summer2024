@@ -612,7 +612,6 @@ public:
   /// Indicates if this is the entry block of a cleanup funclet.
   void setIsCleanupFuncletEntry(bool V = true) { IsCleanupFuncletEntry = V; }
 
-<<<<<<< HEAD
   /// Returns true if this block begins any section.
   bool isBeginSection() const { return IsBeginSection; }
 

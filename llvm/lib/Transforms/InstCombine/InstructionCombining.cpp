@@ -2880,8 +2880,8 @@ Instruction *InstCombinerImpl::visitAllocSite(Instruction &MI) {
                          None, "", II->getParent());
     }
 
-    for (auto *DII : DIIs)
-      eraseInstFromFunction(*DII);
+    for (auto *DVI : DVIs)
+      eraseInstFromFunction(*DVI);
 
     return eraseInstFromFunction(MI);
   }

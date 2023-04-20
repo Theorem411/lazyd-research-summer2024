@@ -27,16 +27,17 @@
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
+
+#include "llvm/IR/BasicBlock.h"
+
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/Instructions.h"
 #include "llvm/IR/OperandTraits.h"
 #include "llvm/IR/User.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/raw_ostream.h"
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -911,7 +912,7 @@ public:
     BasicBlock* bb = getBasicBlock();
     if(isReturnSuccessor()) {
       unsigned successor = getIndexOfSucc();
-      TerminatorInst* ti = (bb->getTerminator());
+      Instruction* ti = (bb->getTerminator());
 
       //outs() << "Getbasicblocksuccessor\n";
       //ti->dump();

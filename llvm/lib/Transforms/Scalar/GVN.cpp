@@ -3216,6 +3216,7 @@ FunctionPass *llvm::createGVNPass(bool NoMemDepAnalysis) {
   return new GVNLegacyPass(NoMemDepAnalysis);
 }
 
+#if 0
 // Allow a pass to run GVN in the middle of its pass.
 bool llvm::runOldGVN(bool NoLoads, Function &F, AssumptionCache &RunAC, DominatorTree &RunDT,
 		     const TargetLibraryInfo &RunTLI, AAResults &RunAA,
@@ -3223,3 +3224,4 @@ bool llvm::runOldGVN(bool NoLoads, Function &F, AssumptionCache &RunAC, Dominato
 		     OptimizationRemarkEmitter *RunORE) {
   return GVNLegacyPass(NoLoads).runGVN(F, RunAC, RunDT, RunTLI, RunAA, NoLoads ? nullptr:RunMD, LI, RunORE);
 }
+#endif

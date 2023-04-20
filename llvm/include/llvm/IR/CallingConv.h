@@ -258,7 +258,7 @@ namespace CallingConv {
     X86_ULI = 102,
 
     /// X86_UINTR - x86 user interrupt context.
-    X86_UINTR = 98,
+    X86_UINTR = 103,
 
     /// The highest possible calling convention ID. Must be some 2^k - 1.
     MaxID = 1023

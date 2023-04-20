@@ -2635,12 +2635,16 @@ bool IRTranslator::translateInvoke(const User &U,
 
 bool IRTranslator::translateCallBr(const User &U,
                                    MachineIRBuilder &MIRBuilder) {
+  // FIXME: Implement this.
+  return false;
+}
 
 bool IRTranslator::translateMultiRetCall(const User &U,
 				   MachineIRBuilder &MIRBuilder) {
   // FIXME: Implement this.
   return false;
 }
+
 bool IRTranslator::translateRetPad(const User &U,
 				   MachineIRBuilder &MIRBuilder) {
   // FIXME: Implement this.

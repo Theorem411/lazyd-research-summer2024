@@ -1866,7 +1866,7 @@ BlockAddress *BlockAddress::BlockAddress::get(BasicBlock *BB, unsigned successor
 }
 
 BlockAddress::BlockAddress(Function *F, BasicBlock *BB)
-    : Constant(Type::getInt8PtrTy(F->getContext()), F->getAddressSpace()),
+    : Constant(Type::getInt8PtrTy(F->getContext(), F->getAddressSpace()),
                Value::BlockAddressVal, &Op<0>(), BLOCKADDRESS_OP) {
 
   setOperand(0, F);
@@ -1941,7 +1941,7 @@ void BlockAddress::destroyConstantImpl() {
 #if 1
   unsigned successor = getIndexOfSucc();
   BasicBlock* bb = getBasicBlock();
-  TerminatorInst* ti = (bb->getTerminator());
+  Instruction* ti = (bb->getTerminator());
 
   if(successor) {
     //auto bbSucc = (ti)->getSuccessor(successor);
