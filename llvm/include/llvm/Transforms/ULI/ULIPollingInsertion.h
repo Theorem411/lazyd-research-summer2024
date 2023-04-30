@@ -69,7 +69,7 @@ private:
   bool insertPollingAtLoop(Loop &L);
 
   /// The extern function that simulates ULI polling.
-  Constant *PollingFunc = nullptr;
+  FunctionCallee PollingFunc = nullptr;
 
   /// Hold the arguments of polling function.
   SmallVector<Value *, 2> PollingArgs;
