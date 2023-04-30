@@ -12,6 +12,8 @@
 //===----------------------------------------------------------------------===//
 //let Uses = [RAX, RCX] in
 
+let hasNoSchedulingInfo = 1 in
+{
 
 def ULISEND   : I   <0x3e, MRMSrcReg, (outs), (ins GR64:$src0, GR64:$src1),
                                "ulisend\t{$src0, $src1}",
@@ -158,10 +160,11 @@ def TESTUI  : I  <0x01, MRM_ED, (outs), (ins),
 def SENDUIPI  : I <0xC7, MRM6r, (outs), (ins GR64:$src0),
                     "senduipi\t{$src0} ", [(int_x86_ui_senduipi GR64:$src0)]>, XS, Requires<[In64BitMode]>;
 
+}
 //===----------------------------------------------------------------------===//
 // Help stuff for stacklets
 
-let usesCustomInserter = 1, isPseudo = 1, Uses = [RSP]
+let usesCustomInserter = 1, isPseudo = 1, hasNoSchedulingInfo = 1, Uses = [RSP]
 in {
    def READSP64 : PseudoI<(outs GR64:$dst), (ins),
                       [(set GR64:$dst, (int_x86_read_sp))]>,
@@ -172,7 +175,7 @@ in {
 
 }
 
-let isPseudo = 1
+let isPseudo = 1, hasNoSchedulingInfo = 1
 in {
    def GETFRAMESIZE : PseudoI<(outs GR64:$dst), (ins),
                       [(set GR64:$dst, (int_x86_get_frame_size))]>;

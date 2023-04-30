@@ -14,7 +14,7 @@
 //
 // Scheduling information derived from the "Intel 64 and IA32 Architectures
 // Optimization Reference Manual", Chapter 13, Section 4.
-#if 0
+/*
 // Functional Units
 //    Port 0
 def Port0 : FuncUnit; // ALU: ALU0, shift/rotate, load/store
@@ -540,7 +540,7 @@ def AtomItineraries : ProcessorItineraries<
 
   InstrItinData<IIC_NOP, [InstrStage<1, [Port0, Port1]>] >
   ]>;
-#endif
+*/
 
 // Atom machine model.
 def AtomModel : SchedMachineModel {
