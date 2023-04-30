@@ -10619,17 +10619,31 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
     // points into the callers stack frame.
     CLI.IsTailCall = false;
   } else {
+    bool NeedsRegBlock = functionArgumentNeedsConsecutiveRegisters(
+        CLI.RetTy, CLI.CallConv, CLI.IsVarArg, DL);
     for (unsigned I = 0, E = RetTys.size(); I != E; ++I) {
+      ISD::ArgFlagsTy Flags;
+      if (NeedsRegBlock) {
+        Flags.setInConsecutiveRegs();
+        if (I == RetTys.size() - 1)
+          Flags.setInConsecutiveRegsLast();
+      }
       EVT VT = RetTys[I];
-      MVT RegisterVT =
-     	  getRegisterTypeForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
-      unsigned NumRegs =
-	  getNumRegistersForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
+      MVT RegisterVT = getRegisterTypeForCallingConv(CLI.RetTy->getContext(),
+                                                     CLI.CallConv, VT);
+      unsigned NumRegs = getNumRegistersForCallingConv(CLI.RetTy->getContext(),
+                                                       CLI.CallConv, VT);
       for (unsigned i = 0; i != NumRegs; ++i) {
         ISD::InputArg MyFlags;
+        MyFlags.Flags = Flags;
         MyFlags.VT = RegisterVT;
         MyFlags.ArgVT = VT;
         MyFlags.Used = CLI.IsReturnValueUsed;
+        if (CLI.RetTy->isPointerTy()) {
+          MyFlags.Flags.setPointer();
+          MyFlags.Flags.setPointerAddrSpace(
+              cast<PointerType>(CLI.RetTy)->getAddressSpace());
+        }
         if (CLI.RetSExt)
           MyFlags.Flags.setSExt();
         if (CLI.RetZExt)
@@ -10670,7 +10684,7 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
     if (Args[i].IsByVal)
       FinalType = cast<PointerType>(Args[i].Ty)->getElementType();
     bool NeedsRegBlock = functionArgumentNeedsConsecutiveRegisters(
-        FinalType, CLI.CallConv, CLI.IsVarArg);
+								   FinalType, CLI.CallConv, CLI.IsVarArg, DL);
     for (unsigned Value = 0, NumValues = ValueVTs.size(); Value != NumValues;
          ++Value) {
       EVT VT = ValueVTs[Value];
@@ -10682,33 +10696,38 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
       // Certain targets (such as MIPS), may have a different ABI alignment
       // for a type depending on the context. Give the target a chance to
       // specify the alignment it wants.
-      unsigned OriginalAlignment = getABIAlignmentForCallingConv(ArgTy, DL);
+      const Align OriginalAlignment(getABIAlignmentForCallingConv(ArgTy, DL));
+      Flags.setOrigAlign(OriginalAlignment);
 
-      if (Args[i].IsZExt)
-        Flags.setZExt();
-      if (Args[i].IsSExt)
-        Flags.setSExt();
-      if (Args[i].IsInReg) {
-        // If we are using vectorcall calling convention, a structure that is
-        // passed InReg - is surely an HVA
-        if (CLI.CallConv == CallingConv::X86_VectorCall &&
-            isa<StructType>(FinalType)) {
-          // The first value of a structure is marked
-          if (0 == Value)
-            Flags.setHvaStart();
-          Flags.setHva();
-        }
-        // Set InReg Flag
-        Flags.setInReg();
+      if (Args[i].Ty->isPointerTy()) {
+        Flags.setPointer();
+        Flags.setPointerAddrSpace(
+            cast<PointerType>(Args[i].Ty)->getAddressSpace());
       }
+
       if (Args[i].IsSRet)
         Flags.setSRet();
       if (Args[i].IsSwiftSelf)
         Flags.setSwiftSelf();
+      if (Args[i].IsSwiftAsync)
+        Flags.setSwiftAsync();
       if (Args[i].IsSwiftError)
         Flags.setSwiftError();
+      if (Args[i].IsCFGuardTarget)
+        Flags.setCFGuardTarget();
       if (Args[i].IsByVal)
         Flags.setByVal();
+      if (Args[i].IsByRef)
+        Flags.setByRef();
+      if (Args[i].IsPreallocated) {
+        Flags.setPreallocated();
+        // Set the byval flag for CCAssignFn callbacks that don't know about
+        // preallocated.  This way we can know how many bytes we should've
+        // allocated and how many bytes a callee cleanup function will pop.  If
+        // we port preallocated to more targets, we'll have to add custom
+        // preallocated handling in the various CC lowering callbacks.
+        Flags.setByVal();
+      }
       if (Args[i].IsInAlloca) {
         Flags.setInAlloca();
         // Set the byval flag for CCAssignFn callbacks that don't know about
@@ -10718,28 +10737,33 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
         // in the various CC lowering callbacks.
         Flags.setByVal();
       }
-      if (Args[i].IsByVal || Args[i].IsInAlloca) {
-        PointerType *Ty = cast<PointerType>(Args[i].Ty);
-        Type *ElementTy = Ty->getElementType();
-        Flags.setByValSize(DL.getTypeAllocSize(ElementTy));
-        // For ByVal, alignment should come from FE.  BE will guess if this
+      Align MemAlign;
+
+      if (Args[i].IsByVal || Args[i].IsInAlloca || Args[i].IsPreallocated) {
+        unsigned FrameSize = DL.getTypeAllocSize(Args[i].IndirectType);
+        Flags.setByValSize(FrameSize);
+
         // info is not there but there are cases it cannot get right.
-        unsigned FrameAlign;
-        if (Args[i].Alignment)
-          FrameAlign = Args[i].Alignment;
+        if (auto MA = Args[i].Alignment)
+          MemAlign = *MA;
         else
-          FrameAlign = getByValTypeAlignment(ElementTy, DL);
-        Flags.setByValAlign(FrameAlign);
+          MemAlign = Align(getByValTypeAlignment(Args[i].IndirectType, DL));
+      } else if (auto MA = Args[i].Alignment) {
+        MemAlign = *MA;
+      } else {
+        MemAlign = OriginalAlignment;
       }
+      Flags.setMemAlign(MemAlign);
       if (Args[i].IsNest)
         Flags.setNest();
       if (NeedsRegBlock)
         Flags.setInConsecutiveRegs();
-      Flags.setOrigAlign(OriginalAlignment);
 
-      MVT PartVT = getRegisterTypeForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
-      unsigned NumParts =
-          getNumRegistersForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
+      MVT PartVT = getRegisterTypeForCallingConv(CLI.RetTy->getContext(),
+                                                 CLI.CallConv, VT);
+      unsigned NumParts = getNumRegistersForCallingConv(CLI.RetTy->getContext(),
+                                                        CLI.CallConv, VT);
+
       SmallVector<SDValue, 4> Parts(NumParts);
       ISD::NodeType ExtendKind = ISD::ANY_EXTEND;
 
@@ -10748,10 +10772,15 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
       else if (Args[i].IsZExt)
         ExtendKind = ISD::ZERO_EXTEND;
 
-      // Conservatively only handle 'returned' on non-vectors for now
-      if (Args[i].IsReturned && !Op.getValueType().isVector()) {
-        assert(CLI.RetTy == Args[i].Ty && RetTys.size() == NumValues &&
-               "unexpected use of 'returned'");
+      // Conservatively only handle 'returned' on non-vectors that can be lowered,
+      // for now.
+      if (Args[i].IsReturned && !Op.getValueType().isVector() &&
+          CanLowerReturn) {
+        assert((CLI.RetTy == Args[i].Ty ||
+                (CLI.RetTy->isPointerTy() && Args[i].Ty->isPointerTy() &&
+                 CLI.RetTy->getPointerAddressSpace() ==
+                     Args[i].Ty->getPointerAddressSpace())) &&
+               RetTys.size() == NumValues && "unexpected use of 'returned'");
         // Before passing 'returned' to the target lowering code, ensure that
         // either the register MVT and the actual EVT are the same size or that
         // the return value and argument are extended in the same way; in these
@@ -10768,18 +10797,20 @@ TargetLowering::LowerMultiRetCallPrologueTo(TargetLowering::CallLoweringInfo &CL
           Flags.setReturned();
       }
 
-      getCopyToParts(CLI.DAG, CLI.DL, Op, &Parts[0], NumParts, PartVT,
-                     CLI.CS.getInstruction(), ExtendKind, true);
-
+      getCopyToParts(CLI.DAG, CLI.DL, Op, &Parts[0], NumParts, PartVT, CLI.CB,
+                     CLI.CallConv, ExtendKind);
       for (unsigned j = 0; j != NumParts; ++j) {
         // if it isn't first piece, alignment must be 1
-        ISD::OutputArg MyFlags(Flags, Parts[j].getValueType(), VT,
-                               i < CLI.NumFixedArgs,
-                               i, j*Parts[j].getValueType().getStoreSize());
+        // For scalable vectors the scalable part is currently handled
+        // by individual targets, so we just use the known minimum size here.
+        ISD::OutputArg MyFlags(
+            Flags, Parts[j].getValueType().getSimpleVT(), VT,
+            i < CLI.NumFixedArgs, i,
+            j * Parts[j].getValueType().getStoreSize().getKnownMinSize());
         if (NumParts > 1 && j == 0)
           MyFlags.Flags.setSplit();
         else if (j != 0) {
-          MyFlags.Flags.setOrigAlign(1);
+          MyFlags.Flags.setOrigAlign(Align(1));
           if (j == NumParts - 1)
             MyFlags.Flags.setSplitEnd();
         }
@@ -10857,8 +10888,10 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
     uint64_t TySize = DL.getTypeAllocSize(CLI.RetTy);
     Align Alignment = DL.getPrefTypeAlign(CLI.RetTy);
     MachineFunction &MF = CLI.DAG.getMachineFunction();
-    DemoteStackIdx = MF.getFrameInfo().CreateStackObject(TySize, Alignment, false);
-    Type *StackSlotPtrType = PointerType::getUnqual(CLI.RetTy);
+    DemoteStackIdx =
+        MF.getFrameInfo().CreateStackObject(TySize, Alignment, false);
+    Type *StackSlotPtrType = PointerType::get(CLI.RetTy,
+                                              DL.getAllocaAddrSpace());
 
     DemoteStackSlot = CLI.DAG.getFrameIndex(DemoteStackIdx, getFrameIndexTy(DL));
     ArgListEntry Entry;
@@ -10870,9 +10903,12 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
     Entry.IsSRet = true;
     Entry.IsNest = false;
     Entry.IsByVal = false;
+    Entry.IsByRef = false;
     Entry.IsReturned = false;
     Entry.IsSwiftSelf = false;
+    Entry.IsSwiftAsync = false;
     Entry.IsSwiftError = false;
+    Entry.IsCFGuardTarget = false;
     Entry.Alignment = Alignment;
     CLI.getArgs().insert(CLI.getArgs().begin(), Entry);
     CLI.NumFixedArgs += 1;
@@ -10882,17 +10918,31 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
     // points into the callers stack frame.
     CLI.IsTailCall = false;
   } else {
+    bool NeedsRegBlock = functionArgumentNeedsConsecutiveRegisters(
+        CLI.RetTy, CLI.CallConv, CLI.IsVarArg, DL);
     for (unsigned I = 0, E = RetTys.size(); I != E; ++I) {
+      ISD::ArgFlagsTy Flags;
+      if (NeedsRegBlock) {
+        Flags.setInConsecutiveRegs();
+        if (I == RetTys.size() - 1)
+          Flags.setInConsecutiveRegsLast();
+      }
       EVT VT = RetTys[I];
-      MVT RegisterVT =
-          getRegisterTypeForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
-      unsigned NumRegs =
-          getNumRegistersForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
+      MVT RegisterVT = getRegisterTypeForCallingConv(CLI.RetTy->getContext(),
+                                                     CLI.CallConv, VT);
+      unsigned NumRegs = getNumRegistersForCallingConv(CLI.RetTy->getContext(),
+                                                       CLI.CallConv, VT);
       for (unsigned i = 0; i != NumRegs; ++i) {
         ISD::InputArg MyFlags;
+        MyFlags.Flags = Flags;
         MyFlags.VT = RegisterVT;
         MyFlags.ArgVT = VT;
         MyFlags.Used = CLI.IsReturnValueUsed;
+        if (CLI.RetTy->isPointerTy()) {
+          MyFlags.Flags.setPointer();
+          MyFlags.Flags.setPointerAddrSpace(
+              cast<PointerType>(CLI.RetTy)->getAddressSpace());
+        }
         if (CLI.RetSExt)
           MyFlags.Flags.setSExt();
         if (CLI.RetZExt)
@@ -10905,7 +10955,6 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
   }
   // We push in swifterror return as the last element of CLI.Ins.
   ArgListTy &Args = CLI.getArgs();
-
 #if 0
   if (supportSwiftError()) {
     for (unsigned i = 0, e = Args.size(); i != e; ++i) {
@@ -10932,7 +10981,7 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
     if (Args[i].IsByVal)
       FinalType = cast<PointerType>(Args[i].Ty)->getElementType();
     bool NeedsRegBlock = functionArgumentNeedsConsecutiveRegisters(
-        FinalType, CLI.CallConv, CLI.IsVarArg);
+								   FinalType, CLI.CallConv, CLI.IsVarArg, DL);
     for (unsigned Value = 0, NumValues = ValueVTs.size(); Value != NumValues;
          ++Value) {
       EVT VT = ValueVTs[Value];
@@ -10944,7 +10993,14 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
       // Certain targets (such as MIPS), may have a different ABI alignment
       // for a type depending on the context. Give the target a chance to
       // specify the alignment it wants.
-      unsigned OriginalAlignment = getABIAlignmentForCallingConv(ArgTy, DL);
+      const Align OriginalAlignment(getABIAlignmentForCallingConv(ArgTy, DL));
+      Flags.setOrigAlign(OriginalAlignment);
+
+      if (Args[i].Ty->isPointerTy()) {
+        Flags.setPointer();
+        Flags.setPointerAddrSpace(
+            cast<PointerType>(Args[i].Ty)->getAddressSpace());
+      }
 
       if (Args[i].IsZExt)
         Flags.setZExt();
@@ -10967,10 +11023,25 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
         Flags.setSRet();
       if (Args[i].IsSwiftSelf)
         Flags.setSwiftSelf();
+      if (Args[i].IsSwiftAsync)
+        Flags.setSwiftAsync();
       if (Args[i].IsSwiftError)
         Flags.setSwiftError();
+      if (Args[i].IsCFGuardTarget)
+        Flags.setCFGuardTarget();
       if (Args[i].IsByVal)
         Flags.setByVal();
+      if (Args[i].IsByRef)
+        Flags.setByRef();
+      if (Args[i].IsPreallocated) {
+        Flags.setPreallocated();
+        // Set the byval flag for CCAssignFn callbacks that don't know about
+        // preallocated.  This way we can know how many bytes we should've
+        // allocated and how many bytes a callee cleanup function will pop.  If
+        // we port preallocated to more targets, we'll have to add custom
+        // preallocated handling in the various CC lowering callbacks.
+        Flags.setByVal();
+      }
       if (Args[i].IsInAlloca) {
         Flags.setInAlloca();
         // Set the byval flag for CCAssignFn callbacks that don't know about
@@ -10980,28 +11051,32 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
         // in the various CC lowering callbacks.
         Flags.setByVal();
       }
-      if (Args[i].IsByVal || Args[i].IsInAlloca) {
-        PointerType *Ty = cast<PointerType>(Args[i].Ty);
-        Type *ElementTy = Ty->getElementType();
-        Flags.setByValSize(DL.getTypeAllocSize(ElementTy));
-        // For ByVal, alignment should come from FE.  BE will guess if this
+      Align MemAlign;
+
+      if (Args[i].IsByVal || Args[i].IsInAlloca || Args[i].IsPreallocated) {
+        unsigned FrameSize = DL.getTypeAllocSize(Args[i].IndirectType);
+        Flags.setByValSize(FrameSize);
+
         // info is not there but there are cases it cannot get right.
-        unsigned FrameAlign;
-        if (Args[i].Alignment)
-          FrameAlign = Args[i].Alignment;
+        if (auto MA = Args[i].Alignment)
+          MemAlign = *MA;
         else
-          FrameAlign = getByValTypeAlignment(ElementTy, DL);
-        Flags.setByValAlign(FrameAlign);
+          MemAlign = Align(getByValTypeAlignment(Args[i].IndirectType, DL));
+      } else if (auto MA = Args[i].Alignment) {
+        MemAlign = *MA;
+      } else {
+        MemAlign = OriginalAlignment;
       }
+      Flags.setMemAlign(MemAlign);
       if (Args[i].IsNest)
         Flags.setNest();
       if (NeedsRegBlock)
         Flags.setInConsecutiveRegs();
-      Flags.setOrigAlign(OriginalAlignment);
 
-      MVT PartVT = getRegisterTypeForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
-      unsigned NumParts =
-          getNumRegistersForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
+      MVT PartVT = getRegisterTypeForCallingConv(CLI.RetTy->getContext(),
+                                                 CLI.CallConv, VT);
+      unsigned NumParts = getNumRegistersForCallingConv(CLI.RetTy->getContext(),
+                                                        CLI.CallConv, VT);
       SmallVector<SDValue, 4> Parts(NumParts);
       ISD::NodeType ExtendKind = ISD::ANY_EXTEND;
 
@@ -11010,10 +11085,15 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
       else if (Args[i].IsZExt)
         ExtendKind = ISD::ZERO_EXTEND;
 
-      // Conservatively only handle 'returned' on non-vectors for now
-      if (Args[i].IsReturned && !Op.getValueType().isVector()) {
-        assert(CLI.RetTy == Args[i].Ty && RetTys.size() == NumValues &&
-               "unexpected use of 'returned'");
+      // Conservatively only handle 'returned' on non-vectors that can be lowered,
+      // for now.
+      if (Args[i].IsReturned && !Op.getValueType().isVector() &&
+          CanLowerReturn) {
+        assert((CLI.RetTy == Args[i].Ty ||
+                (CLI.RetTy->isPointerTy() && Args[i].Ty->isPointerTy() &&
+                 CLI.RetTy->getPointerAddressSpace() ==
+                     Args[i].Ty->getPointerAddressSpace())) &&
+               RetTys.size() == NumValues && "unexpected use of 'returned'");
         // Before passing 'returned' to the target lowering code, ensure that
         // either the register MVT and the actual EVT are the same size or that
         // the return value and argument are extended in the same way; in these
@@ -11030,18 +11110,21 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
           Flags.setReturned();
       }
 
-      getCopyToParts(CLI.DAG, CLI.DL, Op, &Parts[0], NumParts, PartVT,
-                     CLI.CS.getInstruction(), ExtendKind, true);
+      getCopyToParts(CLI.DAG, CLI.DL, Op, &Parts[0], NumParts, PartVT, CLI.CB,
+                     CLI.CallConv, ExtendKind);
 
       for (unsigned j = 0; j != NumParts; ++j) {
         // if it isn't first piece, alignment must be 1
-        ISD::OutputArg MyFlags(Flags, Parts[j].getValueType(), VT,
-                               i < CLI.NumFixedArgs,
-                               i, j*Parts[j].getValueType().getStoreSize());
+        // For scalable vectors the scalable part is currently handled
+        // by individual targets, so we just use the known minimum size here.
+        ISD::OutputArg MyFlags(
+            Flags, Parts[j].getValueType().getSimpleVT(), VT,
+            i < CLI.NumFixedArgs, i,
+            j * Parts[j].getValueType().getStoreSize().getKnownMinSize());
         if (NumParts > 1 && j == 0)
           MyFlags.Flags.setSplit();
         else if (j != 0) {
-          MyFlags.Flags.setOrigAlign(1);
+          MyFlags.Flags.setOrigAlign(Align(1));
           if (j == NumParts - 1)
             MyFlags.Flags.setSplitEnd();
         }
@@ -11109,6 +11192,8 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
     SDNodeFlags Flags;
     Flags.setNoUnsignedWrap(true);
 
+    MachineFunction &MF = CLI.DAG.getMachineFunction();
+    Align HiddenSRetAlign = MF.getFrameInfo().getObjectAlign(DemoteStackIdx);
     for (unsigned i = 0; i < NumValues; ++i) {
       SDValue Add = CLI.DAG.getNode(ISD::ADD, CLI.DL, PtrVT, DemoteStackSlot,
                                     CLI.DAG.getConstant(Offsets[i], CLI.DL,
@@ -11117,7 +11202,7 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
           RetTys[i], CLI.DL, CLI.Chain, Add,
           MachinePointerInfo::getFixedStack(CLI.DAG.getMachineFunction(),
                                             DemoteStackIdx, Offsets[i]),
-          /* Alignment = */ 1);
+          HiddenSRetAlign);
       ReturnValues[i] = L;
       Chains[i] = L.getValue(1);
     }
@@ -11139,9 +11224,10 @@ TargetLowering::LowerMultiRetCallEpilogueTo(TargetLowering::CallLoweringInfo &CL
       unsigned NumRegs =
           getNumRegistersForCallingConv(CLI.RetTy->getContext(), CLI.CallConv, VT);
 
+
       ReturnValues.push_back(getCopyFromParts(CLI.DAG, CLI.DL, &InVals[CurReg],
                                               NumRegs, RegisterVT, VT, nullptr,
-                                              AssertOp, true));
+                                              CLI.CallConv, AssertOp));
       CurReg += NumRegs;
     }
 
