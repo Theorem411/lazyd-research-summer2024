@@ -56,7 +56,7 @@
 #include "llvm/Transforms/Vectorize/LoopVectorize.h"
 #include "llvm/Transforms/Vectorize/SLPVectorizer.h"
 #include "llvm/Transforms/Vectorize/VectorCombine.h"
-// CNP : Added to transform potential jump immediately after Tapir Runtime transformation 
+// CNP : Added to transform potential jump immediately after Tapir Runtime transformation
 #include "llvm/Transforms/ULI/EagerDTrans.h"
 #include "llvm/Transforms/ULI/ForkDTypes.h"
 #include "llvm/Transforms/ULI/HandleInlets.h"
@@ -750,7 +750,7 @@ void PassManagerBuilder::populateModulePassManager(
 
 
     if (TapirTargetID::None != TapirTarget && TapirTargetID::Serial != TapirTarget) {
-      MPM.add(createAnalyzeTapirPass());
+      MPM.add(createTaskCanonicalizePass());
       MPM.add(createLowerTapirToTargetPass());
 
       // Immediately transform potential jump
@@ -762,9 +762,6 @@ void PassManagerBuilder::populateModulePassManager(
       MPM.add(createCFGSimplificationPass());
       MPM.add(createAlwaysInlinerLegacyPass());
     }
-
-    // Add passes to run just after Tapir lowering.
-    addExtensionsToPM(EP_PostTapir, MPM);
 
     MPM.add(createHandleUnwindPollPass());
 
@@ -1116,7 +1113,7 @@ void PassManagerBuilder::populateModulePassManager(
     }
 #endif
 
-    // First handle Tapir loops. First, simplify their induction variables.    
+    // First handle Tapir loops. First, simplify their induction variables.
     MPM.add(createIndVarSimplifyPass());
     // Re-rotate loops in all our loop nests. These may have fallout out of
     // rotated form due to GVN or other transformations, and loop spawning
@@ -1143,7 +1140,7 @@ void PassManagerBuilder::populateModulePassManager(
     MPM.add(createBarrierNoopPass());
     // addFunctionSimplificationPasses(MPM);
     addExtensionsToPM(EP_TapirLoopEnd, MPM);
-    
+
     MPM.add(createTaskCanonicalizePass());
     // Now lower Tapir to Target runtime calls.
     //
@@ -1186,7 +1183,7 @@ void PassManagerBuilder::populateModulePassManager(
       //assert(!tapirTarget && "Can only create eagerD when -ftapir=serial");
       MPM.add(createEagerDTransPass());
     }
-    
+
     // The lowering pass introduces new functions and may leave cruft around.
     // Clean it up.
     //MPM.add(createCFGSimplificationPass(
@@ -1277,9 +1274,6 @@ void PassManagerBuilder::populateModulePassManager(
     RerunAfterTapirLowering = false;
   }
   } while (RerunAfterTapirLowering);
-
-  // Add passes to run just after Tapir lowering.
-  addExtensionsToPM(EP_PostTapir, MPM);
 
   MPM.add(createHandleUnwindPollPass());
 

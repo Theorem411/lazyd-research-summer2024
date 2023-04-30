@@ -4041,48 +4041,50 @@ bool InstCombinerImpl::run() {
       if (!UserInst)
         return None;
 
-    // Can not sink retpad inst
-    if (!isa<RetPadInst>(I) ) {
-      BasicBlock *BB = I->getParent();
-      BasicBlock *UserParent = nullptr;
+      // Can not sink retpad inst
+      if (!isa<RetPadInst>(I) ) {
+	BasicBlock *BB = I->getParent();
+	BasicBlock *UserParent = nullptr;
 
-      // Special handling for Phi nodes - get the block the use occurs in.
-      if (PHINode *PN = dyn_cast<PHINode>(UserInst)) {
-        for (unsigned i = 0; i < PN->getNumIncomingValues(); i++) {
-          if (PN->getIncomingValue(i) == I) {
-            // Bail out if we have uses in different blocks. We don't do any
-            // sophisticated analysis (i.e finding NearestCommonDominator of these
-            // use blocks).
-            if (UserParent && UserParent != PN->getIncomingBlock(i))
-              return None;
+	// Special handling for Phi nodes - get the block the use occurs in.
+	if (PHINode *PN = dyn_cast<PHINode>(UserInst)) {
+	  for (unsigned i = 0; i < PN->getNumIncomingValues(); i++) {
+	    if (PN->getIncomingValue(i) == I) {
+	      // Bail out if we have uses in different blocks. We don't do any
+	      // sophisticated analysis (i.e finding NearestCommonDominator of these
+	      // use blocks).
+	      if (UserParent && UserParent != PN->getIncomingBlock(i))
+		return None;
             UserParent = PN->getIncomingBlock(i);
-          }
-        }
+	    }
+	  }
         assert(UserParent && "expected to find user block!");
-      } else
-        UserParent = UserInst->getParent();
+	} else
+	  UserParent = UserInst->getParent();
 
-      // Try sinking to another block. If that block is unreachable, then do
-      // not bother. SimplifyCFG should handle it.
-      if (UserParent == BB || !DT.isReachableFromEntry(UserParent))
-        return None;
+	// Try sinking to another block. If that block is unreachable, then do
+	// not bother. SimplifyCFG should handle it.
+	if (UserParent == BB || !DT.isReachableFromEntry(UserParent))
+	  return None;
 
-      // Don't sink if the successor follows through a sync instruction.
-      if (isa<SyncInst>(BB->getTerminator()))
-        return None;
+	// Don't sink if the successor follows through a sync instruction.
+	if (isa<SyncInst>(BB->getTerminator()))
+	  return None;
 
-      auto *Term = UserParent->getTerminator();
-      // See if the user is one of our successors that has only one
-      // predecessor, so that we don't have to split the critical edge.
-      // Another option where we can sink is a block that ends with a
-      // terminator that does not pass control to other block (such as
-      // return or unreachable or resume). In this case:
-      //   - I dominates the User (by SSA form);
-      //   - the User will be executed at most once.
-      // So sinking I down to User is always profitable or neutral.
-      if (UserParent->getUniquePredecessor() == BB || succ_empty(Term)) {
-        assert(DT.dominates(BB, UserParent) && "Dominance relation broken?");
-        return UserParent;
+	auto *Term = UserParent->getTerminator();
+	// See if the user is one of our successors that has only one
+	// predecessor, so that we don't have to split the critical edge.
+	// Another option where we can sink is a block that ends with a
+	// terminator that does not pass control to other block (such as
+	// return or unreachable or resume). In this case:
+	//   - I dominates the User (by SSA form);
+	//   - the User will be executed at most once.
+	// So sinking I down to User is always profitable or neutral.
+	if (UserParent->getUniquePredecessor() == BB || succ_empty(Term)) {
+	  assert(DT.dominates(BB, UserParent) && "Dominance relation broken?");
+	  return UserParent;
+	}
+	return None;
       }
       return None;
     };
