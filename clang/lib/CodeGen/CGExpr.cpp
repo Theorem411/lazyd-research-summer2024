@@ -2786,11 +2786,14 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
         VD = VD->getCanonicalDecl();
         int EnvStructIndex = FD->inletContainingFunction()->inletCaptureEnvironmentFieldIndex(VD);
 
+	// TODO: CNP disable INlet for now
+#if 0
         if (EnvStructIndex != -1) {
           Address addr = Builder.CreateStructGEP(InletEnvArgValue, EnvStructIndex,
               /*offset=*/CharUnits::fromQuantity(0), "inlet.capture.addr");
           return MakeAddrLValue(addr, T, AlignmentSource::Decl);
         }
+#endif
       }
 
       assert(isa<BlockDecl>(CurCodeDecl));
@@ -2827,11 +2830,14 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
       // Get the correct field of the environment struct
       int EnvStructIndex = FD->inletCaptureEnvironmentFieldIndex(VD);
 
+#if 0
+      // TODO: CNP disable inlet for now
       if (EnvStructIndex != -1) {
         Address addr = Builder.CreateStructGEP(InletEnvAlloca, EnvStructIndex, /*offset=*/CharUnits::fromQuantity(0), "inlet.localaccess.addr");
 
         return MakeAddrLValue(addr, T, AlignmentSource::Decl);
       }
+#endif
 
     }
 

@@ -8659,8 +8659,11 @@ static FunctionDecl *CreateNewFunctionDecl(Sema &SemaRef, Declarator &D,
     bool isInlet = D.getDeclSpec().isInletSpecified();
     NewFD->setInletSpecified(isInlet);
 
-    // :CutNPaste ULI
     bool isUserLevelInterrupt = false;
+    // TODO: CNP fix this to detect userlevelinterrupt
+#if 0
+    // :CutNPaste ULI
+    // Check if this function has a user level interrupt attribute
     AttributeList *AttrListIt = D.getDeclSpec().getAttributes().getList();
     while (AttrListIt) {
       if (AttrListIt->getKind() == AttributeList::Kind::AT_UserLevelInterrupt) {
@@ -8669,6 +8672,10 @@ static FunctionDecl *CreateNewFunctionDecl(Sema &SemaRef, Declarator &D,
       }
       AttrListIt = AttrListIt->getNext();
     }
+    //#else
+    isUserLevelInterrupt = D.getDeclSpec().hasAttr<UserLevelInterruptAttr>()
+#endif
+
     if (isInlet || isUserLevelInterrupt) {
       ASTContext &Context = SemaRef.getASTContext();
 
@@ -9570,9 +9577,10 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   unsigned FTIIdx;
   if (D.isFunctionDeclarator(FTIIdx)) {
     DeclaratorChunk::FunctionTypeInfo &FTI = D.getTypeObject(FTIIdx).Fun;
-
-    // :CutNPaste ULI
     bool isUserLevelInterrupt = false;
+    // TODO: CNP fix this to detect userlevelinterrupt
+#if 0
+    // :CutNPaste ULI
     AttributeList *AttrListIt = D.getDeclSpec().getAttributes().getList();
     while (AttrListIt) {
       if (AttrListIt->getKind() == AttributeList::Kind::AT_UserLevelInterrupt) {
@@ -9581,6 +9589,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       }
       AttrListIt = AttrListIt->getNext();
     }
+#endif
 
     if (isUserLevelInterrupt) {
       // Add implicit void * environment argument
@@ -15089,7 +15098,7 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
 
     // Move the captures from the InletScopeInfo to the inlet's FunctionDecl
     SmallVector<VarDecl*, 4> Captures;
-    for (CapturingScopeInfo::Capture Cap : ISI->Captures) {
+    for (Capture &Cap : ISI->Captures) {
       assert(!Cap.isThisCapture() && "Inlets don't support capturing `this`");
       assert(!isa<ParmVarDecl>(Cap.getVariable()) && "Inlets cannot capture arguments yet");
       assert(!Cap.getVariable()->getAnyInitializer() && "Inlets cannot capture declarations with initializers yet. Write `int foo; foo = ...;` instead.");
