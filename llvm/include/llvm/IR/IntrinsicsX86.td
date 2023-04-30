@@ -5969,6 +5969,7 @@ let TargetPrefix = "x86" in {
        Intrinsic<[], [llvm_i64_ty], [IntrHasSideEffects]>;
 
 
+  // TODO: CNP move this builtin to intrinsics
   def int_x86_get_frame_size : GCCBuiltin<"__builtin_get_frame_size">,
        Intrinsic<[llvm_i64_ty], [], [IntrNoMem]>;
   def int_x86_uli_potential_jump : GCCBuiltin<"__builtin_uli_potential_jump">,
@@ -6006,4 +6007,10 @@ let TargetPrefix = "x86" in {
        Intrinsic<[], [llvm_ptr_ty], []>;
   def int_x86_uli_save_returnaddress : GCCBuiltin<"__builtin_uli_save_returnaddress">,
        Intrinsic<[], [llvm_ptr_ty], []>;
+
+  def int_x86_ui_disable_region : GCCBuiltin<"__builtin_ui_disable_region">,
+       Intrinsic<[], [], []>;
+  def int_x86_ui_enable_region : GCCBuiltin<"__builtin_ui_enable_region">,
+       Intrinsic<[], [], []>;
+
 }

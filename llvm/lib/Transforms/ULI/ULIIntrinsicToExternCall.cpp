@@ -68,18 +68,18 @@ void ULIIntrinsicToExternCallPass::initializeIntrinsicExternMap(Module &M) {
   // be easily rewritten by redirecting the existing arguments.
   IntrinsicExternMap.clear();
   SmallVector<std::pair<Intrinsic::ID, std::string>, 4> SameTypeIntrinsics = {
-      {Intrinsic::x86_uli_enable, "ENAULI"},
-      {Intrinsic::x86_uli_disable, "DISULI"},
-      {Intrinsic::x86_uli_set, "SETULI"},
-      {Intrinsic::x86_uli_read, "READULI"},
-      {Intrinsic::x86_uli_rdrdi, "RDULIRDI"},
-      {Intrinsic::x86_uli_rdflags, "RDULIFLAGS"},
-      {Intrinsic::x86_uli_rdRA, "RDULIRA"},
-      {Intrinsic::x86_uli_wrrdi, "WRULIRDI"},
-      {Intrinsic::x86_uli_wrflags, "WRULIFLAGS"},
-      {Intrinsic::x86_uli_wrRA, "WRULIRA"},
-      {Intrinsic::x86_uli_atomic, "SETULIATOMIC"},
-      {Intrinsic::x86_uli_getcpu, "getpid"}};
+      {Intrinsic::uli_enable, "ENAULI"},
+      {Intrinsic::uli_disable, "DISULI"},
+      {Intrinsic::uli_set, "SETULI"},
+      {Intrinsic::uli_read, "READULI"},
+      {Intrinsic::uli_rdrdi, "RDULIRDI"},
+      {Intrinsic::uli_rdflags, "RDULIFLAGS"},
+      {Intrinsic::uli_rdRA, "RDULIRA"},
+      {Intrinsic::uli_wrrdi, "WRULIRDI"},
+      {Intrinsic::uli_wrflags, "WRULIFLAGS"},
+      {Intrinsic::uli_wrRA, "WRULIRA"},
+      {Intrinsic::uli_atomic, "SETULIATOMIC"},
+      {Intrinsic::uli_getcpu, "getpid"}};
   for (const auto &I : SameTypeIntrinsics) {
     const bool IsSameType  = true;
     Function *IF           = Intrinsic::getDeclaration(&M, I.first);
@@ -89,10 +89,10 @@ void ULIIntrinsicToExternCallPass::initializeIntrinsicExternMap(Module &M) {
 
   // Next we add intrinsics that need manipulating the existing arguments.
   SmallVector<std::pair<Intrinsic::ID, std::string>, 4> DiffTypeIntrinsics = {
-      {Intrinsic::x86_uli_send0cN, "SENDI"},
-      {Intrinsic::x86_uli_reply0cN, "REPLYI"},
-      {Intrinsic::x86_uli_toireg, "TOIREG"},
-      {Intrinsic::x86_uli_fromireg, "FROMIREG"}};
+      {Intrinsic::uli_send0cN, "SENDI"},
+      {Intrinsic::uli_reply0cN, "REPLYI"},
+      {Intrinsic::uli_toireg, "TOIREG"},
+      {Intrinsic::uli_fromireg, "FROMIREG"}};
   for (const auto &I : DiffTypeIntrinsics) {
     const bool IsSameType  = false;
     Function *IF           = Intrinsic::getDeclaration(&M, I.first);
@@ -107,7 +107,7 @@ void ULIIntrinsicToExternCallPass::insertExternReturns(Function &F) {
   Module &M               = *F.getParent();
   Type *VoidTy            = Type::getVoidTy(M.getContext());
   FunctionType *ExternFTy = FunctionType::get(VoidTy, false);
-  Constant *ExternFunc    = M.getOrInsertFunction("RETULI", ExternFTy);
+  FunctionCallee ExternFunc    = M.getOrInsertFunction("RETULI", ExternFTy);
 
   // We insert before each return instruction.
   for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I) {
@@ -132,11 +132,11 @@ void ULIIntrinsicToExternCallPass::collectIntrinsicCalls(Function &F) {
 CallInst *ULIIntrinsicToExternCallPass::rewriteToExternSameType(
     CallInst *IntrinsicCI, const ExternCall &Extern, Module &M) {
   // Insert extern declaration (if needed) and call.
-  Constant *ExternFunc = M.getOrInsertFunction(Extern.Name, Extern.FTy);
+  FunctionCallee ExternFunc = M.getOrInsertFunction(Extern.Name, Extern.FTy);
 
   // Copy all function arguments.
   SmallVector<Value *, 4> Args;
-  for (unsigned AI = 0, AE = IntrinsicCI->getNumArgOperands(); AI < AE; ++AI)
+  for (unsigned AI = 0, AE = IntrinsicCI->arg_size(); AI < AE; ++AI)
     Args.push_back(IntrinsicCI->getArgOperand(AI));
 
   // Insert extern call and remove the intrinsic call.
@@ -162,11 +162,11 @@ CallInst *ULIIntrinsicToExternCallPass::rewriteToExternDiffType(
   CallInst *ExternCI = nullptr;
   IRBuilder<> Builder(Ctx);
   switch (Extern.ID) {
-  case Intrinsic::x86_uli_send0c: {
+  case Intrinsic::uli_send0c: {
     // Get the extern function.
     SmallVector<Type *, 4> ArgsTy = {Int32Ty, Int8Ty, Int64Ty, Int32Ty};
     FunctionType *ExternTy = FunctionType::get(VoidTy, ArgsTy, false);
-    Constant *ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
+    FunctionCallee ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
 
     // Manipulate the arguments so that we can pass them to the new extern call.
     Builder.SetInsertPoint(IntrinsicCI);
@@ -191,12 +191,12 @@ CallInst *ULIIntrinsicToExternCallPass::rewriteToExternDiffType(
     IntrinsicCI->eraseFromParent();
     break;
   }
-  case Intrinsic::x86_uli_send0cN: {
+  case Intrinsic::uli_send0cN: {
     // Get the extern function.
 
     SmallVector<Type *, 4> ArgsTy = {Int32Ty, Int8Ty, Int64Ty, Int32Ty};
     FunctionType *ExternTy = FunctionType::get(VoidTy, ArgsTy, false);
-    Constant *ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
+    FunctionCallee ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
 
     // Manipulate the arguments so that we can pass them to the new extern call.
     Builder.SetInsertPoint(IntrinsicCI);
@@ -221,12 +221,12 @@ CallInst *ULIIntrinsicToExternCallPass::rewriteToExternDiffType(
     IntrinsicCI->eraseFromParent();
     break;
   }
-  case Intrinsic::x86_uli_reply0c: {
+  case Intrinsic::uli_reply0c: {
     // Get the extern function.
     assert(0);			// we don't use this intrinsic anymore
     SmallVector<Type *, 2> ArgsTy = {Int64Ty, Int32Ty};
     FunctionType *ExternTy = FunctionType::get(VoidTy, ArgsTy, false);
-    Constant *ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
+    FunctionCallee ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
 
     // Manipulate the arguments so that we can pass them to the new extern call.
     Builder.SetInsertPoint(IntrinsicCI);
@@ -243,11 +243,11 @@ CallInst *ULIIntrinsicToExternCallPass::rewriteToExternDiffType(
     IntrinsicCI->eraseFromParent();
     break;
   }
-  case Intrinsic::x86_uli_reply0cN: {
+  case Intrinsic::uli_reply0cN: {
     // Get the extern function.
     SmallVector<Type *, 2> ArgsTy = {Int64Ty, Int32Ty};
     FunctionType *ExternTy = FunctionType::get(VoidTy, ArgsTy, false);
-    Constant *ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
+    FunctionCallee ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
 
     // Manipulate the arguments so that we can pass them to the new extern call.
     Builder.SetInsertPoint(IntrinsicCI);
@@ -264,11 +264,11 @@ CallInst *ULIIntrinsicToExternCallPass::rewriteToExternDiffType(
     IntrinsicCI->eraseFromParent();
     break;
   }
-  case Intrinsic::x86_uli_toireg: {
+  case Intrinsic::uli_toireg: {
     // Get the extern function.
     SmallVector<Type *, 2> ArgsTy = {Int64Ty, Int8Ty};
     FunctionType *ExternTy = FunctionType::get(VoidTy, ArgsTy, false);
-    Constant *ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
+    FunctionCallee ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
 
     // Manipulate the arguments so that we can pass them to the new extern call.
     Builder.SetInsertPoint(IntrinsicCI);
@@ -284,11 +284,11 @@ CallInst *ULIIntrinsicToExternCallPass::rewriteToExternDiffType(
     IntrinsicCI->eraseFromParent();
     break;
   }
-  case Intrinsic::x86_uli_fromireg: {
+  case Intrinsic::uli_fromireg: {
     // Get the extern function.
     SmallVector<Type *, 2> ArgsTy = {Int8Ty, Int64PtrTy};
     FunctionType *ExternTy = FunctionType::get(VoidTy, ArgsTy, false);
-    Constant *ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
+    FunctionCallee ExternFunc   = M.getOrInsertFunction(Extern.Name, ExternTy);
 
     // Manipulate the arguments so that we can pass them to the new extern call.
     // We need to allocate a temp value since the extern function would modify
@@ -309,7 +309,7 @@ CallInst *ULIIntrinsicToExternCallPass::rewriteToExternDiffType(
 
     // Insert extern call and load the output value of extern call.
     ExternCI      = Builder.CreateCall(ExternFunc, Args);
-    Value *Output = Builder.CreateLoad(Temp);
+    Value *Output = Builder.CreateLoad(Int64Ty, Temp);
     IntrinsicCI->replaceAllUsesWith(Output);
     IntrinsicCI->eraseFromParent();
     break;

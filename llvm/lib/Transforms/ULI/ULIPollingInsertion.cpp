@@ -80,7 +80,7 @@ bool ULIPollingInsertionPass::insertPollingAtFunction(Function &F) {
   for (BasicBlock &BB : F) {
     // Exit blocks should not have successor and are reachable.
     if (std::distance(succ_begin(&BB), succ_end(&BB)) == 0 &&
-        isPotentiallyReachable(&EntryBlock, &BB, DT, LI)) {
+        isPotentiallyReachable(&EntryBlock, &BB, nullptr, DT, LI)) {
       Instruction *InsertPos = BB.getTerminator();
       CallInst::Create(PollingFunc, PollingArgs, "", InsertPos);
     }
@@ -128,9 +128,9 @@ bool ULIPollingInsertionPass::instrumentLoop (Loop& L) {
   BasicBlock *HeaderBlock = L.getHeader();
   if (HeaderBlock) {
     B.SetInsertPoint(HeaderBlock->getFirstNonPHIOrDbgOrLifetime());
-    Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll);
+    Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::uli_unwind_poll);
     B.CreateCall(pollFcn);
-    DEBUG(dbgs() << F->getName() << ": Polling at outer most loop\n");
+    LLVM_DEBUG(dbgs() << F->getName() << ": Polling at outer most loop\n");
   }
   return true;
 }
@@ -195,9 +195,9 @@ bool ULIPollingInsertionPass::runImpl(Function &F,
   // Insert poling
   // Polling @prologue
   if( (!DisableUnwindPoll && !F.hasFnAttribute(Attribute::ULINoPolling)) ) {
-    Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll);
+    Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::uli_unwind_poll);
     auto res = B.CreateCall(pollFcn);
-    DEBUG(dbgs() << F.getName() << " : Polling at prologue\n");
+    LLVM_DEBUG(dbgs() << F.getName() << " : Polling at prologue\n");
   }
 
   // Polling @epilogue
@@ -207,11 +207,11 @@ bool ULIPollingInsertionPass::runImpl(Function &F,
       B.SetInsertPoint(termInst);
 
       if( (!DisableUnwindPoll && !F.hasFnAttribute(Attribute::ULINoPolling)) ) {
-	Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll);
+	Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::uli_unwind_poll);
 	if(EnableProperPolling >= 1 ) {
 	  auto res = B.CreateCall(pollFcn);
 	  //res->setTailCall(true);
-	  DEBUG(dbgs() << F.getName() << " : Polling at epilogue\n");
+	  LLVM_DEBUG(dbgs() << F.getName() << " : Polling at epilogue\n");
 	}
       }
     }

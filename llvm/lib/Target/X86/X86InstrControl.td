@@ -48,9 +48,9 @@ let isTerminator = 1, isReturn = 1, isBarrier = 1,
 
   // User level interrupt return
   def ULIRET32   : I   <0x3F, RawFrm, (outs), (ins),
-                    "uliret{l|d}", [], IIC_ULIRET>, TB, OpSize32;
+                    "uliret{l|d}", []>, TB, OpSize32;
   def ULIRET64   : I   <0x3F, RawFrm, (outs), (ins),
-                    "uliretq", [(int_x86_uli_retq)], IIC_ULIRET>, TB, Requires<[In64BitMode]>;
+                    "uliretq", [(int_x86_uli_retq)]>, TB, Requires<[In64BitMode]>;
 
   // User interrupt return
   // f3 0f 01 ec
@@ -58,9 +58,9 @@ let isTerminator = 1, isReturn = 1, isBarrier = 1,
   // 01 comes from <0x01
   // ec comes from MRM_EC (Mod/RM byte)
   def UIRET32   : I   <0x01, MRM_EC, (outs), (ins),
-                    "uiret{l|d}", [], IIC_UIRET>, XS,  OpSize32;
+                    "uiret{l|d}", []>, XS,  OpSize32;
   def UIRET64   : I   <0x01, MRM_EC, (outs), (ins),
-                    "uiretq", [], IIC_UIRET>, XS, Requires<[In64BitMode]>;
+                    "uiretq", []>, XS, Requires<[In64BitMode]>;
 
   // The machine return from interrupt instruction, but sometimes we need to
   // perform a post-epilogue stack adjustment. Codegen emits the pseudo form

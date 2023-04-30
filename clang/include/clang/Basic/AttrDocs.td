@@ -2024,6 +2024,8 @@ Below are some example usages of the likelihood attributes and their effects:
     ...               // The attribute has no effect
   }                   // Clang elides the comparison and generates an infinite
                       // loop
+  }];
+}
 
 def ForkableDocs : Documentation {
   let Category = DocCatFunction;

@@ -2017,22 +2017,147 @@ def int_ptrauth_sign_generic : Intrinsic<[llvm_i64_ty],
 // TODO: CNP update this
 def int_uli_save_context : GCCBuiltin<"__builtin_uli_save_context">,
        Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+
 def int_uli_save_callee : GCCBuiltin<"__builtin_uli_save_callee">,
        Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+
 def int_uli_save_callee_nosp : GCCBuiltin<"__builtin_uli_save_callee_nosp">,
        Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+
 def int_uli_save_context_nosp : GCCBuiltin<"__builtin_uli_save_context_nosp">,
        Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+
 def int_uli_restore_context : GCCBuiltin<"__builtin_uli_restore_context">,
       Intrinsic<[], [llvm_ptr_ty], []>;
+
 def int_uli_restore_callee : GCCBuiltin<"__builtin_uli_restore_callee">,
        Intrinsic<[], [llvm_ptr_ty], []>;
+
+def int_uli_fromireg : GCCBuiltin<"__builtin_uli_fromireg">,
+       Intrinsic<[llvm_i64_ty], [llvm_i32_ty], []>;
+
+def int_uli_toireg : GCCBuiltin<"__builtin_uli_toireg">,
+       Intrinsic<[], [llvm_i32_ty, llvm_i64_ty], []>;
+
+
+// Read ULI special register
+def int_uli_rdrdi : GCCBuiltin<"__builtin_uli_rdrdi">,
+    Intrinsic<[llvm_i64_ty], [], []>;
+
+def int_uli_rdflags : GCCBuiltin<"__builtin_uli_rdflags">,
+    Intrinsic<[llvm_i64_ty], [], []>;
+
+def int_uli_rdRA : GCCBuiltin<"__builtin_uli_rdRA">,
+    Intrinsic<[llvm_i64_ty], [], []>;
+
+// Write ULI special register
+def int_uli_wrrdi : GCCBuiltin<"__builtin_uli_wrrdi">,
+    Intrinsic<[], [llvm_i64_ty], []>;
+
+def int_uli_wrflags : GCCBuiltin<"__builtin_uli_wrflags">,
+    Intrinsic<[], [llvm_i64_ty], []>;
+
+def int_uli_wrRA : GCCBuiltin<"__builtin_uli_wrRA">,
+    Intrinsic<[], [llvm_i64_ty], []>;
+
+def int_uli_atomic : GCCBuiltin<"__builtin_uli_atomic">,
+    Intrinsic<[], [llvm_i64_ty], []>;
+
+
+def int_uli_disable : GCCBuiltin<"__builtin_uli_disable">,
+    Intrinsic<[], [llvm_i64_ty], []>;
+
+def int_uli_enable : GCCBuiltin<"__builtin_uli_enable">,
+    Intrinsic<[], [llvm_i64_ty], []>;
+
+def int_uli_read : GCCBuiltin<"__builtin_uli_read">,
+    Intrinsic<[llvm_i64_ty], [], []>;
+
+def int_uli_set : GCCBuiltin<"__builtin_uli_set">,
+    Intrinsic<[], [llvm_i64_ty], []>;
+
+def int_uli_getcpu : GCCBuiltin<"__builtin_uli_getcpu">,
+    Intrinsic<[llvm_i32_ty], [], []>;
+
+def int_uli_send0cN : GCCBuiltin<"__builtin_uli_send0cN">,
+    Intrinsic<[], [llvm_i64_ty, llvm_ptr_ty, llvm_i32_ty], []>;
+
+def int_uli_reply0cN : GCCBuiltin<"__builtin_uli_reply0cN">,
+    Intrinsic<[], [llvm_ptr_ty, llvm_i32_ty], []>;
+
+
+
+def int_uli_unwind_poll : GCCBuiltin<"__builtin_uli_unwind_poll">,
+       Intrinsic<[], [], [IntrNoDuplicate]>;
+
+def int_uli_unwind_beat : GCCBuiltin<"__builtin_uli_unwind_beat">,
+       Intrinsic<[], [], []>;
+
+def int_uli_unwind_poll_pfor2 : GCCBuiltin<"__builtin_uli_unwind_poll_pfor2">,
+       Intrinsic<[], [llvm_i64_ty, llvm_i64_ty, llvm_i64ptr_ty, llvm_i1ptr_ty], [IntrNoDuplicate]>;
+
+def int_uli_unwind_poll_pfor : GCCBuiltin<"__builtin_uli_unwind_poll_pfor">,
+       Intrinsic<[], [llvm_i64_ty, llvm_i64_ty, llvm_i64ptr_ty], [IntrNoDuplicate]>;
+
+def int_uli_potential_jump : GCCBuiltin<"__builtin_uli_potential_jump">,
+       Intrinsic<[], [llvm_ptr_ty], []>;
+
+def int_uli_get_workcontext : GCCBuiltin<"__builtin_uli_get_workcontext">,
+       Intrinsic<[llvm_ptrptr_ty], [], []>;
+
+def int_get_frame_size : GCCBuiltin<"__builtin_get_frame_size">,
+      Intrinsic<[llvm_i64_ty], [], [IntrNoMem]>;
+
+def int_setup_rbp_from_rsp : GCCBuiltin<"__builtin_setup_rbp_from_rsp">,
+       Intrinsic<[], [], []>;
+
+def int_setup_rsp_from_rbp : GCCBuiltin<"__builtin_setup_rsp_from_rbp">,
+       Intrinsic<[], [], []>;
+
+def int_setup_rbp_from_sp_in_rbp : GCCBuiltin<"__builtin_setup_rbp_from_sp_in_rbp">,
+       Intrinsic<[], [], []>;
+
+def int_uli_child_addressofreturnaddress : GCCBuiltin<"__builtin_uli_child_addressofreturnaddress">,
+       Intrinsic<[llvm_ptr_ty], [], [IntrNoMem]>;
+
+def int_read_sp : GCCBuiltin<"__builtin_read_sp">,
+       //Intrinsic<[llvm_i64_ty], [], [IntrNoMem]>;
+       Intrinsic<[llvm_i64_ty], [], [IntrHasSideEffects]>;
+
+def int_write_sp : GCCBuiltin<"__builtin_write_sp">,
+       Intrinsic<[], [llvm_i64_ty], [IntrHasSideEffects]>;
+
+def int_uli_reply :
+              Intrinsic<[], [llvm_ptr_ty, llvm_vararg_ty], []>;
+
+def int_uli_send :
+	      Intrinsic<[], [llvm_i32_ty, llvm_i32_ty, llvm_ptr_ty, llvm_vararg_ty], []>;
+
+def int_uli_send0c : GCCBuiltin<"__builtin_uli_send0c">,
+              Intrinsic<[], [llvm_i64_ty, llvm_ptr_ty], []>;
+
+def int_uli_reply0c : GCCBuiltin<"__builtin_uli_reply0c">,
+              Intrinsic<[], [llvm_ptr_ty], []>;
+
 def int_uli_change_returnaddress : GCCBuiltin<"__builtin_uli_change_returnaddress">,
        Intrinsic<[], [llvm_ptr_ty], []>;
+
 def int_uli_save_returnaddress : GCCBuiltin<"__builtin_uli_save_returnaddress">,
        Intrinsic<[], [llvm_ptr_ty], []>;
 
+def int_ui_stui : GCCBuiltin<"__builtin_ui_stui">,
+       Intrinsic<[], [], []>;
+def int_ui_clui : GCCBuiltin<"__builtin_ui_clui">,
+       Intrinsic<[], [], []>;
+def int_ui_testui : GCCBuiltin<"__builtin_ui_testui">,
+       Intrinsic<[], [], []>;
+def int_ui_senduipi : GCCBuiltin<"__builtin_ui_senduipi">,
+       Intrinsic<[], [llvm_i64_ty], []>;
 
+def int_ui_disable_region : GCCBuiltin<"__builtin_ui_disable_region">,
+       Intrinsic<[], [], []>;
+def int_ui_enable_region : GCCBuiltin<"__builtin_ui_enable_region">,
+       Intrinsic<[], [], []>;
 
 //===----------------------------------------------------------------------===//
 

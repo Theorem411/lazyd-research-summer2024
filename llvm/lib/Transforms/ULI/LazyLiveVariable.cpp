@@ -1,5 +1,3 @@
-#define DEBUG_TYPE "live-variable"
-
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -12,6 +10,8 @@
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 
 #include "llvm/Transforms/ULI/LazyLiveVariable.h"
+
+#define DEBUG_TYPE "live-variable"
 
 using namespace llvm;
 using namespace std;
@@ -42,8 +42,8 @@ std::vector<BitVector>  LiveVariable::instGenAndKill(BitVector &value,  Instruct
   BitVector kill = BitVector(value.size(), false);
   BitVector gen = BitVector(value.size(), false);
 
-  DEBUG (dbgs() << "\n---------- Instruction gen and kill ---------------\n");
-  DEBUG (dbgs() << *I << "\n");
+  LLVM_DEBUG (dbgs() << "\n---------- Instruction gen and kill ---------------\n");
+  LLVM_DEBUG (dbgs() << *I << "\n");
 
   // Get the uses
   if(isa<BranchInst>(I) ) {
@@ -54,7 +54,7 @@ std::vector<BitVector>  LiveVariable::instGenAndKill(BitVector &value,  Instruct
       if( inst2idxMap.find(iv) != inst2idxMap.end() ) {
 	int idx2gen = inst2idxMap[iv];
 	gen.set(idx2gen);
-	DEBUG (dbgs() << "Branch: Gen variable ["<< to_string(idx2gen) << "]: " << *iv << "\n");
+	LLVM_DEBUG (dbgs() << "Branch: Gen variable ["<< to_string(idx2gen) << "]: " << *iv << "\n");
       }
     }
   } else {
@@ -64,7 +64,7 @@ std::vector<BitVector>  LiveVariable::instGenAndKill(BitVector &value,  Instruct
     if( inst2idxMap.find(I) != inst2idxMap.end() ) {
       int idx2kill = inst2idxMap[I];
       kill.set(idx2kill);
-      DEBUG (dbgs() << "Kill variable ["<< to_string(idx2kill) << "]: " << *I << "\n");
+      LLVM_DEBUG (dbgs() << "Kill variable ["<< to_string(idx2kill) << "]: " << *I << "\n");
     }
 
     // Handle getelementptr and load inst
@@ -75,7 +75,7 @@ std::vector<BitVector>  LiveVariable::instGenAndKill(BitVector &value,  Instruct
       if( inst2idxMap.find(iv) != inst2idxMap.end() ) {
 	int idx2gen = inst2idxMap[iv];
 	gen.set(idx2gen);
-	DEBUG (dbgs() << "Gen variable ["<< to_string(idx2gen) << "]: " << *iv << "\n");
+	LLVM_DEBUG (dbgs() << "Gen variable ["<< to_string(idx2gen) << "]: " << *iv << "\n");
       }
     }
     //---------------------------------------------------------
@@ -143,7 +143,7 @@ void LiveVariable::recalculate(Function& F) {
   }
 
   // Create the map
-  DEBUG (dbgs() << "\n----Construct variable map-----\n");
+  LLVM_DEBUG (dbgs() << "\n----Construct variable map-----\n");
 
 
   for (Function::iterator FI = F.begin(), FE = F.end(); FI != FE; ++FI) {
@@ -151,17 +151,17 @@ void LiveVariable::recalculate(Function& F) {
 
     for (BasicBlock::iterator i = block->begin(), e = block->end(); i != e; ++i) {
       Instruction *I = &*i;
-      DEBUG (dbgs() << I << "\n");
+      LLVM_DEBUG (dbgs() << I << "\n");
       // Process inst. with assignment
       if (!ignoreInst(I)) {
 	if (inst2idxMap.find(I) == inst2idxMap.end()) {
 	  idx2instMap.push_back(I);
 	  inst2idxMap[I] = idx;
 	  idx++;
-	  DEBUG (dbgs() << "Variable name : [" << to_string(idx-1) << "] " << *I << "\n");
+	  LLVM_DEBUG (dbgs() << "Variable name : [" << to_string(idx-1) << "] " << *I << "\n");
 	}
       }
-      DEBUG (dbgs() << "***********\n");
+      LLVM_DEBUG (dbgs() << "***********\n");
     }
   }
 
@@ -208,10 +208,10 @@ void LiveVariable::recalculate(Function& F) {
       mapBB2LiveOutVal[pBB] = bbOutput;
 
 
-      DEBUG (dbgs() << "\n---------- Live variable at exit BB : "<< pBB->getName()  <<" Fcn: " << F.getName() << " ---------------\n");
+      LLVM_DEBUG (dbgs() << "\n---------- Live variable at exit BB : "<< pBB->getName()  <<" Fcn: " << F.getName() << " ---------------\n");
       for (uint i = 0; i < bbOutput.size(); i++) {
 	if (bbOutput[i]) {
-	  DEBUG (dbgs() << "Live out: " << *idx2instMap[i]  << "\n");
+	  LLVM_DEBUG (dbgs() << "Live out: " << *idx2instMap[i]  << "\n");
 	}
       }
 
@@ -229,10 +229,10 @@ void LiveVariable::recalculate(Function& F) {
       }
 
       if( !pBB->getSinglePredecessor() ) {
-	DEBUG (dbgs() << "\n---------- Live variable at entry:" << pBB->getName() <<" Fcn: " << F.getName() << " ---------------\n");
+	LLVM_DEBUG (dbgs() << "\n---------- Live variable at entry:" << pBB->getName() <<" Fcn: " << F.getName() << " ---------------\n");
 	for (uint i = 0; i < bbOutput.size(); i++) {
 	  if (bbOutput[i]) {
-	    DEBUG (dbgs() << "Live in: " << *idx2instMap[i]  << "\n");
+	    LLVM_DEBUG (dbgs() << "Live in: " << *idx2instMap[i]  << "\n");
 	  }
 	}
       }
@@ -253,17 +253,17 @@ void LiveVariable::recalculate(Function& F) {
 	  if( inst2idxMap.find(incomingI) != inst2idxMap.end() ) {
 	    int idx2gen = inst2idxMap[incomingI];
 	    bbOutputTmp.set(idx2gen);
-	    DEBUG (dbgs() << "Gen variable ["<< to_string(idx2gen) << "]: " << *incomingI << "\n");
+	    LLVM_DEBUG (dbgs() << "Gen variable ["<< to_string(idx2gen) << "]: " << *incomingI << "\n");
 	  }
 
 	}
 	bHaveChanged |= (mapBB2LiveInVal[pBB][*PI] != bbOutputTmp);
 	mapBB2LiveInVal[pBB][*PI]  = bbOutputTmp;
 
-	DEBUG (dbgs() << "\n---------- Live variable at entry:" << pBB->getName()  <<" to "<< (*PI)->getName()  <<" Fcn: " << F.getName() << " ---------------\n");
+	LLVM_DEBUG (dbgs() << "\n---------- Live variable at entry:" << pBB->getName()  <<" to "<< (*PI)->getName()  <<" Fcn: " << F.getName() << " ---------------\n");
 	for (uint i = 0; i < bbOutputTmp.size(); i++) {
 	  if (bbOutputTmp[i]) {
-	    DEBUG (dbgs() << "Live in: " << *idx2instMap[i]  << "\n");
+	    LLVM_DEBUG (dbgs() << "Live in: " << *idx2instMap[i]  << "\n");
 	  }
 	}
       }

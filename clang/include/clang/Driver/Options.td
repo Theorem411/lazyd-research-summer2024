@@ -3248,8 +3248,8 @@ def mdynamic_no_pic : Joined<["-"], "mdynamic-no-pic">, Group<m_Group>;
 def mfix_and_continue : Flag<["-"], "mfix-and-continue">, Group<clang_ignored_m_Group>;
 def mieee_fp : Flag<["-"], "mieee-fp">, Group<clang_ignored_m_Group>;
 def minline_all_stringops : Flag<["-"], "minline-all-stringops">, Group<clang_ignored_m_Group>;
-def muintr : Flag<["-"], "muintr">, Group<m_Group>, Flags<[CC1Option]>,
-  HelpText<"Enable user interrupt">;
+//def muintr : Flag<["-"], "muintr">, Group<m_Group>, Flags<[CC1Option]>,
+//  HelpText<"Enable user interrupt">;
 def mno_inline_all_stringops : Flag<["-"], "mno-inline-all-stringops">, Group<clang_ignored_m_Group>;
 def malign_double : Flag<["-"], "malign-double">, Group<m_Group>, Flags<[CC1Option]>,
   HelpText<"Align doubles to two words in structs (x86 only)">,

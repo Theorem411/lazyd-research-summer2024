@@ -164,9 +164,13 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   args = F.arg_begin();
   Value* argsStart = &*args; 
 
-  GlobalVariable* guiOn = GetGlobalVariable("uiOn", TypeBuilder<char, false>::get(C), *M, true);
+  GlobalVariable* guiOn = GetGlobalVariable("uiOn", Type::getInt8Ty(C), *M, true);
   Value* ONE = B.getInt8(1);
   Value* ZERO = B.getInt8(0);  
+
+  Function* ui_disable_region = Intrinsic::getDeclaration(M, Intrinsic::ui_disable_region);
+  Function* ui_enable_region = Intrinsic::getDeclaration(M, Intrinsic::ui_enable_region);
+
 
 #define UI_REGION
 #ifdef UI_REGION
@@ -218,7 +222,7 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   //B.SetInsertPoint(Latch->getTerminator());
   GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(C), 32), *M, true);
   Value* L_ONE = B.getInt64(1);
-  auto workExists = B.CreateConstInBoundsGEP2_64(prequestcell, 0, 1 );
+  auto workExists = B.CreateConstInBoundsGEP2_64(IntegerType::getInt64Ty(C)->getPointerTo(), prequestcell, 0, 1 );
   B.CreateStore(L_ONE, workExists);
 #endif
 
@@ -239,7 +243,7 @@ bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)
   //if(bDetachExists || F.getFnAttribute("poll-at-loop").getValueAsString()=="true") {
   if(bDetachExists) {
     B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
-    auto workExists = B.CreateConstInBoundsGEP2_64(prequestcell, 0, 1 );
+    auto workExists = B.CreateConstInBoundsGEP2_64(IntegerType::getInt64Ty(C)->getPointerTo(), prequestcell, 0, 1 );
     B.CreateStore(L_ONE, workExists);
   } 
 

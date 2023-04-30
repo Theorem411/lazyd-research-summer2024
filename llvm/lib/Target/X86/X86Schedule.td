@@ -511,7 +511,7 @@ def WriteFence : SchedWrite;
 // Nop, not very useful expect it provides a model for nops!
 def WriteNop : SchedWrite;
 
-#if 1
+//#if 1
 // Move/Load/Store wrappers.
 def WriteFMoveLS
  : X86SchedWriteMoveLS<WriteFMove, WriteFLoad, WriteFStore>;
@@ -710,9 +710,10 @@ def SchedWriteFLogicSizes
 def SchedWriteFShuffleSizes
  : X86SchedWriteSizes<SchedWriteFShuffle, SchedWriteFShuffle, SchedWriteFShuffle>;
 
-else
+//#else
 //===----------------------------------------------------------------------===//
 // Instruction Itinerary classes used for X86
+/*
 def IIC_ALU_MEM     : InstrItinClass;
 def IIC_ALU_NONMEM  : InstrItinClass;
 def IIC_LEA         : InstrItinClass;
@@ -1235,7 +1236,8 @@ def IIC_SSE_PCLMULQDQ_RR : InstrItinClass;
 def IIC_SSE_PCLMULQDQ_RM : InstrItinClass;
 
 def IIC_NOP : InstrItinClass;
-#endif
+*/
+//#endif
 
 //===----------------------------------------------------------------------===//
 // Generic Processor Scheduler Models.

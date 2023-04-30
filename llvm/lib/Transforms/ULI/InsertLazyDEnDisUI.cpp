@@ -16,7 +16,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
-#include "llvm/IR/TypeBuilder.h"
+//#include "llvm/IR/TypeBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -38,14 +38,13 @@ static cl::opt<bool> EnableStuiClui("enable-lazy-stuiclui", cl::init(false), cl:
 
 
 #define DEFAULT_GET_LIB_FUNC(name)                                      \
-  static Constant *Get_##name(Module& M) {                              \
-					  return M.getOrInsertFunction( #name, \
-									  TypeBuilder< name##_ty, false>::get(M.getContext()) \
-									); \
-  }
 
 using overhead_ty = void (void);
-DEFAULT_GET_LIB_FUNC(overhead);
+static FunctionCallee Get_overhead(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("overhead", FunctionType::get(Type::getVoidTy(Ctx), {Type::getVoidTy(Ctx)}, false));  
+}
+
 
 namespace {
 
@@ -100,16 +99,16 @@ bool InsertLazyDEnDisUIPass::runImpl(Function &F) {
   LLVMContext& C = M->getContext();
 
   // Get the global variable
-  GlobalVariable* guiOn = GetGlobalVariable("uiOn", TypeBuilder<char, false>::get(C), *M, true);
+  GlobalVariable* guiOn = GetGlobalVariable("uiOn", Type::getInt8Ty(C), *M, true);
   IRBuilder<> B(F.getContext());
   Value* ONE = B.getInt8(1);
   Value* ZERO = B.getInt8(0);
 
-  auto stui = Intrinsic::getDeclaration(M, Intrinsic::x86_ui_stui);
-  auto clui = Intrinsic::getDeclaration(M, Intrinsic::x86_ui_clui);
+  auto stui = Intrinsic::getDeclaration(M, Intrinsic::ui_stui);
+  auto clui = Intrinsic::getDeclaration(M, Intrinsic::ui_clui);
 
   // Overhead to inflate the cost of storing uiOn
-  Constant* OVERHEAD = Get_overhead(*M);
+  FunctionCallee OVERHEAD = Get_overhead(*M);
 
   // Find the fork, detach, reattach inst
   SmallPtrSet<CallInst*, 4> forkCallInsts;

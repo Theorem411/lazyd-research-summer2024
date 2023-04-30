@@ -3972,6 +3972,7 @@ def ReducerUnregister : InheritableAttr {
   let Spellings = [Clang<"reducer_unregister">];
   let Subjects = SubjectList<[FunctionLike]>;
   let Documentation = [StrandMallocDocs];
+}
 
 def NoStackletCheck : InheritableAttr, TargetSpecificAttr<TargetAnyX86> {
   let Spellings = [GNU<"no_stacklet_check">];
@@ -3992,7 +3993,7 @@ def ULINonAtomic : InheritableAttr, TargetSpecificAttr<TargetAnyX86> {
 }
 
 // mark functions which can be called as a PRSC
-def Forkable : InheritableAttr {
+def Forkable : InheritableAttr, TargetSpecificAttr<TargetAnyX86>  {
   let Spellings = [GNU<"forkable">];
   let Subjects = SubjectList<[Function]>;
   let Documentation = [ForkableDocs];

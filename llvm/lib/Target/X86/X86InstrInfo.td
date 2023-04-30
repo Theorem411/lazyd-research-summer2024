@@ -2996,19 +2996,19 @@ let Predicates = [HasTSXLDTRK], SchedRW = [WriteSystem] in {
 // UINTR Instructions
 //
 let Predicates = [HasUINTR, In64BitMode], SchedRW = [WriteSystem] in {
-  def UIRET : I<0x01, MRM_EC, (outs), (ins), "uiret",
-               []>, XS;
-  def CLUI : I<0x01, MRM_EE, (outs), (ins), "clui",
-               [(int_x86_clui)]>, XS;
-  def STUI : I<0x01, MRM_EF, (outs), (ins), "stui",
-               [(int_x86_stui)]>, XS;
+  //def UIRET : I<0x01, MRM_EC, (outs), (ins), "uiret",
+  //             []>, XS;
+  //def CLUI : I<0x01, MRM_EE, (outs), (ins), "clui",
+  //             [(int_x86_clui)]>, XS;
+  //def STUI : I<0x01, MRM_EF, (outs), (ins), "stui",
+  //             [(int_x86_stui)]>, XS;
 
-  def SENDUIPI : I<0xC7, MRM6r, (outs), (ins GR64:$arg), "senduipi\t$arg",
-                   [(int_x86_senduipi GR64:$arg)]>, XS;
+  //def SENDUIPI : I<0xC7, MRM6r, (outs), (ins GR64:$arg), "senduipi\t$arg",
+  //                 [(int_x86_senduipi GR64:$arg)]>, XS;
 
-  let Defs = [EFLAGS] in
-    def TESTUI : I<0x01, MRM_ED, (outs), (ins), "testui",
-                   [(set EFLAGS, (X86testui))]>, XS;
+  //let Defs = [EFLAGS] in
+  //  def TESTUI : I<0x01, MRM_ED, (outs), (ins), "testui",
+  //                 [(set EFLAGS, (X86testui))]>, XS;
 }
 
 //===----------------------------------------------------------------------===//

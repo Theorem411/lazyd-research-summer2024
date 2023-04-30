@@ -53,7 +53,7 @@ bool HandleUliPass::runImpl(Function &F) {
     bool summary_changed = false;
     IRBuilder<> builder(ctx);
 
-    Function *fromireg = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_fromireg);
+    Function *fromireg = Intrinsic::getDeclaration(M, Intrinsic::uli_fromireg);
     unsigned int i = uliargindex_reply;
     Value * ret = nullptr;
     // Instruction to delete
@@ -158,19 +158,17 @@ bool HandleUliPass::runImpl(Function &F) {
     // check for uli_non_atomic tag
     if ( (F.hasFnAttribute(Attribute::ULINonAtomic)) ) {
         // If a nonatomicpass attribute exists, the last three parameters store the special register
-        Function *rdulirdi =   Intrinsic::getDeclaration(M, Intrinsic::x86_uli_rdrdi);
-        Function *rduliflags = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_rdflags);
-        Function *rduliRA = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_rdRA);
+        Function *rdulirdi =   Intrinsic::getDeclaration(M, Intrinsic::uli_rdrdi);
+        Function *rduliflags = Intrinsic::getDeclaration(M, Intrinsic::uli_rdflags);
+        Function *rduliRA = Intrinsic::getDeclaration(M, Intrinsic::uli_rdRA);
         Function *rduliregs[3] = {rdulirdi, rduliflags, rduliRA};
 
-        Function *wrulirdi =   Intrinsic::getDeclaration(M, Intrinsic::x86_uli_wrrdi);
-        Function *wruliflags = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_wrflags);
-        Function *wruliRA = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_wrRA);
+        Function *wrulirdi =   Intrinsic::getDeclaration(M, Intrinsic::uli_wrrdi);
+        Function *wruliflags = Intrinsic::getDeclaration(M, Intrinsic::uli_wrflags);
+        Function *wruliRA = Intrinsic::getDeclaration(M, Intrinsic::uli_wrRA);
         Function *wruliregs[3] = {wrulirdi, wruliflags, wruliRA};
 
-        Function *uliAtomic =  Intrinsic::getDeclaration(M, Intrinsic::x86_uli_atomic);
-
-
+        Function *uliAtomic =  Intrinsic::getDeclaration(M, Intrinsic::uli_atomic);
 
         // Insert restoring the uli special register before the prologue and an enable uli atomic before restoring the special register
         BasicBlock & bbBack = F.back();
@@ -313,7 +311,7 @@ bool HandleUliPass::runImpl(Function &F) {
 
             if((call_inst = dyn_cast<CallInst>(i))
                && (fn = call_inst->getCalledFunction())
-               && (fn->getIntrinsicID() == Intrinsic::x86_uli_rdRA)){
+               && (fn->getIntrinsicID() == Intrinsic::uli_rdRA)){
 
                 builder.SetInsertPoint(i->getNextNode());
                 builder.CreateCall( uliAtomic,  {builder.getInt64(0)} );

@@ -1,5 +1,3 @@
-#define DEBUG_TYPE "reaching-store-reachable-load"
-
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -14,6 +12,8 @@
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 
 #include "llvm/Transforms/ULI/LazyReachingStoreReachableLoad.h"
+
+#define DEBUG_TYPE "reaching-store-reachable-load"
 
 using namespace llvm;
 
@@ -96,8 +96,8 @@ unsigned ReachingStoreReachableLoad::createWorkListReachingAlloca(BasicBlock * e
 	StoreInst* si = dyn_cast<StoreInst> (&ii);
 	Instruction* siPtr = dyn_cast<Instruction>(si->getPointerOperand());
 	if(siPtr && !mapStr2IdxReachingAlloca.count(siPtr)) {
-	  DEBUG (dbgs() << "Index i " << idx << "\n");
-	  DEBUG (dbgs() << *siPtr << "\n");
+	  LLVM_DEBUG (dbgs() << "Index i " << idx << "\n");
+	  LLVM_DEBUG (dbgs() << *siPtr << "\n");
 	  mapStr2IdxReachingAlloca[siPtr] = idx;
 	  mapIdx2StrReachingAlloca.push_back(siPtr);
 	  idx++;
@@ -274,7 +274,7 @@ void ReachingStoreReachableLoad::runFlowReachingStore(BasicBlock * entry, SmallV
 void ReachingStoreReachableLoad::recalculate(Function& F, FunctionAnalysisManager &AM, DominatorTree &DT, LoopInfo &LI) {
   // Get the entry of the basic block
   BasicBlock* entry = &F.getEntryBlock();
-  DEBUG(dbgs() << "ReachingStoreReachableLoad : " << F.getName() << "\n");
+  LLVM_DEBUG(dbgs() << "ReachingStoreReachableLoad : " << F.getName() << "\n");
   // Clear
   bbTraverse.clear();
   mapStr2IdxReachingAlloca.clear();
@@ -327,12 +327,12 @@ void ReachingStoreReachableLoad::recalculate(Function& F, FunctionAnalysisManage
   // For each basic block, get the reaching store's pointer operand
   for (auto &bb : F) {
     auto value =  mapBB2OutValReachingAlloca[&bb];
-    DEBUG (dbgs() << "BB: " << bb.getName() <<" Reaching Pointer:\n");
+    LLVM_DEBUG (dbgs() << "BB: " << bb.getName() <<" Reaching Pointer:\n");
     for (uint i = 0; i < value.size(); i++) {
       if (value[i]) {
 	MapBB2ReachingAlloca[&bb].insert(mapIdx2StrReachingAlloca[i]);
-	DEBUG (dbgs() << "Index: "  << i << "\n");
-	DEBUG (dbgs() << *mapIdx2StrReachingAlloca[i] << "\n");
+	LLVM_DEBUG (dbgs() << "Index: "  << i << "\n");
+	LLVM_DEBUG (dbgs() << *mapIdx2StrReachingAlloca[i] << "\n");
       }
     }
   }

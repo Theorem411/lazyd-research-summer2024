@@ -1,4 +1,3 @@
-#define DEBUG_TYPE "reaching-detach"
 
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DebugInfoMetadata.h"
@@ -14,6 +13,8 @@
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 
 #include "llvm/Transforms/ULI/LazyReachingDetachInst.h"
+
+#define DEBUG_TYPE "reaching-detach"
 
 using namespace llvm;
 
@@ -192,15 +193,15 @@ void ReachingDetachInst::createOrderOfDetach( LoopInfo &LI, BitVector& initBB ) 
   // Process the sequential cfg
   orderDetach(normalCfgBB, mapBB2InValCopy, bbSeqOrder, bbSeqOrderInst);
 
-  DEBUG (dbgs() << " Order of Detach  \n");
+  LLVM_DEBUG (dbgs() << " Order of Detach  \n");
   for(auto pBB : bbSeqOrder) {
-    DEBUG (dbgs() << "Basicblock  : "<< pBB->getName() << "\n");
+    LLVM_DEBUG (dbgs() << "Basicblock  : "<< pBB->getName() << "\n");
   }
 
   auto loopOrder = LI.getLoopsInPreorder();
   for(auto it = loopOrder.rbegin(); it != loopOrder.rend() ; it++) {
     Loop * loops = *it;
-    DEBUG (dbgs() << "Loops  : "<< loops->getName() << "\n");
+    LLVM_DEBUG (dbgs() << "Loops  : "<< loops->getName() << "\n");
 
     bbCurrentLoop.clear();
     for(auto pBB : loopCfgBB) {
@@ -233,10 +234,10 @@ void ReachingDetachInst::createOrderOfDetach( LoopInfo &LI, BitVector& initBB ) 
   }
 #endif
 
-  DEBUG (dbgs() << " Order of loop  \n");
+  LLVM_DEBUG (dbgs() << " Order of loop  \n");
   for( auto it = bbLoopOrder.begin(); it != bbLoopOrder.end() ; it++) {
     auto pBB  = *it;
-    DEBUG (dbgs() << "Loop block  : "<< pBB->getName() << "\n");
+    LLVM_DEBUG (dbgs() << "Loop block  : "<< pBB->getName() << "\n");
   }
 
 }
@@ -399,12 +400,12 @@ void ReachingDetachInst::recalculate(Function& F, FunctionAnalysisManager &AM, D
 
   // Traverse the BB and look if there is a reaching detach
   for(auto pBB : bbTraverse) {
-    DEBUG (dbgs() << "================================\n");
-    DEBUG (dbgs() << "Fcn: "<< F.getName() << " Basicblock : "<< pBB->getName() << "\n");
+    LLVM_DEBUG (dbgs() << "================================\n");
+    LLVM_DEBUG (dbgs() << "Fcn: "<< F.getName() << " Basicblock : "<< pBB->getName() << "\n");
     BitVector value = mapBB2InVal[pBB];
     for (uint i = 0; i < value.size(); i++) {
       if (value[i]) {
-	DEBUG (dbgs() << "Basicblock reaching to it : "<< bbTraverse[i]->getName() << "\n");
+	LLVM_DEBUG (dbgs() << "Basicblock reaching to it : "<< bbTraverse[i]->getName() << "\n");
       }
     }
   }

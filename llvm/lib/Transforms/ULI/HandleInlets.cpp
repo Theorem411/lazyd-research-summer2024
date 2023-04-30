@@ -53,7 +53,7 @@ bool HandleInletsPass::handlePotentialJump(BasicBlock &BB) {
     if (!call) continue;
     auto fn = call->getCalledFunction();
     if (!fn) continue;
-    if (fn->getIntrinsicID() != Intrinsic::x86_uli_potential_jump) continue;
+    if (fn->getIntrinsicID() != Intrinsic::uli_potential_jump) continue;
     auto afterPotentialJump = it; afterPotentialJump++;
 
     auto BA = dyn_cast<BlockAddress>(call->getArgOperand(0));

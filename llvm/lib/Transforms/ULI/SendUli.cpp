@@ -46,8 +46,8 @@ namespace {
 void SendUliPass::showargs(const char* which, const CallInst *call_inst, Value* numargs) {
   return;
   errs() << "===========\n" << which << ": " << *call_inst << "\n" <<
-    "NumOps:" << call_inst->getNumArgOperands() << " as " << *numargs << "\n";
-  for (unsigned int i = 0; i < call_inst->getNumArgOperands(); i++) {
+    "NumOps:" << call_inst->arg_size() << " as " << *numargs << "\n";
+  for (unsigned int i = 0; i < call_inst->arg_size(); i++) {
     Value* v = call_inst->getArgOperand(i);
     errs() << i << ": " << *v << "\n";
   }
@@ -101,9 +101,9 @@ bool SendUliPass::runImpl(Function &F) {
   SmallVector<Instruction *,2> del_instrs;
 
   // Function calls
-  Function *send0cN = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_send0cN);
-  Function *reply0cN = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_reply0cN);
-  Function *toireg = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_toireg);
+  Function *send0cN = Intrinsic::getDeclaration(M, Intrinsic::uli_send0cN);
+  Function *reply0cN = Intrinsic::getDeclaration(M, Intrinsic::uli_reply0cN);
+  Function *toireg = Intrinsic::getDeclaration(M, Intrinsic::uli_toireg);
 
   // iterate through basic blocks for call instructions
   for (BasicBlock &B : F){
@@ -112,7 +112,7 @@ bool SendUliPass::runImpl(Function &F) {
       // compare called function with uli send intrinsic
       if((call_inst = dyn_cast<CallInst>(&I))
 	 && (fn = call_inst->getCalledFunction())
-	 && (fn->getIntrinsicID() == Intrinsic::x86_uli_send))
+	 && (fn->getIntrinsicID() == Intrinsic::uli_send))
 	{
 	  //insert the function before matched Instruction, we will delete original uli_send anyways
 	  builder.SetInsertPoint(&I);
@@ -142,7 +142,7 @@ bool SendUliPass::runImpl(Function &F) {
 
 	  // create send instruction
 	  Value* foo_ptr = call_inst->getArgOperand(2);
-	  Value* numargs = builder.getInt32(call_inst->getNumArgOperands()-3);
+	  Value* numargs = builder.getInt32(call_inst->arg_size()-3);
 	  builder.CreateCall(send0cN, { dest_and_num , foo_ptr, numargs });
 	  showargs("Send", call_inst, numargs);
 
@@ -152,7 +152,7 @@ bool SendUliPass::runImpl(Function &F) {
 	}
       else if((call_inst = dyn_cast<CallInst>(&I))
 	      && (fn = call_inst->getCalledFunction())
-	      && (fn->getIntrinsicID() == Intrinsic::x86_uli_reply))
+	      && (fn->getIntrinsicID() == Intrinsic::uli_reply))
 	{
 
 	  //Insert the function before matched Instruction, we will delete original uli_reply anyways
@@ -161,7 +161,7 @@ bool SendUliPass::runImpl(Function &F) {
 
 	  // skip over first arg, loop through var args, create uli_toireg call for each arg except last which is number of arguments
 	  // Pass the argument of the message to the reply register (ulitoireg construction)
-	  for (unsigned int i = 1; i < call_inst->getNumArgOperands(); i++) {
+	  for (unsigned int i = 1; i < call_inst->arg_size(); i++) {
 	    Value * v = call_inst->getArgOperand(i);
 	    Value * zext = handleArgs(v, builder, ctx);
 	    builder.CreateCall(toireg, { builder.getInt32(reg++), zext });
@@ -169,7 +169,7 @@ bool SendUliPass::runImpl(Function &F) {
 
 	  // create reply instruction
 	  Value* foo_ptr = call_inst->getArgOperand(0);
-	  Value* numargs = builder.getInt32(call_inst->getNumArgOperands()-1);
+	  Value* numargs = builder.getInt32(call_inst->arg_size()-1);
 
 	  showargs("REPLY", call_inst, numargs);
 	  builder.CreateCall(reply0cN, { foo_ptr, numargs });

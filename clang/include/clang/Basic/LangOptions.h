@@ -411,9 +411,6 @@ public:
   /// Set of enabled Cilk options.
   CilkOptionSet CilkOptions;
 
-  /// \brief Runtime target for Tapir.
-  TapirTargetID TapirTarget = TapirTargetID::Last_TapirTargetID;
-
   /// \brief Tapir lowering to forkD library (lazy or eager).
   llvm::ForkDTargetType ForkDLowering;
 

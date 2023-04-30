@@ -81,9 +81,9 @@ bool InsertLazyDPollingPass::instrumentLoop (Loop& L) {
   BasicBlock *HeaderBlock = L.getHeader();
   if (HeaderBlock) {
     B.SetInsertPoint(HeaderBlock->getFirstNonPHIOrDbgOrLifetime());
-    Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll);
+    Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::uli_unwind_poll);
     B.CreateCall(pollFcn);
-    DEBUG(dbgs() << F->getName() << ": Polling at outer most loop\n");
+    LLVM_DEBUG(dbgs() << F->getName() << ": Polling at outer most loop\n");
   }
   return true;
 }
@@ -127,9 +127,9 @@ bool InsertLazyDPollingPass::runImpl(Function &F,
   // Insert poling
   // Polling @prologue
   if( (!DisableUnwindPoll && !F.hasFnAttribute(Attribute::ULINoPolling)) ) {
-    Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll);
+    Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::uli_unwind_poll);
     auto res = B.CreateCall(pollFcn);
-    DEBUG(dbgs() << F.getName() << " : Polling at prologue\n");
+    LLVM_DEBUG(dbgs() << F.getName() << " : Polling at prologue\n");
   }
 
   // Polling @epilogue
@@ -139,10 +139,10 @@ bool InsertLazyDPollingPass::runImpl(Function &F,
       B.SetInsertPoint(termInst);
 
       if( (!DisableUnwindPoll && !F.hasFnAttribute(Attribute::ULINoPolling)) ) {
-	Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll);
+	Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::uli_unwind_poll);
 	if(EnableProperPolling >= 1 ) {
 	  auto res = B.CreateCall(pollFcn);
-	  DEBUG(dbgs() << F.getName() << " : Polling at epilogue\n");
+	  LLVM_DEBUG(dbgs() << F.getName() << " : Polling at epilogue\n");
 	}
       }
     }
