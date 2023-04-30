@@ -180,11 +180,10 @@ bool LLParser::validateEndOfModule(bool UpgradeDebugInfo) {
       CBI->setAttributes(AS);
     } else if (MultiRetCallInst *II = dyn_cast<MultiRetCallInst>(V)) {
       AttributeList AS = II->getAttributes();
-      AttrBuilder FnAttrs(AS.getFnAttributes());
-      AS = AS.removeAttributes(Context, AttributeList::FunctionIndex);
+      AttrBuilder FnAttrs(M->getContext(), AS.getFnAttrs());
+      AS = AS.removeFnAttributes(Context);
       FnAttrs.merge(B);
-      AS = AS.addAttributes(Context, AttributeList::FunctionIndex,
-                            AttributeSet::get(Context, FnAttrs));
+      AS = AS.addFnAttributes(Context, FnAttrs);
       II->setAttributes(AS);
     } else if (auto *GV = dyn_cast<GlobalVariable>(V)) {
       AttrBuilder Attrs(M->getContext(), GV->getAttributes());
@@ -3361,9 +3360,9 @@ bool LLParser::parseValID(ValID &ID, PerFunctionState *PFS, Type *ExpectedTy) {
 
 #if 1
     // Get additional information
-    if(!ParseToken(lltok::kw_successor, "")) {
+    if(!parseToken(lltok::kw_successor, "")) {
       Value *V;
-      if (ParseTypeAndValue(V, PFS))
+      if (parseTypeAndValue(V, PFS))
 	return true;
 
       if(!isa<ConstantInt>(V))
@@ -6031,7 +6030,7 @@ int LLParser::parseInstruction(Instruction *&Inst, BasicBlock *BB,
   case lltok::kw_sync:
     return parseSync(Inst, PFS);
   case lltok::kw_multiretcall:        
-    return ParseMultiRetCall(Inst, PFS);
+    return parseMultiRetCall(Inst, PFS);
   // Unary Operators.
   case lltok::kw_fneg: {
     FastMathFlags FMF = EatFastMathFlagsIfPresent();
@@ -6158,7 +6157,7 @@ int LLParser::parseInstruction(Instruction *&Inst, BasicBlock *BB,
   case lltok::kw_landingpad:
     return parseLandingPad(Inst, PFS);
   case lltok::kw_retpad:         
-    return ParseRetPad(Inst, PFS);
+    return parseRetPad(Inst, PFS);
   case lltok::kw_freeze:
     return parseFreeze(Inst, PFS);
   // Call.
@@ -6767,7 +6766,7 @@ bool LLParser::parseCleanupPad(Instruction *&Inst, PerFunctionState &PFS) {
 ///   ::= 'multiretcall' OptionalCallingConv OptionalAttrs Type Value ParamList
 ///       OptionalAttrs OptionalOperandBundles 'to' TypeAndValue
 ///       '[' LabelList ']'
-bool LLParser::ParseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS) {
+bool LLParser::parseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS) {
   LocTy CallLoc = Lex.getLoc();
   AttrBuilder RetAttrs, FnAttrs;
   std::vector<unsigned> FwdRefAttrGrps;
@@ -6780,15 +6779,15 @@ bool LLParser::ParseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS) {
   SmallVector<OperandBundleDef, 2> BundleList;
 
   BasicBlock *DefaultDest;
-  if (ParseOptionalCallingConv(CC) || ParseOptionalReturnAttrs(RetAttrs) ||
-      ParseType(RetType, RetTypeLoc, true /*void allowed*/) ||
-      ParseValID(CalleeID) || ParseParameterList(ArgList, PFS) ||
-      ParseFnAttributeValuePairs(FnAttrs, FwdRefAttrGrps, false,
+  if (parseOptionalCallingConv(CC) || parseOptionalReturnAttrs(RetAttrs) ||
+      parseType(RetType, RetTypeLoc, true /*void allowed*/) ||
+      parseValID(CalleeID) || ParseParameterList(ArgList, PFS) ||
+      parseFnAttributeValuePairs(FnAttrs, FwdRefAttrGrps, false,
                                  NoBuiltinLoc) ||
-      ParseOptionalOperandBundles(BundleList, PFS) ||
-      ParseToken(lltok::kw_to, "expected 'to' in multiretcall") ||
-      ParseTypeAndBasicBlock(DefaultDest, PFS) ||
-      ParseToken(lltok::lsquare, "expected '[' in multiretcall"))
+      parseOptionalOperandBundles(BundleList, PFS) ||
+      parseToken(lltok::kw_to, "expected 'to' in multiretcall") ||
+      parseTypeAndBasicBlock(DefaultDest, PFS) ||
+      parseToken(lltok::lsquare, "expected '[' in multiretcall"))
     return true;
 
   // Needed to create a symbol that can be used to be passed around and jump to
@@ -6801,14 +6800,14 @@ bool LLParser::ParseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS) {
 
   if (Lex.getKind() != lltok::rsquare) {
     BasicBlock *DestBB;
-    if (ParseTypeAndBasicBlock(DestBB, PFS))
+    if (parseTypeAndBasicBlock(DestBB, PFS))
       return true;
     IndirectDests.push_back(DestBB);
     // Needed to create a symbol that can be used to be passed around and jump to
     DestBB->setHasAddressTaken(1);
 
     while (EatIfPresent(lltok::comma)) {
-      if (ParseTypeAndBasicBlock(DestBB, PFS))
+      if (parseTypeAndBasicBlock(DestBB, PFS))
 	return true;
       IndirectDests.push_back(DestBB);
       // Needed to create a symbol that can be used to be passed around and jump to
@@ -6816,7 +6815,7 @@ bool LLParser::ParseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS) {
     }
   }
 
-  if (ParseToken(lltok::rsquare, "expected ']' at end of block list"))
+  if (parseToken(lltok::rsquare, "expected ']' at end of block list"))
     return true;
 
   // If RetType is a non-function pointer type, then this is the short syntax
@@ -6830,7 +6829,7 @@ bool LLParser::ParseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS) {
       ParamTypes.push_back(ArgList[i].V->getType());
 
     if (!FunctionType::isValidReturnType(RetType))
-      return Error(RetTypeLoc, "Invalid result type for LLVM function");
+      return error(RetTypeLoc, "Invalid result type for LLVM function");
 
     Ty = FunctionType::get(RetType, ParamTypes, false);
   }
@@ -6855,21 +6854,21 @@ bool LLParser::ParseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS) {
     if (I != E) {
       ExpectedTy = *I++;
     } else if (!Ty->isVarArg()) {
-      return Error(ArgList[i].Loc, "too many arguments specified");
+      return error(ArgList[i].Loc, "too many arguments specified");
     }
 
     if (ExpectedTy && ExpectedTy != ArgList[i].V->getType())
-      return Error(ArgList[i].Loc, "argument is not of expected type '" +
+      return error(ArgList[i].Loc, "argument is not of expected type '" +
                    getTypeString(ExpectedTy) + "'");
     Args.push_back(ArgList[i].V);
     ArgAttrs.push_back(ArgList[i].Attrs);
   }
 
   if (I != E)
-    return Error(CallLoc, "not enough parameters specified for call");
+    return error(CallLoc, "not enough parameters specified for call");
 
   if (FnAttrs.hasAlignmentAttr())
-    return Error(CallLoc, "multiretcall instructions may not have an alignment");
+    return error(CallLoc, "multiretcall instructions may not have an alignment");
 
   // Finish off the Attribute and check them
   AttributeList PAL =
@@ -7325,15 +7324,15 @@ bool LLParser::parseFreeze(Instruction *&Inst, PerFunctionState &PFS) {
 
 /// ParseRetPad
 ///   ::= 'retpad' Type
-int LLParser::ParseRetPad(Instruction *&Inst, PerFunctionState &PFS) {
+int LLParser::parseRetPad(Instruction *&Inst, PerFunctionState &PFS) {
   Value *Val; LocTy Loc;
   Type *Ty;
 
 #if 0
   LocTy ExplicitTypeLoc = Lex.getLoc();
-  if (ParseType(Ty) ||
-      ParseToken(lltok::comma, "expected comma after retpad's type") ||
-      ParseTypeAndValue(Val, Loc, PFS) )
+  if (parseType(Ty) ||
+      parseToken(lltok::comma, "expected comma after retpad's type") ||
+      parseTypeAndValue(Val, Loc, PFS) )
     return true;
 
   if (Ty != Val->getType())
@@ -7345,7 +7344,7 @@ int LLParser::ParseRetPad(Instruction *&Inst, PerFunctionState &PFS) {
 
 #else
   LocTy ExplicitTypeLoc = Lex.getLoc();
-  if (ParseType(Ty, "", true))
+  if (parseType(Ty, "", true))
     return true;
 
   Inst = RetPadInst::Create(Ty, Twine());

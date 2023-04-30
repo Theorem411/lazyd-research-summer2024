@@ -422,19 +422,6 @@ static void addHandleInletsPass(const PassManagerBuilder &Builder,
   PM.add(createHandleInletsPass());
 }
 
-static void addEfficiencySanitizerPass(const PassManagerBuilder &Builder,
-                                       legacy::PassManagerBase &PM) {
-  const PassManagerBuilderWrapper &BuilderWrapper =
-      static_cast<const PassManagerBuilderWrapper&>(Builder);
-  const LangOptions &LangOpts = BuilderWrapper.getLangOpts();
-  EfficiencySanitizerOptions Opts;
-  if (LangOpts.Sanitize.has(SanitizerKind::EfficiencyCacheFrag))
-    Opts.ToolType = EfficiencySanitizerOptions::ESAN_CacheFrag;
-  else if (LangOpts.Sanitize.has(SanitizerKind::EfficiencyWorkingSet))
-    Opts.ToolType = EfficiencySanitizerOptions::ESAN_WorkingSet;
-  PM.add(createEfficiencySanitizerPass(Opts));
-}
-
 static void addCilkSanitizerPass(const PassManagerBuilder &Builder,
                                  legacy::PassManagerBase &PM) {
   PM.add(createCilkSanitizerLegacyPass());
@@ -639,8 +626,8 @@ addULISendAndRewritePasses(const PassManagerBuilder &Builder, PassManagerBase &P
 
   if (CodeGenOpts.EnableULIRewrite) {
     llvm::errs() << "ULI Rewrite\n";
-    PassRegistry &Registry = *PassRegistry::getPassRegistry();
-    initializeAnalysis(Registry);
+    //PassRegistry &Registry = *PassRegistry::getPassRegistry();
+    //initializeAnalysis(Registry);
     PM.add(createULIIntrinsicToExternCallPass());
     if (!CodeGenOpts.DisableULIPollInsertion) {
       PM.add(createULIPollingInsertionPass());
@@ -1160,7 +1147,7 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
     }
   }
 
-  PMBuilder.addExtension(PassManagerBuilder::EP_PostTapir, addULISendAndRewritePasses);
+  PMBuilder.addExtension(PassManagerBuilder::EP_TapirLate, addULISendAndRewritePasses);
 
   // Set up the per-function pass manager.
   FPM.add(new TargetLibraryInfoWrapperPass(*TLII));
@@ -1170,7 +1157,7 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   PMBuilder.addExtension(PassManagerBuilder::EP_EarlyAsPossible,
                          addHandleInletsPass);
 
-  PMBuilder.addExtension(PassManagerBuilder::EP_PostTapir,
+  PMBuilder.addExtension(PassManagerBuilder::EP_TapirLate,
                          addHandleInletsPass);
 
   // Set up the per-module pass manager.

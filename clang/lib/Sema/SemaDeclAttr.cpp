@@ -7256,30 +7256,27 @@ handleWebAssemblyImportNameAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
 }
 
 // must be on a function, otherwise any is ok
-static void handleForkableAttr(Sema &S, Decl *D,
-			     const AttributeList &Attr) {
+static void handleForkableAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   if (!isFunctionOrMethod(D)) {
     S.Diag(D->getLocation(), diag::warn_attribute_wrong_decl_type)
         << "'forkable'" << ExpectedFunctionOrMethod;
     return;
   }
   //fprintf(stderr, "setting forkable\n");
-  handleSimpleAttribute<ForkableAttr>(S, D, Attr);
+  handleSimpleAttribute<ForkableAttr>(S, D, AL);
 }
 
 // must be on a function, otherwise any is ok
-static void handleULINoPollingAttr(Sema &S, Decl *D,
-			     const AttributeList &Attr) {
+static void handleULINoPollingAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   if (!isFunctionOrMethod(D)) {
     S.Diag(D->getLocation(), diag::warn_attribute_wrong_decl_type)
         << "'uli-no-polling'" << ExpectedFunctionOrMethod;
     return;
   }
-  handleSimpleAttribute<ULINoPollingAttr>(S, D, Attr);
+  handleSimpleAttribute<ULINoPollingAttr>(S, D, AL);
 }
 
-static void handleUserLevelInterruptAttr(Sema &S, Decl *D,
-                                      const AttributeList &Attr) {
+static void handleUserLevelInterruptAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   // Semantic checks for a function with the 'interrupt' attribute.
   // a) Must be a function.
   // b) Must have the 'void' return type.
@@ -7305,11 +7302,10 @@ static void handleUserLevelInterruptAttr(Sema &S, Decl *D,
         << 1;
     return;
   }
-  handleSimpleAttribute<UserLevelInterruptAttr>(S, D, Attr);
+  handleSimpleAttribute<UserLevelInterruptAttr>(S, D, AL);
 }
 
-static void handleULINonAtomicAttr(Sema &S, Decl *D,
-                                      const AttributeList &Attr) {
+static void handleULINonAtomicAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   // Semantic checks for a function with the 'ULINonAtomic' attribute.
   // Must be a function that returns void
   // If it doesn't have a UserLevelInterrupt attribute, add it
@@ -7326,28 +7322,26 @@ static void handleULINonAtomicAttr(Sema &S, Decl *D,
     return;
   }
 
-  handleSimpleAttribute<ULINonAtomicAttr>(S, D, Attr);
+  handleSimpleAttribute<ULINonAtomicAttr>(S, D, AL);
 }
 
 // must be on a function, otherwise any is ok
-static void handleNoStackletCheckAttr(Sema &S, Decl *D,
-			     const AttributeList &Attr) {
+static void handleNoStackletCheckAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   if (!isFunctionOrMethod(D)) {
     S.Diag(D->getLocation(), diag::warn_attribute_wrong_decl_type)
         << "'no_stacklet_check'" << ExpectedFunctionOrMethod;
     return;
   }
-  handleSimpleAttribute<NoStackletCheckAttr>(S, D, Attr);
+  handleSimpleAttribute<NoStackletCheckAttr>(S, D, AL);
 }
 
-static void handleNoUnwindPathAttr(Sema &S, Decl *D,
-			     const AttributeList &Attr) {
+static void handleNoUnwindPathAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   if (!isFunctionOrMethod(D)) {
     S.Diag(D->getLocation(), diag::warn_attribute_wrong_decl_type)
         << "'no_unwind_path'" << ExpectedFunctionOrMethod;
     return;
   }
-  handleSimpleAttribute<NoUnwindPathAttr>(S, D, Attr);
+  handleSimpleAttribute<NoUnwindPathAttr>(S, D, AL);
 }
 
 
@@ -8268,24 +8262,24 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
   case ParsedAttr::AT_Interrupt:
     handleInterruptAttr(S, D, AL);
     break;
-  case AttributeList::AT_Forkable:
-    handleForkableAttr(S, D, Attr);
+  case ParsedAttr::AT_Forkable:
+    handleForkableAttr(S, D, AL);
     break;
-  case AttributeList::AT_ULINoPolling:
-    handleULINoPollingAttr(S, D, Attr);
+  case ParsedAttr::AT_ULINoPolling:
+    handleULINoPollingAttr(S, D, AL);
     break;
-  case AttributeList::AT_UserLevelInterrupt:
-    handleUserLevelInterruptAttr(S, D, Attr);
+  case ParsedAttr::AT_UserLevelInterrupt:
+    handleUserLevelInterruptAttr(S, D, AL);
     break;
-  case AttributeList::AT_ULINonAtomic:
-    handleULINonAtomicAttr(S, D, Attr);
+  case ParsedAttr::AT_ULINonAtomic:
+    handleULINonAtomicAttr(S, D, AL);
     break;
-  case AttributeList::AT_NoStackletCheck:
-    handleNoStackletCheckAttr(S, D, Attr);
+  case ParsedAttr::AT_NoStackletCheck:
+    handleNoStackletCheckAttr(S, D, AL);
     break;
   case ParsedAttr::AT_X86ForceAlignArgPointer:
     handleX86ForceAlignArgPointerAttr(S, D, AL);
-  case AttributeList::AT_NoUnwindPath:
+  case ParseAttr::AT_NoUnwindPath:
     handleNoUnwindPathAttr(S, D, Attr);
     break;
   case ParsedAttr::AT_DLLExport:

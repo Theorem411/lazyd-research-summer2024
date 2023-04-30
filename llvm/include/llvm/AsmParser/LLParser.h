@@ -568,6 +568,7 @@ namespace llvm {
     bool parseDetach(Instruction *&Inst, PerFunctionState &PFS);
     bool parseReattach(Instruction *&Inst, PerFunctionState &PFS);
     bool parseSync(Instruction *&Inst, PerFunctionState &PFS);
+    bool parseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS);
 
     bool parseUnaryOp(Instruction *&Inst, PerFunctionState &PFS, unsigned Opc,
                       bool IsFP);
@@ -595,6 +596,7 @@ namespace llvm {
     int parseExtractValue(Instruction *&Inst, PerFunctionState &PFS);
     int parseInsertValue(Instruction *&Inst, PerFunctionState &PFS);
     bool parseFreeze(Instruction *&I, PerFunctionState &PFS);
+    int parseRetPad(Instruction *&Inst, PerFunctionState &PFS);
 
     // Use-list order directives.
     bool parseUseListOrder(PerFunctionState *PFS = nullptr);
