@@ -1,8 +1,8 @@
-#define DEBUG_TYPE "lazyd-trans"
-
+#include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/DominanceFrontier.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -13,7 +13,6 @@
 #include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/MDBuilder.h"
-#include "llvm/IR/TypeBuilder.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar/GVN.h"
@@ -97,133 +96,113 @@ static cl::opt<bool> EnableMultiRetIR(
 
 // Copied from CilkABI.cpp
 
-using __cilkrts_get_nworkers = int ();
+#define UNWINDRTS_FUNC(name, M) Get__unwindrts_##name(M)
 
-#define CILKRTS_FUNC(name, CGF) Get__cilkrts_##name(CGF)
-
-#define DEFAULT_GET_CILKRTS_FUNC(name)                                  \
-  static Function *Get__cilkrts_##name(Module& M) {                     \
-                                                   return cast<Function>(M.getOrInsertFunction( \
-                                                                                               "__cilkrts_"#name, \
-                                                                                                 TypeBuilder<__cilkrts_##name, false>::get(M.getContext()) \
-                                                                                                 )); \
-                                                   }
-
-//DEFAULT_GET_CILKRTS_FUNC(get_nworkers)
-//#pragma GCC diagnostic ignored "-Wunused-function"
-static Function *Get__cilkrts_get_nworkers(Module& M) {
-LLVMContext &C = M.getContext();
-AttributeList AL;
-AL = AL.addAttribute(C, AttributeList::FunctionIndex,
-                       Attribute::ReadNone);
-// AL = AL.addAttribute(C, AttributeSet::FunctionIndex,
-//                      Attribute::InaccessibleMemOnly);
-AL = AL.addAttribute(C, AttributeList::FunctionIndex,
-                       Attribute::NoUnwind);
-Function *F = cast<Function>(
-M.getOrInsertFunction(
-"__cilkrts_get_nworkers",
-  TypeBuilder<__cilkrts_get_nworkers, false>::get(C),
-  AL));
-return F;
+//using hashGnui_ty = unsigned (unsigned);
+static FunctionCallee Get_hashGnui(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("hashGnui", FunctionType::get(Type::getInt32Ty(Ctx), {Type::getInt32Ty(Ctx)}, false));
 }
 
-#define DEFAULT_GET_LIB_FUNC(name)                                      \
-  static Constant *Get_##name(Module& M) {                              \
-                                          return M.getOrInsertFunction( #name, \
-                                                                          TypeBuilder< name##_ty, false>::get(M.getContext()) \
-                                                                        ); \
-  }
+//using push_workctx_ty = void (void**, void*);
+static FunctionCallee Get_push_workctx(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("push_workctx", FunctionType::get(Type::getVoidTy(Ctx), {PointerType::getInt8PtrTy(Ctx)->getPointerTo(), PointerType::getInt8PtrTy(Ctx)}, false));
+}
 
 
-#define UNWINDRTS_FUNC(name, CGF) Get__unwindrts_##name(CGF)
+//using pop_workctx_ty = void (void**, void*);
+static FunctionCallee Get_pop_workctx(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("pop_workctx", FunctionType::get(Type::getVoidTy(Ctx), {PointerType::getInt8PtrTy(Ctx)->getPointerTo(), PointerType::getInt8PtrTy(Ctx)}, false));
+}
 
-using unwind_poll_ty = int(void);
-using mylongwithoutjmp_callee_ty = void (void**);
 
-using hashGnui_ty = unsigned (unsigned);
-DEFAULT_GET_LIB_FUNC(hashGnui)
+//using suspend2scheduler_ty = void (int, int, int);
+static FunctionCallee Get_suspend2scheduler(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("suspend2scheduler", FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt32Ty(Ctx),Type::getInt32Ty(Ctx),Type::getInt32Ty(Ctx)}, false));
+}
 
-using mylongjmp_callee_ty = void (void**);
-DEFAULT_GET_LIB_FUNC(mylongjmp_callee)
+//using resume2scheduler_ty = void (void**, void* );
+static FunctionCallee Get_resume2scheduler(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("resume2scheduler", FunctionType::get(Type::getVoidTy(Ctx), {PointerType::getInt8PtrTy(Ctx)->getPointerTo(), PointerType::getInt8PtrTy(Ctx)}, false));
+}
 
-using mysetjmp_callee_ty = int (void**);
-DEFAULT_GET_LIB_FUNC(mysetjmp_callee)
 
-using push_ss_ty = void (void *);
-DEFAULT_GET_LIB_FUNC(push_ss)
+//using sync_slowpath_ty = char (int, int, void*);
+static FunctionCallee Get_sync_slowpath(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("sync_slowpath", FunctionType::get(Type::getInt1Ty(Ctx), {Type::getInt32Ty(Ctx), Type::getInt32Ty(Ctx), PointerType::getInt8PtrTy(Ctx)}, false));
+}
 
-using push_workctx_ty = void (void**, void*);
-DEFAULT_GET_LIB_FUNC(push_workctx)
+//using can_direct_steal_ty = void ();
+static FunctionCallee Get_can_direct_steal(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("can_direct_steal", FunctionType::get(Type::getVoidTy(Ctx), {Type::getVoidTy(Ctx)}, false));
+}
 
-using pop_workctx_ty = void (void**, void*);
-DEFAULT_GET_LIB_FUNC(pop_workctx)
 
-using pop_ss_ty = void (void );
-DEFAULT_GET_LIB_FUNC(pop_ss)
+//using measure_resume_parent_ty = void (int);
+static FunctionCallee Get_measure_resume_parent(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("measure_resume_parent", FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt32Ty(Ctx)}, false));
+}
 
-using suspend2scheduler_ty = void (int, int, int);
-DEFAULT_GET_LIB_FUNC(suspend2scheduler)
 
-using resume2scheduler_ty = void (void**, void* );
-DEFAULT_GET_LIB_FUNC(resume2scheduler)
+//using get_workcontext_ty = void** (void** );
+static FunctionCallee Get_get_workcontext(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("get_workcontext", FunctionType::get(PointerType::getInt8PtrTy(Ctx)->getPointerTo(), {PointerType::getInt8PtrTy(Ctx)->getPointerTo()}, false));
+}
 
-using sync_slowpath_ty = char (int, int, void*);
-DEFAULT_GET_LIB_FUNC(sync_slowpath)
 
-using can_direct_steal_ty = void ();
-DEFAULT_GET_LIB_FUNC(can_direct_steal)
+//using get_workcontext_locowner_ty = void** (int, int, void*);
+static FunctionCallee Get_get_workcontext_locowner(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("get_workcontext_locowner", FunctionType::get(PointerType::getInt8PtrTy(Ctx)->getPointerTo(), {Type::getInt32Ty(Ctx), Type::getInt32Ty(Ctx), PointerType::getInt8PtrTy(Ctx)}, false));
+}
 
-using measure_resume_parent_ty = void (int);
-DEFAULT_GET_LIB_FUNC(measure_resume_parent)
+//using get_stacklet_ctx_ty = void** ();
+static FunctionCallee Get_get_stacklet_ctx(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("get_stacklet_ctx", FunctionType::get(PointerType::getInt8PtrTy(Ctx)->getPointerTo(), {Type::getVoidTy(Ctx)}, false));
+}
 
-using get_workcontext_ty = void** (void** );
-DEFAULT_GET_LIB_FUNC(get_workcontext)
+//using initialize_parallel_ctx_ty = void (void**, void*, void*);
+static FunctionCallee Get_initialize_parallel_ctx(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("initialize_parallel_ctx", FunctionType::get(Type::getVoidTy(Ctx), {PointerType::getInt8PtrTy(Ctx)->getPointerTo(), PointerType::getInt8PtrTy(Ctx)->getPointerTo(), PointerType::getInt8PtrTy(Ctx)}, false));
+}
 
-using get_workcontext_locowner_ty = void** (int, int, void*);
-DEFAULT_GET_LIB_FUNC(get_workcontext_locowner)
+//using initworkers_env_ty = void (void );
+static FunctionCallee Get_initworkers_env(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("initworkers_env", FunctionType::get(Type::getVoidTy(Ctx), {Type::getVoidTy(Ctx)}, false));
+}
 
-using get_stacklet_ctx_ty = void** ();
-DEFAULT_GET_LIB_FUNC(get_stacklet_ctx)
 
-using postunwind_ty = void (void );
-DEFAULT_GET_LIB_FUNC(postunwind)
+//using deinitworkers_env_ty = void (void );
+static FunctionCallee Get_deinitworkers_env(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("deinitworkers_env", FunctionType::get(Type::getVoidTy(Ctx), {Type::getVoidTy(Ctx)}, false));
+}
 
-using preunwind_steal_ty = void (void );
-DEFAULT_GET_LIB_FUNC(preunwind_steal)
 
-using postunwind_steal_ty = void (void );
-DEFAULT_GET_LIB_FUNC(postunwind_steal)
+//using deinitperworkers_sync_ty = void(int, int);
+static FunctionCallee Get_deinitperworkers_sync(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("deinitperworkers_sync", FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt32Ty(Ctx), Type::getInt32Ty(Ctx)}, false));
+}
 
-using unwind_suspend_ty = void (void );
-DEFAULT_GET_LIB_FUNC(unwind_suspend)
 
-using unwind_workexists_ty = int (void );
-DEFAULT_GET_LIB_FUNC(unwind_workexists)
+//using initperworkers_sync_ty = void(int, int);
+static FunctionCallee Get_initperworkers_sync(Module& M) {
+  LLVMContext &Ctx = M.getContext();
+  return M.getOrInsertFunction("initperworkers_sync", FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt32Ty(Ctx), Type::getInt32Ty(Ctx)}, false));
+}
 
-using initialize_parallel_ctx_ty = void (void**, void*, void*);
-DEFAULT_GET_LIB_FUNC(initialize_parallel_ctx)
-
-using unwind_gosteal_ty = void (void );
-DEFAULT_GET_LIB_FUNC(unwind_gosteal)
-
-using isunwind_triggered_ty = int (void);
-DEFAULT_GET_LIB_FUNC(isunwind_triggered)
-
-using initiate_unwindstack_ty = void (void);
-DEFAULT_GET_LIB_FUNC(initiate_unwindstack)
-
-using initworkers_env_ty = void (void );
-DEFAULT_GET_LIB_FUNC(initworkers_env)
-
-using deinitworkers_env_ty = void (void );
-DEFAULT_GET_LIB_FUNC(deinitworkers_env)
-
-using deinitperworkers_sync_ty = void(int, int);
-DEFAULT_GET_LIB_FUNC(deinitperworkers_sync)
-
-using initperworkers_sync_ty = void(int, int);
-DEFAULT_GET_LIB_FUNC(initperworkers_sync)
 
 namespace {
 
@@ -242,9 +221,8 @@ namespace {
   /// \brief Helper to find a function with the given name, creating it if it
   /// doesn't already exist. If the function needed to be created then return
   /// false, signifying that the caller needs to add the function body.
-  template <typename T>
   bool GetOrCreateFunction(const char *FnName, Module& M,
-                           Function *&Fn,
+                           FunctionType*& FTy, Function *&Fn,
                            Function::LinkageTypes Linkage =
                            Function::InternalLinkage,
                            bool DoesNotThrow = true) {
@@ -255,7 +233,6 @@ namespace {
       return true;
     }
     // Otherwise we have to create it
-    FunctionType *FTy = TypeBuilder<T, false>::get(Ctx);
     Fn = Function::Create(FTy, Linkage, FnName, &M);
     // Set nounwind if it does not throw.
     if (DoesNotThrow)
@@ -263,72 +240,24 @@ namespace {
     return false;
   }
 
-  Function* Get__unwindrts_mysetjmp_callee(Module& M) {
-    // Inline assembly to move the callee saved regist to rdi
-    Function* Fn = nullptr;
-    if (GetOrCreateFunction<mysetjmp_callee_ty>("mysetjmp_callee_llvm", M, Fn))
-      return Fn;
-
-    LLVMContext& Ctx = M.getContext();
-    BasicBlock* Entry                 = BasicBlock::Create(Ctx, "mysetjmp.entry", Fn);
-
-    Type* Int32Ty = TypeBuilder<int32_t, false>::get(Ctx);
-    Value* ZERO = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
-    Value* ONE = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
-
-    Function::arg_iterator args = Fn->arg_begin();
-    Value* argsCtx = &*args;
-    using AsmTypeCallee = void (void**);
-    FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(Ctx);
-
-    Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rdi\nmovq %rbp, 0(%rdi)\nmovq %rsp, 16(%rdi)\nmovq %rbx, 24(%rdi)\nmovq %r12, 32(%rdi)\nmovq %r13, 40(%rdi)\nmovq %r14, 48(%rdi)\nmovq %r15, 56(%rdi)\n", "r,~{rdi},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
-    IRBuilder<> B(Entry);
-
-    B.CreateCall(Asm, {argsCtx});
-    B.CreateRet(ONE);
-    Fn->addFnAttr(Attribute::NoUnwindPath);
-    return Fn;
-  }
-
-  // Store context of work except for the sp
-  Function* Get__unwindrts_mysetjmp_callee_nosp(Module& M) {
-    // Inline assembly to move the callee saved regist to rdi
-    Function* Fn = nullptr;
-    if (GetOrCreateFunction<mysetjmp_callee_ty>("mysetjmp_callee_nosp_llvm", M, Fn))
-      return Fn;
-
-    LLVMContext& Ctx = M.getContext();
-    BasicBlock* Entry  = BasicBlock::Create(Ctx, "mysetjmp.entry", Fn);
-
-    Type* Int32Ty = TypeBuilder<int32_t, false>::get(Ctx);
-    Value* ZERO = ConstantInt::get(Int32Ty, 0, /*isSigned=*/false);
-    Value* ONE = ConstantInt::get(Int32Ty, 1, /*isSigned=*/false);
-
-    Function::arg_iterator args = Fn->arg_begin();
-    Value* argsCtx = &*args;
-    using AsmTypeCallee = void (void**);
-    FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(Ctx);
-
-    Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rdi\nmovq %rbp, 0(%rdi)\nmovq %rbx, 24(%rdi)\nmovq %r12, 32(%rdi)\nmovq %r13, 40(%rdi)\nmovq %r14, 48(%rdi)\nmovq %r15, 56(%rdi)\n", "r,~{rdi},~{rsi},~{r8},~{r9},~{r10},~{r11},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
-    IRBuilder<> B(Entry);
-
-    B.CreateCall(Asm, {argsCtx});
-
-    //auto OpaqueTrueTy = FunctionType::get(Type::getInt32Ty(Ctx), false);
-    //auto OpaqueTrue = InlineAsm::get(OpaqueTrueTy, "xor $0, $0",  "=r,~{dirflag},~{fpsr},~{flags}", false);
-    //CallInst* res = B.CreateCall(OpaqueTrue);
-    B.CreateRet(ONE);
-    Fn->addFnAttr(Attribute::NoUnwindPath);
-    return Fn;
+  FunctionCallee Get__unwindrts_get_nworkers(Module& M) {
+    LLVMContext &C = M.getContext();
+    AttributeList AL;
+    AL = AL.addFnAttribute(C, Attribute::ReadNone);
+    AL = AL.addFnAttribute(C, Attribute::NoUnwind);
+    FunctionType *FTy = FunctionType::get(Type::getInt32Ty(C), {}, false);
+    return M.getOrInsertFunction("__cilkrts_get_nworkers", FTy, AL);
   }
 
 
   Function* Get__unwindrts_unwind_gnuhash(Module& M) {
-    using unwind_gnuhash_ty = unsigned (char *);
+    //using unwind_gnuhash_ty = unsigned (char *);
     Function* Fn = nullptr;
-    if (GetOrCreateFunction<unwind_gnuhash_ty>("unwind_gnuhash_llvm", M, Fn))
-      return Fn;
     LLVMContext& C = M.getContext();
+    FunctionType* unwind_gnuhash_ty = FunctionType::get(Type::getInt32Ty(C), {PointerType::getInt8PtrTy(C)}, false);
+    if (GetOrCreateFunction("unwind_gnuhash_llvm", M, unwind_gnuhash_ty, Fn))
+      return Fn;
+
     const DataLayout &DL = M.getDataLayout();
 
     BasicBlock* entry = BasicBlock::Create(C, "entry", Fn);
@@ -356,7 +285,7 @@ namespace {
     Value* args = &*argsIt;
 
     IRBuilder<> B(entry);
-    Value* nameLoad = B.CreateAlignedLoad(args, 1, "nameLoad");
+    Value* nameLoad = B.CreateAlignedLoad(Type::getInt8Ty(C), args, Align(1), "nameLoad");
     Value* tobool6 = B.CreateICmpEQ(nameLoad, B.getInt8(0), "tobool6");
     B.CreateCondBr(tobool6, forend, forbodypreheader);
 
@@ -391,8 +320,8 @@ namespace {
     auto add = B.CreateMul(hashValphi, B.getInt32(33), "add");
     auto conv = B.CreateZExt(charptrphi, IntegerType::getInt32Ty(C), "conv");
     auto add1 = B.CreateAdd(add, conv, "add1");
-    auto incdecptr = B.CreateConstGEP1_32(namePhi, 1, "incdecptr");
-    auto incdecptrLoad = B.CreateAlignedLoad(incdecptr, 1, "incdecptrLoad");
+    auto incdecptr = B.CreateConstGEP1_32(IntegerType::getInt8Ty(C), namePhi, 1, "incdecptr");
+    auto incdecptrLoad = B.CreateAlignedLoad(IntegerType::getInt8Ty(C), incdecptr, Align(1), "incdecptrLoad");
 
     charptrphi->addIncoming(incdecptrLoad, forbody);
     hashValphi->addIncoming(add1, forbody);
@@ -417,18 +346,18 @@ namespace {
   }
 
   Function* Get__unwindrts_unwind_queryunwindaddress(Module& M) {
-    using unwind_queryunwindaddress_ty = unsigned (long);
+    //using unwind_queryunwindaddress_ty = unsigned (long);
 
     //AttributeList AL;
     //AL = AL.addAttribute(C, AttributeList::FunctionIndex,
     //                   Attribute::NoUnwindPath);
 
-
+    LLVMContext& C = M.getContext();
     Function* Fn = nullptr;
-    if (GetOrCreateFunction<unwind_queryunwindaddress_ty>("unwind_queryunwindaddress_llvm", M, Fn))
+    FunctionType* unwind_queryunwindaddress_ty = FunctionType::get(Type::getInt32Ty(C), {Type::getInt64Ty(C)}, false);
+    if (GetOrCreateFunction("unwind_queryunwindaddress_llvm", M, unwind_queryunwindaddress_ty, Fn))
       return Fn;
 
-    LLVMContext& C = M.getContext();
     const DataLayout &DL = M.getDataLayout();
 
     BasicBlock* entry = BasicBlock::Create(C, "entry", Fn);
@@ -437,12 +366,15 @@ namespace {
     BasicBlock* whileendloopexit = BasicBlock::Create(C, "while.end.loopexit", Fn);
     BasicBlock* whileend = BasicBlock::Create(C, "while.end", Fn);
 
+    Type *Int32Ty    = Type::getInt32Ty(C);
+    Type *Int32PtrTy = Type::getInt32PtrTy(C);
+
     // Global variable
-    GlobalVariable* pbucket = GetGlobalVariable("bucket", TypeBuilder<unsigned*, false>::get(C), M, true);
-    GlobalVariable* pnbucket = GetGlobalVariable("nbucket", TypeBuilder<unsigned, false>::get(C), M, true);
-    GlobalVariable* pratable = GetGlobalVariable("ratable", TypeBuilder<unsigned*, false>::get(C), M, true);
-    GlobalVariable* pchain = GetGlobalVariable("chain", TypeBuilder<unsigned*, false>::get(C), M, true);
-    GlobalVariable* punwindtable = GetGlobalVariable("unwindtable", TypeBuilder<unsigned*, false>::get(C), M, true);
+    GlobalVariable* pbucket = GetGlobalVariable("bucket", Int32PtrTy, M, true);
+    GlobalVariable* pnbucket = GetGlobalVariable("nbucket", Int32Ty, M, true);
+    GlobalVariable* pratable = GetGlobalVariable("ratable", Int32PtrTy, M, true);
+    GlobalVariable* pchain = GetGlobalVariable("chain", Int32PtrTy, M, true);
+    GlobalVariable* punwindtable = GetGlobalVariable("unwindtable", Int32PtrTy, M, true);
 
     // First argument
     Function::arg_iterator argsIt = Fn->arg_begin();
@@ -451,11 +383,11 @@ namespace {
     // Builder
     IRBuilder<> B(entry);
 
-    auto bucket = B.CreateLoad(pbucket);
-    auto chain = B.CreateLoad(pchain);
-    auto ratable = B.CreateLoad(pratable);
-    auto unwindtable = B.CreateLoad(punwindtable);
-    auto nbucket = B.CreateLoad(pnbucket);
+    auto bucket = B.CreateLoad(Int32PtrTy, pbucket);
+    auto chain = B.CreateLoad(Int32PtrTy, pchain);
+    auto ratable = B.CreateLoad(Int32PtrTy, pratable);
+    auto unwindtable = B.CreateLoad(Int32PtrTy, punwindtable);
+    auto nbucket = B.CreateLoad(Int32Ty, pnbucket);
 
     /*
       entry:
@@ -480,23 +412,23 @@ namespace {
                                  IntegerType::getInt8Ty(C)->getPointerTo(), "returnaddrptr");
 
 #if 0
-    Constant* gnuhash = UNWINDRTS_FUNC(unwind_gnuhash, M);
-    Value* hashVal = B.CreateCall(gnuhash, {loadRAi8}, "hashVal");
+    FunctionCallee gnuhash = UNWINDRTS_FUNC(unwind_gnuhash, M);
+    CallInst* hashVal = B.CreateCall(gnuhash, {loadRAi8}, "hashVal");
 #else
     auto args32 = B.CreateTrunc(args, IntegerType::getInt32Ty(C));
-    Constant* hashGnui = Get_hashGnui(M);
-    Value* hashVal = B.CreateCall(hashGnui, {args32});
+    FunctionCallee hashGnui = Get_hashGnui(M);
+    CallInst* hashVal = B.CreateCall(hashGnui, {args32});
 #endif
 
     auto rem = B.CreateURem(hashVal, nbucket, "rem");
     auto idxprom = B.CreateZExt(rem, IntegerType::getInt64Ty(C), "idxprom");
 
-    auto arrayidx = B.CreateInBoundsGEP(bucket, idxprom, "arrayidx");
-    auto query016 = B.CreateAlignedLoad(arrayidx, 4, "query.016");
+    auto arrayidx = B.CreateInBoundsGEP(Type::getInt32Ty(C), bucket, idxprom, "arrayidx");
+    auto query016 = B.CreateAlignedLoad(Type::getInt32Ty(C), arrayidx, Align(4), "query.016");
     auto conv = B.CreateTrunc(args,  IntegerType::getInt32Ty(C), "conv");
     auto idxprom117 = B.CreateZExt(query016, IntegerType::getInt64Ty(C), "idxprom117");
-    auto arrayidx218 = B.CreateInBoundsGEP(ratable, idxprom117, "arrayidx218");
-    auto arrayidx218Load = B.CreateAlignedLoad(arrayidx218, 4, "arrayidx218Load");
+    auto arrayidx218 = B.CreateInBoundsGEP(Type::getInt32Ty(C), ratable, idxprom117, "arrayidx218");
+    auto arrayidx218Load = B.CreateAlignedLoad(Type::getInt32Ty(C), arrayidx218, Align(4), "arrayidx218Load");
     auto cmp19 = B.CreateICmpNE(arrayidx218Load, conv, "cmp19");
     auto cmp420 = B.CreateICmpNE(query016, B.getInt32(0), "cmp420");
     auto andCmp = B.CreateAnd(cmp19, cmp420, "andCmp");
@@ -525,11 +457,11 @@ namespace {
     B.SetInsertPoint(whilebody);
     auto idxprom121 = B.CreatePHI(IntegerType::getInt64Ty(C), 2, "idxprom121");
     idxprom121->addIncoming(idxprom117, whilebodypreheader);
-    auto arrayidx7 = B.CreateInBoundsGEP(chain, idxprom121, "arrayidx7");
-    auto query0 = B.CreateAlignedLoad(arrayidx7, 4, "query.0");
+    auto arrayidx7 = B.CreateInBoundsGEP(Type::getInt32Ty(C), chain, idxprom121, "arrayidx7");
+    auto query0 = B.CreateAlignedLoad(Type::getInt32Ty(C), arrayidx7, Align(4), "query.0");
     auto idxprom1 = B.CreateZExt(query0, IntegerType::getInt64Ty(C), "idxprom1");
-    auto arrayidx2 = B.CreateInBoundsGEP(ratable, idxprom1, "arrayidx2");
-    auto arrayidx2load = B.CreateAlignedLoad(arrayidx2, 4, "arrayidx2Load");
+    auto arrayidx2 = B.CreateInBoundsGEP(Type::getInt32Ty(C), ratable, idxprom1, "arrayidx2");
+    auto arrayidx2load = B.CreateAlignedLoad(Type::getInt32Ty(C), arrayidx2, Align(4), "arrayidx2Load");
     auto cmp = B.CreateICmpNE(arrayidx2load, conv, "cmp");
     auto cmp4 = B.CreateICmpNE(query0, B.getInt32(0), "cmp4");
     auto andCmp2 = B.CreateAnd(cmp4, cmp, "andCmp2");
@@ -558,57 +490,15 @@ namespace {
     auto idxprom1lcssa = B.CreatePHI(IntegerType::getInt64Ty(C), 2, "idxprom1.lcssa");
     idxprom1lcssa->addIncoming(idxprom117, entry);
     idxprom1lcssa->addIncoming(idxprom1le, whileendloopexit);
-    auto arrayidx9 = B.CreateInBoundsGEP(unwindtable, idxprom1lcssa, "arrayidx9");
-    B.CreateRet(B.CreateAlignedLoad(arrayidx9, 4));
+    auto arrayidx9 = B.CreateInBoundsGEP(Type::getInt32Ty(C), unwindtable, idxprom1lcssa, "arrayidx9");
+    B.CreateRet(B.CreateAlignedLoad(Type::getInt32Ty(C), arrayidx9, Align(4)));
 
     llvm::InlineFunctionInfo ifi;
-    llvm::InlineFunction(dyn_cast<CallInst>(hashVal), ifi, nullptr, true);
+    llvm::InlineFunction(*(hashVal), ifi, nullptr, true);
     Fn->addFnAttr(Attribute::NoUnwindPath);
     return Fn;
   }
 
-
-  Function *Get__unwindrts_mylongjmp_callee(Module& M) {
-    Function* Fn = nullptr;
-    if (GetOrCreateFunction<mylongjmp_callee_ty>("mylongjmp_callee_llvm", M, Fn))
-      return Fn;
-
-    LLVMContext& Ctx = M.getContext();
-    BasicBlock* Entry           = BasicBlock::Create(Ctx, "mylongjmp.entry", Fn);
-    Function::arg_iterator args = Fn->arg_begin();
-    Value* argsCtx = &*args;
-    using AsmTypCallee = void ( void** );
-    FunctionType *FAsmTypCallee = TypeBuilder<AsmTypCallee, false>::get(Ctx);
-    //Value *Asm = InlineAsm::get(FAsmTypCallee, "movq $0, %rdi\nmovq 0(%rdi), %rbp\nmovq 16(%rdi), %rsp\nmovq 24(%rdi), %rbx\nmovq 32(%rdi), %r12\nmovq 40(%rdi), %r13\nmovq 48(%rdi), %r14\nmovq 56(%rdi), %r15\njmpq *8(%rdi)", "r,~{rdi},~{rbx},~{r12},~{r13},~{r14},~{r15},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
-    Value *Asm = InlineAsm::get(FAsmTypCallee, "movq $0, %rdi\nmovq 0(%rdi), %rbp\nmovq 16(%rdi), %rsp\nmovq 24(%rdi), %rbx\nmovq 32(%rdi), %r12\nmovq 40(%rdi), %r13\nmovq 48(%rdi), %r14\nmovq 56(%rdi), %r15\njmpq *8(%rdi)", "r,~{rdi},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
-    IRBuilder<> B(Entry);
-    B.CreateCall(Asm, argsCtx);
-    B.CreateRetVoid();
-    Fn->addFnAttr(Attribute::NoUnwindPath);
-    return Fn;
-  }
-
-  Function *Get__unwindrts_mylongwithoutjmp_callee(Module& M) {
-    Function* Fn = nullptr;
-    if (GetOrCreateFunction<mylongwithoutjmp_callee_ty>("mylongwithoutjmp_callee_llvm", M, Fn))
-      return Fn;
-
-    LLVMContext& Ctx = M.getContext();
-    BasicBlock* Entry           = BasicBlock::Create(Ctx, "mywithoutlongjmp.entry", Fn);
-    Function::arg_iterator args = Fn->arg_begin();
-    Value* argsCtx = &*args;
-    using AsmTypCallee = void ( void** );
-    FunctionType *FAsmTypCallee = TypeBuilder<AsmTypCallee, false>::get(Ctx);
-    Value *Asm = InlineAsm::get(FAsmTypCallee, "movq $0, %rdi\nmovq 0(%rdi), %rbp\nmovq 16(%rdi), %rsp\nmovq 24(%rdi), %rbx\nmovq 32(%rdi), %r12\nmovq 40(%rdi), %r13\nmovq 48(%rdi), %r14\nmovq 56(%rdi), %r15\n", "r,~{rdi},~{rbx},~{r12},~{r13},~{r14},~{r15},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
-
-    IRBuilder<> B(Entry);
-    B.CreateCall(Asm, argsCtx);
-    B.CreateRetVoid();
-
-    Fn->addFnAttr(Attribute::NoUnwindPath);
-
-    return Fn;
-  }
 
 #if 1
   // Create helper function
@@ -627,13 +517,13 @@ namespace {
     if (Fn)
       return Fn;
 
-    Type *VoidTy = TypeBuilder<void, false>::get(C);
+    Type *VoidTy = Type::getVoidTy(C);
     FunctionType *FTy = F.getFunctionType();
     assert(!FTy->isFunctionVarArg());
     Type *RetType = FTy->getReturnType();
 
-    Constant* PUSH_WORKCTX = Get_push_workctx(*M);
-    Constant* POP_WORKCTX = Get_pop_workctx(*M);
+    FunctionCallee PUSH_WORKCTX = Get_push_workctx(*M);
+    FunctionCallee POP_WORKCTX = Get_pop_workctx(*M);
 
     SmallVector<Type *, 8> WrapperParamTys(FTy->param_begin(), FTy->param_end());
     WrapperParamTys.push_back(workCtxType);
@@ -881,7 +771,7 @@ namespace {
       if (!call) continue;
       auto fn = call->getCalledFunction();
       if (!fn) continue;
-      if (fn->getIntrinsicID() != Intrinsic::x86_uli_potential_jump) continue;
+      if (fn->getIntrinsicID() != Intrinsic::uli_potential_jump) continue;
       auto afterPotentialJump = it; afterPotentialJump++;
 
       auto BA = dyn_cast<BlockAddress>(call->getArgOperand(0));
@@ -918,7 +808,7 @@ namespace {
           if (call) {
             auto fn = call->getCalledFunction();
             // Skip basic block if the first inst. is var_annotation or potential jump
-            if(fn && (fn->getIntrinsicID() == Intrinsic::var_annotation || fn->getIntrinsicID() == Intrinsic::x86_uli_potential_jump) ) {
+            if(fn && (fn->getIntrinsicID() == Intrinsic::var_annotation || fn->getIntrinsicID() == Intrinsic::uli_potential_jump) ) {
               bbIter = bbIter->getUniquePredecessor();
               continue;
             }
@@ -996,7 +886,7 @@ namespace {
     SmallVector<BasicBlock *, 4> indirectDests;
     SmallVector<Value *, 4> args;
 
-    unsigned nArgs = ci->getNumArgOperands ();
+    unsigned nArgs = ci->arg_size ();
     for(unsigned i=0; i<nArgs; i++){
       args.push_back(ci->getArgOperand(i));
     }
@@ -1039,7 +929,7 @@ namespace {
     if (Fn)
       return Fn;
 
-    Type *VoidTy = TypeBuilder<void, false>::get(C);
+    Type *VoidTy = Type::getVoidTy(C);
     SmallVector<Type *, 8> WrapperParamTys;
     for(auto fcnArg: fcnArgs) {
       WrapperParamTys.push_back(dyn_cast<Value>(fcnArg)->getType());
@@ -1168,7 +1058,7 @@ namespace {
       // Look for the spawn function
       bool bFailToLocateSpawnFunction = true;
       for (auto ii : instsVec) {
-        DEBUG(dbgs() << "II: " << *ii << "\n");
+        LLVM_DEBUG(dbgs() << "II: " << *ii << "\n");
         if ((isa<CallInst>(ii) || isa<InvokeInst>(ii)) && isNonPHIOrDbgOrLifetime(ii) ) {
           // Find multiple call inst, need to create wrapper
           if(!bFailToLocateSpawnFunction) {
@@ -1181,7 +1071,7 @@ namespace {
 
       // If we fail to locate a spawn instruction, create a function wrapper.
       if(bFailToLocateSpawnFunction) {
-        DEBUG(dbgs() << "Need to generate function for inst: " << *detachInst << "\n");
+        LLVM_DEBUG(dbgs() << "Need to generate function for inst: " << *detachInst << "\n");
 
         // Find the basicBlock needed to clone
         SmallVector<BasicBlock*, 4> bb2clones;
@@ -1202,7 +1092,7 @@ namespace {
         auto liveOutVars = LVout[detachBB];
         auto liveInVars = LVin[detachBB][detachBB->getUniquePredecessor()];
 
-        DEBUG(dbgs() << "For basic block " << detachBB->getName() << " live variables in: \n");
+        LLVM_DEBUG(dbgs() << "For basic block " << detachBB->getName() << " live variables in: \n");
         // Since in cilk, the return variable is immediately stored in memory, there should be no live variables
         // Look for live variables inside
 
@@ -1212,7 +1102,7 @@ namespace {
           for (auto &use : liveInVar->uses()) {
             auto * user = dyn_cast<Instruction>(use.getUser());
             if(setBb2clones.find(user->getParent()) != setBb2clones.end()) {
-              DEBUG(dbgs() << *liveInVar << "\n");
+              LLVM_DEBUG(dbgs() << *liveInVar << "\n");
               fcnArgs.insert(liveInVar);
             }
           }
@@ -1223,15 +1113,15 @@ namespace {
           for (auto &use : it->uses()) {
             auto * user = dyn_cast<Instruction>(use.getUser());
             if(setBb2clones.find(user->getParent()) != setBb2clones.end()) {
-              DEBUG(dbgs() << *it << "\n");
+              LLVM_DEBUG(dbgs() << *it << "\n");
               fcnArgs.insert(it);
             }
           }
         }
 
-        DEBUG(dbgs() << "Basicblock to clone: " << "\n");
+        LLVM_DEBUG(dbgs() << "Basicblock to clone: " << "\n");
         for(auto bb2clone: bb2clones) {
-          DEBUG(dbgs() << "BB : " << bb2clone->getName() << "\n");
+          LLVM_DEBUG(dbgs() << "BB : " << bb2clone->getName() << "\n");
         }
 
 
@@ -1241,11 +1131,12 @@ namespace {
         //wrapper->addFnAttr(Attribute::OptimizeNone);
         //wrapper->addFnAttr("no-frame-pointer-elim");
 #if 1
-        auto Attrs = wrapper->getAttributes();
-        StringRef ValueStr("true" );
-        Attrs = Attrs.addAttribute(wrapper->getContext(), AttributeList::FunctionIndex,
-                                   "no-frame-pointer-elim", ValueStr);
-        wrapper->setAttributes(Attrs);
+        //auto Attrs = wrapper->getAttributes();
+        //StringRef ValueStr("true" );
+        //Attrs = Attrs.addAttribute(wrapper->getContext(), AttributeList::FunctionIndex,
+        //                           "no-frame-pointer-elim", ValueStr);
+        //wrapper->setAttributes(Attrs);
+	wrapper->addFnAttr("no-frame-pointer-elim");
 #endif
         auto bbContainReattach = getActualDetached(detachBB);
 
@@ -1296,7 +1187,7 @@ namespace {
         //B.SetInsertPoint(term);
         B.SetInsertPoint(Latch->getTerminator());
 
-        Value* bHaveUnwind = B.CreateLoad(bHaveUnwindAlloc, 1);
+        Value* bHaveUnwind = B.CreateLoad(Type::getInt1Ty(C), bHaveUnwindAlloc, 1);
         Value* haveBeenUnwind = B.CreateICmpEQ(bHaveUnwind, B.getInt1(1));
 
         BasicBlock* loopUnwound = BasicBlock::Create(C, "loop.unwounded", F);
@@ -1321,7 +1212,7 @@ namespace {
         for( auto &BB : *F ) {
           for (auto &II : BB ) {
             if (IntrinsicInst *IntrinsicI = dyn_cast<IntrinsicInst>(&II)) {
-              if (Intrinsic::x86_ui_disable_region == IntrinsicI->getIntrinsicID()){
+              if (Intrinsic::ui_disable_region == IntrinsicI->getIntrinsicID()){
                 splitPt = &II;
               }
             }
@@ -1340,7 +1231,7 @@ namespace {
 #define NO_UNWIND_POLLPFOR
 #ifdef NO_UNWIND_POLLPFOR
 
-        Value* bHaveUnwind = B.CreateLoad(bHaveUnwindAlloc, 1);
+        Value* bHaveUnwind = B.CreateLoad(Type::getInt1Ty(C), bHaveUnwindAlloc, 1);
         Value* haveBeenUnwind = B.CreateICmpEQ(bHaveUnwind, B.getInt1(1));
 
         BasicBlock* loopUnwound = BasicBlock::Create(C, "loop.unwounded", F);
@@ -1362,11 +1253,11 @@ namespace {
 
 #ifdef NO_UNWIND_POLLPFOR
       B.SetInsertPoint(HeaderBlock->getFirstNonPHIOrDbgOrLifetime());
-      Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll);
+      Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::uli_unwind_poll);
       B.CreateCall(pollFcn);
 #endif
 
-      DEBUG(dbgs() << F->getName() << ": Polling at inner most loop\n");
+      LLVM_DEBUG(dbgs() << F->getName() << ": Polling at inner most loop\n");
     }
 
 
@@ -1397,7 +1288,7 @@ namespace {
 
 }
 
-namespace llvm {
+namespace {
   struct LazyDTrans : public FunctionPass {
   public:
     static char ID;
@@ -1415,7 +1306,6 @@ namespace llvm {
     StringRef getPassName() const override {
       return "Simple Lowering of Tapir to LazyD ABI";
     }
-
 
     // Do some initialization
     virtual bool doInitialization(Module &M) override {
@@ -1442,7 +1332,6 @@ namespace llvm {
 // LLVM uses the address of this static member to identify the pass, so the
 // initialization value is unimportant.
 char LazyDTrans::ID = 0;
-
 INITIALIZE_PASS_BEGIN(LazyDTrans, "LazyDTrans",
                       "Lower Tapir to LazyDTrans", false, false)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass);
@@ -1455,7 +1344,7 @@ INITIALIZE_PASS_END(LazyDTrans, "LazyDTrans",
 void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder, ValueToValueMapTy& VMapSlowPath, Value* fromSlowPathAlloc, SSAUpdater& SSAUpdateWorkContext, DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet) {
   Module* M = F.getParent();
   LLVMContext& C = M->getContext();
-  Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
+  Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::uli_potential_jump);
   IRBuilder<> B(C);
 
   // Type: void**
@@ -1482,7 +1371,7 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
 
     // Look for the spawn function
     for (auto ii : instsVec) {
-      DEBUG(dbgs() << "II: " << *ii << "\n");
+      LLVM_DEBUG(dbgs() << "II: " << *ii << "\n");
       if ((isa<CallInst>(ii) || isa<InvokeInst>(ii)) && isNonPHIOrDbgOrLifetime(ii) ) {
         // Add a potential jump to slow path
         //B.SetInsertPoint(ii);
@@ -1500,19 +1389,19 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
 #if 0
           // TODO
           // Instrumentation here, check if the code is executed by the owner
-          Constant* can_direct_steal = Get_can_direct_steal(*M);
+          FunctionCallee can_direct_steal = Get_can_direct_steal(*M);
           B.CreateCall(can_direct_steal);
 #endif
 
 #if 0
           // No need to create retpad in slow path entry since it will mess up the stack provided by thief
-          Function* uliGetWorkCtx = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_get_workcontext);
+          Function* uliGetWorkCtx = Intrinsic::getDeclaration(M, Intrinsic::uli_get_workcontext);
           //uliGetWorkCtx->addFnAttr(Attribute::Forkable);
           auto workCtx = B.CreateCall(uliGetWorkCtx);
           //workCtx->setTailCall(true);
           SSAUpdateWorkContext.AddAvailableValue(bb1, workCtx);
 
-          B.CreateAlignedStore(B.getInt32(1), fromSlowPathAlloc, 4, 1);
+          B.CreateAlignedStore(B.getInt32(1), fromSlowPathAlloc, Align(4), 1);
 #endif
 
           auto insertPt = dyn_cast<Instruction>(B.CreateBr(continueSlowPathBB));
@@ -1522,7 +1411,7 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
             // Load reachable alloc inst on the top of detach->getParent() and store the result in gotstolen handler
             for (auto reachingAlloca : ReachingAllocSet[detachInst]){
               B.SetInsertPoint(detachInst->getParent()->getFirstNonPHIOrDbgOrLifetime());
-              auto * loadRes = B.CreateLoad(reachingAlloca);
+              auto * loadRes = B.CreateLoad(reachingAlloca->getAllocatedType(), reachingAlloca);
               B.SetInsertPoint(insertPt);
               insertPt = dyn_cast<Instruction>(B.CreateStore(loadRes, reachingAlloca, true));
             }
@@ -1535,8 +1424,9 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
 
 #if 1
           B.SetInsertPoint(continueSlowPathBB->getFirstNonPHIOrDbgOrLifetime());
-          using AsmTypeCallee = void (void);
-          FunctionType *reloadCaller = TypeBuilder<AsmTypeCallee, false>::get(C);
+          //using AsmTypeCallee = void (void);
+	  Type* VoidTy = Type::getVoidTy(C);
+          FunctionType *reloadCaller = FunctionType::get(VoidTy, {VoidTy}, false);
           Value *Asm = InlineAsm::get(reloadCaller, "", "~{rdi},~{rsi},~{r8},~{r9},~{r10},~{r11},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
           //???
           Asm = InlineAsm::get(reloadCaller, "", "~{rbx},~{r12},~{r13},~{r14},~{r15},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
@@ -1566,7 +1456,7 @@ void LazyDTransPass::insertCheckInContBlock(Function& F, SmallVector<DetachInst*
 
   Module* M = F.getParent();
   LLVMContext& C = M->getContext();
-  Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
+  Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::uli_potential_jump);
   IRBuilder<> B(C);
 
   SmallVector<DetachInst*, 4> bbOrder;
@@ -1588,7 +1478,7 @@ void LazyDTransPass::insertCheckInContBlock(Function& F, SmallVector<DetachInst*
 
     // Store one to fromSlowPathAlloc before the detachInstSlowPath
     B.SetInsertPoint(detachInstSlowPath);
-    B.CreateAlignedStore(B.getInt32(0), fromSlowPathAlloc, 4, 1);
+    B.CreateAlignedStore(B.getInt32(0), fromSlowPathAlloc, Align(4), 1);
 
     // Get the slow path continuation
     BasicBlock* continueBBSlowPath  = detachInstSlowPath->getContinue();
@@ -1597,7 +1487,7 @@ void LazyDTransPass::insertCheckInContBlock(Function& F, SmallVector<DetachInst*
     auto insertPt = continueBBSlowPath->getFirstNonPHIOrDbgOrLifetime();
     B.SetInsertPoint(insertPt);
 
-    auto fromSlowPath = B.CreateAlignedLoad(fromSlowPathAlloc, 4, 1);
+    auto fromSlowPath = B.CreateAlignedLoad(Type::getInt8Ty(C), fromSlowPathAlloc, Align(4), 1);
     auto isFromSlowPath = B.CreateICmpEQ(fromSlowPath, B.getInt32(1), "isFromSlowPath");
 
     auto splitPt = dyn_cast<Instruction>(isFromSlowPath)->getNextNode();
@@ -1607,11 +1497,11 @@ void LazyDTransPass::insertCheckInContBlock(Function& F, SmallVector<DetachInst*
     BasicBlock* reloadWorkCtxBB = BasicBlock::Create(C, "reloadWorkCtxBB", &F);
     B.SetInsertPoint(reloadWorkCtxBB);
 
-    Function* uliGetWorkCtx = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_get_workcontext);
+    Function* uliGetWorkCtx = Intrinsic::getDeclaration(M, Intrinsic::uli_get_workcontext);
     //uliGetWorkCtx->addFnAttr(Attribute::Forkable);
     auto workCtx = B.CreateCall(uliGetWorkCtx);
     //workCtx->setTailCall(true);
-    B.CreateAlignedStore(B.getInt32(1), fromSlowPathAlloc, 4, 1);
+    B.CreateAlignedStore(B.getInt32(1), fromSlowPathAlloc, Align(4), 1);
     B.CreateBr(afterBB);
 
     auto branch = BranchInst::Create(afterBB, reloadWorkCtxBB, isFromSlowPath);
@@ -1807,7 +1697,7 @@ void LazyDTransPass::renamePhiNodeToReconstructSsa(DominatorTree &DT,
             }
           } else {
             // Phi node dominates all uses
-            DEBUG(dbgs() << "Gets modified BB: " << useBB->getName() << " user: " << *user << "\n");
+            LLVM_DEBUG(dbgs() << "Gets modified BB: " << useBB->getName() << " user: " << *user << "\n");
             useNeed2Update.push_back(&use);
             mapUseToPhi[&use] = phiN;
           }
@@ -2542,11 +2432,11 @@ void LazyDTransPass::findRequiredPhiNodes(DenseMap<DetachInst *, SmallPtrSet<Bas
 #if 0
   // Debugging purpose
   for(auto elem : RequiredPhiNode) {
-    DEBUG(dbgs() << "Detach Inst : " << *(elem.first) <<"\n");
+    LLVM_DEBUG(dbgs() << "Detach Inst : " << *(elem.first) <<"\n");
     for (auto inst : elem.second) {
-      DEBUG(dbgs() << "Required phi " << *inst <<"\n");
+      LLVM_DEBUG(dbgs() << "Required phi " << *inst <<"\n");
     }
-    DEBUG(dbgs() << "-------------------\n");
+    LLVM_DEBUG(dbgs() << "-------------------\n");
   }
 #endif
   return;
@@ -2612,11 +2502,11 @@ void LazyDTransPass::findRequiredPhiNodes(DenseMap<DetachInst *, SmallPtrSet<Bas
 #if 0
   // Debugging purpose
   for(auto elem : RequiredPhiNode) {
-    DEBUG(dbgs() << "Detach Inst : " << *(elem.first) <<"\n");
+    LLVM_DEBUG(dbgs() << "Detach Inst : " << *(elem.first) <<"\n");
     for (auto inst : elem.second) {
-      DEBUG(dbgs() << "Required phi " << *inst <<"\n");
+      LLVM_DEBUG(dbgs() << "Required phi " << *inst <<"\n");
     }
-    DEBUG(dbgs() << "-------------------\n");
+    LLVM_DEBUG(dbgs() << "-------------------\n");
   }
 #endif
   return;
@@ -2736,7 +2626,7 @@ void LazyDTransPass::cloneBasicBlock(Function &F, SmallVector<BasicBlock*, 8>& b
 #else
     if(true) {
 #endif
-        Function *SetupRSPfromRBP = Intrinsic::getDeclaration(F.getParent(), Intrinsic::x86_setup_rsp_from_rbp);
+        Function *SetupRSPfromRBP = Intrinsic::getDeclaration(F.getParent(), Intrinsic::setup_rsp_from_rbp);
         B.CreateCall(SetupRSPfromRBP);
       }
     }
@@ -2849,7 +2739,7 @@ void LazyDTransPass::postProcessCfg(Function &F, FunctionAnalysisManager &AM, Do
           StoreInst * si = dyn_cast<StoreInst>(user);
           // Remove non volatile store to alloca that stores fork result (volatile implies it is in gotstolen handler or parallel path)
           if(!si->isVolatile()) {
-            DEBUG(dbgs() << "Remove the non volatile inst :" << *si << "\n");
+            LLVM_DEBUG(dbgs() << "Remove the non volatile inst :" << *si << "\n");
             str2delete.push_back(si);
           }
         } else if (isa<LoadInst>(user)) {
@@ -2912,7 +2802,7 @@ Value* LazyDTransPass::lowerGrainsizeCall(CallInst *GrainsizeCall) {
   IRBuilder<> Builder(GrainsizeCall);
 
   // Get 8 * workers
-  Value *Workers = Builder.CreateCall(CILKRTS_FUNC(get_nworkers, *M));
+  Value *Workers = Builder.CreateCall(UNWINDRTS_FUNC(get_nworkers, *M));
   Value *WorkersX8 = Builder.CreateIntCast(
                                            Builder.CreateMul(Workers, ConstantInt::get(Workers->getType(), 8)),
                                            Limit->getType(), false);
@@ -2992,6 +2882,12 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   IRBuilder <> B(C);
   auto workcontext_ty = ArrayType::get(PointerType::getInt8PtrTy(C), WorkCtxLen);
 
+  Type *Int1Ty    = Type::getInt1Ty(C);
+  Type *Int32Ty    = Type::getInt32Ty(C);
+  Type *Int64Ty    = Type::getInt64Ty(C);
+  Type *Int32PtrTy = Type::getInt32PtrTy(C);
+  Type *VoidPtrTy  = PointerType::getInt8PtrTy(C);
+
   //====================================================================================================
   BasicBlock * unwindPathEntry = BasicBlock::Create(C, "unwind.path.entry", &F);
   B.SetInsertPoint(unwindPathEntry);
@@ -3007,13 +2903,13 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   // Variable needed to pass information between frame
   // TODO: Should be a part of a thread-structure and can be used to pass information between child and parent
   // The amount of stack unwinded: Can be pass through register
-  GlobalVariable* gUnwindStackCnt = GetGlobalVariable("unwindStackCnt", TypeBuilder<int, false>::get(C), *M, true);
+  GlobalVariable* gUnwindStackCnt = GetGlobalVariable("unwindStackCnt", Int32Ty, *M, true);
   // The thread id
-  GlobalVariable* gThreadId = GetGlobalVariable("threadId", TypeBuilder<int, false>::get(C), *M, true);
+  GlobalVariable* gThreadId = GetGlobalVariable("threadId", Int32Ty, *M, true);
   // Store the original return address (this can be pass through register)
-  GlobalVariable* gPrevRa = GetGlobalVariable("prevRa", TypeBuilder<int64_t, false>::get(C), *M, true);
+  GlobalVariable* gPrevRa = GetGlobalVariable("prevRa", Int64Ty, *M, true);
   // Store the original return address (this can be pass through register)
-  GlobalVariable* gPrevSp = GetGlobalVariable("prevRa", TypeBuilder<int64_t, false>::get(C), *M, true);
+  GlobalVariable* gPrevSp = GetGlobalVariable("prevRa", Int64Ty, *M, true);
   // Get the work ctx array : Should be global (persist)
   GlobalVariable* gWorkContext = GetGlobalVariable("workctx_arr",
                                                    workcontext_ty->getPointerTo()->getPointerTo(), *M);
@@ -3023,17 +2919,17 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   // Save the context in a temporary variable: Can be pass through register
   GlobalVariable* gTmpContext = GetGlobalVariable("tmpCtx", workcontext_ty, *M, true);
   // Get the pointer to the unwind path entry
-  GlobalVariable* gSeedSp = GetGlobalVariable("seed_ptr", TypeBuilder<addr_ty*, false>::get(C), *M, true);
+  GlobalVariable* gSeedSp = GetGlobalVariable("seed_ptr", VoidPtrTy->getPointerTo(), *M, true);
   // Get the pointer to the pointer (persist through out unwinding): Should be global (persist)
-  GlobalVariable* gBot = GetGlobalVariable("bot", TypeBuilder<int, false>::get(C), *M, true);
+  GlobalVariable* gBot = GetGlobalVariable("bot", Int32Ty, *M, true);
   // Get the global variable for the pointer
-  GlobalVariable* gUnwindStack = GetGlobalVariable("unwindStack", TypeBuilder<void*, false>::get(C), *M, true);
+  GlobalVariable* gUnwindStack = GetGlobalVariable("unwindStack", VoidPtrTy, *M, true);
   //
   //====================================================================================================
   // Function Needed
-  Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
-  Function* setSP = Intrinsic::getDeclaration(M, Intrinsic::x86_write_sp);
-  Function* getFrameSize = Intrinsic::getDeclaration(M, Intrinsic::x86_get_frame_size);
+  Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::read_sp);
+  Function* setSP = Intrinsic::getDeclaration(M, Intrinsic::write_sp);
+  Function* getFrameSize = Intrinsic::getDeclaration(M, Intrinsic::get_frame_size);
 
   // Constant
   Value* ONE = B.getInt32(1);
@@ -3041,36 +2937,31 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   Value* ZERO64 = B.getInt64(0);
   Value* ONEBYTE = ConstantInt::get(IntegerType::getInt64Ty(C), 8, false);
   Value* NULL8 = ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
-  Type* Int32Ty = TypeBuilder<int32_t, false>::get(C);
 
-  Constant* MYSETJMP_CALLEE = UNWINDRTS_FUNC(mysetjmp_callee, *M);
-  Constant* MYLONGJMP_CALLEE = UNWINDRTS_FUNC(mylongjmp_callee, *M);
   //====================================================================================================
   // Save the context at a temporary variable
 
-  Value* gPTmpContext = B.CreateConstInBoundsGEP2_64(gTmpContext, 0, 0 ); //void**
+  Value* gPTmpContext = B.CreateConstInBoundsGEP2_64(VoidPtrTy->getPointerTo(), gTmpContext, 0, 0 ); //void**
   if(EnableSaveRestoreCtx) {
     auto donothingFcn = Intrinsic::getDeclaration(M, Intrinsic::donothing);
-    auto saveContext = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_save_callee);
+    auto saveContext = Intrinsic::getDeclaration(M, Intrinsic::uli_save_callee);
     //saveContext->addFnAttr(Attribute::Forkable);
     auto res = B.CreateCall(saveContext, {B.CreateBitCast(gPTmpContext, IntegerType::getInt8Ty(C)->getPointerTo()), NULL8});
     res->setTailCall(true);
   } else {
-    Value* result = B.CreateCall(MYSETJMP_CALLEE, {gPTmpContext});
-    llvm::InlineFunctionInfo ifi;
-    llvm::InlineFunction(dyn_cast<CallInst>(result), ifi, nullptr, true);
+    assert(0 && "Should not be here");
   }
 
   // TODO: How does this interact with stacklet
 
   // Get the SP and BP to get my return address
-  Value * gThreadIdVal = B.CreateAlignedLoad(gThreadId, 4);
-  Value * gUnwindStackCntVal = B.CreateLoad(gUnwindStackCnt);
+  Value * gThreadIdVal = B.CreateAlignedLoad(Int32Ty, gThreadId, Align(4));
+  Value * gUnwindStackCntVal = B.CreateLoad(Int32Ty, gUnwindStackCnt);
 
   // The child original return address
-  Value * gPrevRaVal = B.CreateLoad(gPrevRa);
+  Value * gPrevRaVal = B.CreateLoad(Int64Ty, gPrevRa);
 
-  auto childAddrOfRA = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_child_addressofreturnaddress);
+  auto childAddrOfRA = Intrinsic::getDeclaration(M, Intrinsic::uli_child_addressofreturnaddress);
   Value* pChildRA = B.CreateCall(childAddrOfRA);
   pChildRA = B.CreateBitCast(pChildRA, IntegerType::getInt8Ty(C)->getPointerTo()->getPointerTo());
 
@@ -3097,19 +2988,19 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 
     Value* haveBeenUnwind = nullptr;
     if(bHaveFork) {
-      Value* bHaveUnwind = B.CreateLoad(bHaveUnwindAlloc, 1);
+      Value* bHaveUnwind = B.CreateLoad(Int1Ty, bHaveUnwindAlloc, 1);
       haveBeenUnwind = B.CreateICmpEQ(bHaveUnwind, B.getInt1(1));
     } else {
       haveBeenUnwind = B.CreateICmpEQ(B.getInt1(0), B.getInt1(1));
     }
     //xchg unwind_stack, rsp
 #ifndef STICK_STACKXCGH_FUNC
-    Value* unwindStack = B.CreateLoad(gUnwindStack);
+    Value* unwindStack = B.CreateLoad(Int32Ty, gUnwindStack);
     Value* mySP = B.CreateCall(getSP);
     B.CreateStore(mySP, gPrevSp);
-    using AsmTypeCallee = void (void*);
-    FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
-    Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+    //using AsmTypeCallee = void (void*);
+    FunctionType *FAsmTypeCallee = FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C)}, false);
+    InlineAsm* Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     B.CreateCall(Asm, {unwindStack});
 #endif
 
@@ -3148,9 +3039,9 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 
     // Get workctx[threadId]
     // gWorkContext void** * * *
-    Value * gWorkContextVal = B.CreateLoad(gWorkContext); //void*[WORKCTX_SIZE] * *
-    Value * gWorkContextValPerThread = B.CreateInBoundsGEP(gWorkContextVal, gThreadIdVal); // workctx[threadId] void*[WORKCTX_SIZE] **
-    Value * gWorkContextValPerThreadVal = B.CreateLoad(gWorkContextValPerThread); //void*[WORKCTX_SIZE] *
+    Value * gWorkContextVal = B.CreateLoad(workcontext_ty->getPointerTo()->getPointerTo(), gWorkContext); //void*[WORKCTX_SIZE] * *
+    Value * gWorkContextValPerThread = B.CreateInBoundsGEP(workcontext_ty->getPointerTo(), gWorkContextVal, gThreadIdVal); // workctx[threadId] void*[WORKCTX_SIZE] **
+    Value * gWorkContextValPerThreadVal = B.CreateLoad(workcontext_ty->getPointerTo(), gWorkContextValPerThread); //void*[WORKCTX_SIZE] *
 
     BasicBlock * nextBlock = jumpTableBB;
 
@@ -3198,7 +3089,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 
       // Update context for particular stack
       // *(&bot)
-      Value* botVal = B.CreateLoad(gBot);
+      Value* botVal = B.CreateLoad(Int32Ty, gBot);
 
       // 1. Move the callee saved register
       // 2. Set the rip
@@ -3208,72 +3099,72 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
       // Use below to convert void[64]* to void**
       //B.CreateConstInBoundsGEP2_64(gTmpContext, 0, 0 ); //void**
 
-      Value* gWorkContextValPerThreadPerBot = B.CreateInBoundsGEP(gWorkContextValPerThreadVal, botVal);
-      Value* gWorkContextPtr = B.CreateConstInBoundsGEP2_64(gWorkContextValPerThreadPerBot, 0, 0 ); //void**
+      Value* gWorkContextValPerThreadPerBot = B.CreateInBoundsGEP(workcontext_ty, gWorkContextValPerThreadVal, botVal);
+      Value* gWorkContextPtr = B.CreateConstInBoundsGEP2_64(VoidPtrTy->getPointerTo(), gWorkContextValPerThreadPerBot, 0, 0 ); //void**
 
       // Savee the callee register
 #ifdef OPTIMIZE_UNWIND
-      Value* tmpRBP = B.CreateConstGEP1_32(gPTmpContext, I_RBP);
-      Value* tmpRSP = B.CreateConstGEP1_32(gPTmpContext, I_RSP);
-      Value* tmpR11 = B.CreateConstGEP1_32(gPTmpContext, I_R11);
-      Value* tmpRBX = B.CreateConstGEP1_32(gPTmpContext, I_RBX);
-      Value* tmpR12 = B.CreateConstGEP1_32(gPTmpContext, I_R12);
-      Value* tmpR13 = B.CreateConstGEP1_32(gPTmpContext, I_R13);
-      Value* tmpR14 = B.CreateConstGEP1_32(gPTmpContext, I_R14);
-      Value* tmpR15 = B.CreateConstGEP1_32(gPTmpContext, I_R15);
+      Value* tmpRBP = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_RBP);
+      Value* tmpRSP = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_RSP);
+      Value* tmpR11 = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_R11);
+      Value* tmpRBX = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_RBX);
+      Value* tmpR12 = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_R12);
+      Value* tmpR13 = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_R13);
+      Value* tmpR14 = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_R14);
+      Value* tmpR15 = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_R15);
 
-      Value* savedRBP = B.CreateConstGEP1_32(gWorkContextPtr, I_RBP);
-      Value* savedRSP = B.CreateConstGEP1_32(gWorkContextPtr, I_RSP);
-      Value* savedR11 = B.CreateConstGEP1_32(gWorkContextPtr, I_R11);
-      Value* savedRBX = B.CreateConstGEP1_32(gWorkContextPtr, I_RBX);
-      Value* savedR12 = B.CreateConstGEP1_32(gWorkContextPtr, I_R12);
-      Value* savedR13 = B.CreateConstGEP1_32(gWorkContextPtr, I_R13);
-      Value* savedR14 = B.CreateConstGEP1_32(gWorkContextPtr, I_R14);
-      Value* savedR15 = B.CreateConstGEP1_32(gWorkContextPtr, I_R15);
+      Value* savedRBP = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_RBP);
+      Value* savedRSP = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_RSP);
+      Value* savedR11 = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_R11);
+      Value* savedRBX = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_RBX);
+      Value* savedR12 = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_R12);
+      Value* savedR13 = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_R13);
+      Value* savedR14 = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_R14);
+      Value* savedR15 = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_R15);
 
-      B.CreateStore(B.CreateLoad(tmpRBP), savedRBP);
-      B.CreateStore(B.CreateLoad(tmpRSP), savedRSP);
-      B.CreateStore(B.CreateLoad(tmpR11), savedR11);
-      B.CreateStore(B.CreateLoad(tmpRBX), savedRBX);
-      B.CreateStore(B.CreateLoad(tmpR12), savedR12);
-      B.CreateStore(B.CreateLoad(tmpR13), savedR13);
-      B.CreateStore(B.CreateLoad(tmpR14), savedR14);
-      B.CreateStore(B.CreateLoad(tmpR15), savedR15);
+      B.CreateStore(B.CreateLoad(VoidPtrTy, tmpRBP), savedRBP);
+      B.CreateStore(B.CreateLoad(VoidPtrTy, tmpRSP), savedRSP);
+      B.CreateStore(B.CreateLoad(VoidPtrTy, tmpR11), savedR11);
+      B.CreateStore(B.CreateLoad(VoidPtrTy, tmpRBX), savedRBX);
+      B.CreateStore(B.CreateLoad(VoidPtrTy, tmpR12), savedR12);
+      B.CreateStore(B.CreateLoad(VoidPtrTy, tmpR13), savedR13);
+      B.CreateStore(B.CreateLoad(VoidPtrTy, tmpR14), savedR14);
+      B.CreateStore(B.CreateLoad(VoidPtrTy, tmpR15), savedR15);
 
 #ifdef OPTIMIZE_UNWIND_FUNC
       // Call a function to update parallel context (ip, join counter, owner of work, location, locRef
 #ifdef STICK_STACKXCGH_FUNC
-    Value* unwindStack = B.CreateLoad(gUnwindStack);
+    Value* unwindStack = B.CreateLoad(Int32Ty, gUnwindStack);
     Value* mySP = B.CreateCall(getSP);
     B.CreateStore(mySP, gPrevSp);
 #ifdef OPTIMIZE_FP
     auto unwindStackInt = B.CreateCast(Instruction::PtrToInt, unwindStack, IntegerType::getInt64Ty(C));
     B.CreateCall(setSP, {unwindStackInt});
 #else
-    using AsmTypeCallee = void (void*);
-    FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
-    Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+    //using AsmTypeCallee = void (void*);
+    FunctionType *FAsmTypeCallee = FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C)}, false);
+    InlineAsm* Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     B.CreateCall(Asm, {unwindStack});
 #endif
 #endif
     Value* locAllocAsPointer = B.CreateBitCast(locAlloc, IntegerType::getInt8Ty(C)->getPointerTo());
-    Constant* initialize_parallel_ctx = Get_initialize_parallel_ctx(*M);
+    FunctionCallee initialize_parallel_ctx = Get_initialize_parallel_ctx(*M);
     B.CreateCall(initialize_parallel_ctx, {gWorkContextPtr, BlockAddress::get(actualDetachBB, STEALENTRY_INDEX), locAllocAsPointer});
 #ifdef STICK_STACKXCGH_FUNC
-    Value* prevSP = B.CreateLoad(gPrevSp);
+    Value* prevSP = B.CreateLoad(Int64Ty, gPrevSp);
 #ifdef OPTIMIZE_FP
     B.CreateCall(setSP, {prevSP});
 #else
     using AsmTypeCallee2 = void (long);
-    FunctionType *FAsmTypeCallee2 = TypeBuilder<AsmTypeCallee2, false>::get(C);
-    Value *Asm2 = InlineAsm::get(FAsmTypeCallee2, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+    FunctionType *FAsmTypeCallee2 = FunctionType::get(Type::getVoidTy(C), {Type::getInt64Ty(C)}, false);
+    InlineAsm* Asm2 = InlineAsm::get(FAsmTypeCallee2, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     B.CreateCall(Asm2, {prevSP});
 #endif
 #endif
 
 #else
       // Store the address of the slow path entry into the temporary context
-      Value* savedPc = B.CreateConstGEP1_32(gWorkContextPtr, I_RIP); //void** (no loading involved)
+    Value* savedPc = B.CreateConstGEP1_32(VoidPtrTy->getPointerTo(), gWorkContextPtr, I_RIP); //void** (no loading involved)
 
       // workctx[I_RIP] = slow_path_entry;
       if(EnableMultiRetIR)
@@ -3284,25 +3175,25 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
       // Set join counter to 2
       // workctx[joinctr] = (void*) 2;
       Value* twoAsPointer = B.CreateCast(Instruction::IntToPtr, B.getInt32(2), IntegerType::getInt8Ty(C)->getPointerTo());
-      Value* joinCtr = B.CreateConstGEP1_32(gWorkContextPtr, I_JOINCNT); //void** (no loading involved)
+      Value* joinCtr = B.CreateConstGEP1_32(VoidPtrTy->getPointerTo(), gWorkContextPtr, I_JOINCNT); //void** (no loading involved)
       B.CreateStore(twoAsPointer, joinCtr);
 
       // Set the owner of the work
       // workctx[owner] = (void*) threadId;
       Value* threadIdAsPointer = B.CreateCast(Instruction::IntToPtr, gThreadIdVal, IntegerType::getInt8Ty(C)->getPointerTo());
-      Value* ownerRef = B.CreateConstGEP1_32(gWorkContextPtr, I_OWNER); //void** (no loading involved)
+      Value* ownerRef = B.CreateConstGEP1_32(VoidPtrTy->getPointerTo(), gWorkContextPtr, I_OWNER); //void** (no loading involved)
       B.CreateStore(threadIdAsPointer, ownerRef);
 
       // Set the location of the work
       // workctx[loc] = (void*) bot;
       Value* botAsPointer = B.CreateCast(Instruction::IntToPtr, botVal, IntegerType::getInt8Ty(C)->getPointerTo());
-      Value* locRef = B.CreateConstGEP1_32(gWorkContextPtr, I_LOC); //void** (no loading involved)
+      Value* locRef = B.CreateConstGEP1_32(VoidPtrTy->getPointerTo(), gWorkContextPtr, I_LOC); //void** (no loading involved)
       B.CreateStore(botAsPointer, locRef);
 
       // Set the address of the location
       // workctx[addrloc] = (void*) (&loc);
       Value* locAllocAsPointer = B.CreateBitCast(locAlloc, IntegerType::getInt8Ty(C)->getPointerTo());
-      Value* locAllocRef = B.CreateConstGEP1_32(gWorkContextPtr, I_ADDRLOC); //void** (no loading involved)
+      Value* locAllocRef = B.CreateConstGEP1_32(VoidPtrTy->getPointerTo(), gWorkContextPtr, I_ADDRLOC); //void** (no loading involved)
       B.CreateStore(locAllocAsPointer, locAllocRef);
 
 #endif
@@ -3315,7 +3206,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 #else
 
       // Store the address of the slow path entry into the temporary context
-      Value* savedPc = B.CreateConstGEP1_32(gPTmpContext, I_RIP); //void** (no loading involved)
+      Value* savedPc = B.CreateConstGEP1_32(VoidPtrTy->getPointerTo(), gPTmpContext, I_RIP); //void** (no loading involved)
 
       if(EnableMultiRetIR)
         B.CreateStore(BlockAddress::get(actualDetachBB, STEALENTRY_INDEX), savedPc);
@@ -3326,20 +3217,20 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
       // workctx[joinctr] = (void*) 2;
       Value* twoAsPointer = B.CreateCast(Instruction::IntToPtr, B.getInt32(2), IntegerType::getInt8Ty(C)->getPointerTo());
 
-      Value* joinCtr = B.CreateConstGEP1_32(gPTmpContext, I_JOINCNT); //void** (no loading involved)
+      Value* joinCtr = B.CreateConstGEP1_32(VoidPtrTy->getPointerTo(), gPTmpContext, I_JOINCNT); //void** (no loading involved)
       B.CreateStore(twoAsPointer, joinCtr);
 
       // Set the owner of the work
       // workctx[owner] = (void*) threadId;
       Value* threadIdAsPointer = B.CreateCast(Instruction::IntToPtr, gThreadIdVal, IntegerType::getInt8Ty(C)->getPointerTo());
 
-      Value* ownerRef = B.CreateConstGEP1_32(gPTmpContext, I_OWNER); //void** (no loading involved)
+      Value* ownerRef = B.CreateConstGEP1_32(VoidPtrTy->getPointerTo(), gPTmpContext, I_OWNER); //void** (no loading involved)
       B.CreateStore(threadIdAsPointer, ownerRef);
 
       // Set the location of the work
       // workctx[loc] = (void*) bot;
       Value* botAsPointer = B.CreateCast(Instruction::IntToPtr, botVal, IntegerType::getInt8Ty(C)->getPointerTo());
-      Value* locRef = B.CreateConstGEP1_32(gPTmpContext, I_LOC); //void** (no loading involved)
+      Value* locRef = B.CreateConstGEP1_32(VoidPtrTy->getPointerTo(), gPTmpContext, I_LOC); //void** (no loading involved)
 
       B.CreateStore(botAsPointer, locRef);
       // Store in memory
@@ -3351,7 +3242,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
       // workctx[addrloc] = (void*) (&loc);
       Value* locAllocAsPointer = B.CreateBitCast(locAlloc, IntegerType::getInt8Ty(C)->getPointerTo());
 
-      Value* locAllocRef = B.CreateConstGEP1_32(gPTmpContext, I_ADDRLOC); //void** (no loading involved)
+      Value* locAllocRef = B.CreateConstGEP1_32(VoidPtrTy->getPointerTo(), gPTmpContext, I_ADDRLOC); //void** (no loading involved)
 
       B.CreateStore(locAllocAsPointer, locAllocRef);
 
@@ -3359,7 +3250,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
       // Store work
       // Save the tmpCtx into the workCtx[threadId][bot]
       //Value * gWorkContextValPerThreadPerBot = B.CreateInBoundsGEP(gWorkContextValPerThreadVal, botVal);
-      Value* gTmpContextVal = B.CreateLoad(gTmpContext);
+      Value* gTmpContextVal = B.CreateLoad(workcontext_ty, gTmpContext);
       B.CreateStore(gTmpContextVal ,gWorkContextValPerThreadPerBot);
 #endif
 
@@ -3417,7 +3308,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   if(DisablePushPopSeed) {
     // Get the unwind path entry based on return address
 #ifdef STICK_STACKXCGH_FUNC
-    Value* unwindStack = B.CreateLoad(gUnwindStack);
+    Value* unwindStack = B.CreateLoad(Int32Ty, gUnwindStack);
     Value* mySP = B.CreateCall(getSP);
     B.CreateStore(mySP, gPrevSp);
 #ifdef OPTIMIZE_FP
@@ -3425,42 +3316,29 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     B.CreateCall(setSP, {unwindStackInt});
 #else
     using AsmTypeCallee = void (void*);
-    FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
-    Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+    FunctionType *FAsmTypeCallee = FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C)}, false);
+    InlineAsm* Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     B.CreateCall(Asm, {unwindStack});
 #endif
 #endif
-    Constant* queryUnwindAddr = UNWINDRTS_FUNC(unwind_queryunwindaddress, *M);
-    auto loadRA = B.CreateLoad(myRA); // myRA: int64*, loadRA: int64
+    FunctionCallee queryUnwindAddr = UNWINDRTS_FUNC(unwind_queryunwindaddress, *M);
+    auto loadRA = B.CreateLoad(Int64Ty, myRA); // myRA: int64*, loadRA: int64
     unwindAddrRes = B.CreateCall(queryUnwindAddr, {loadRA});
     unwindEntryVal = B.CreateZExt(unwindAddrRes, IntegerType::getInt64Ty(C));
 #ifdef STICK_STACKXCGH_FUNC
-    Value* prevSP = B.CreateLoad(gPrevSp);
+    Value* prevSP = B.CreateLoad(Int64Ty, gPrevSp);
 #ifdef OPTIMIZE_FP
     B.CreateCall(setSP, {prevSP});
 #else
     using AsmTypeCallee2 = void (long);
-    FunctionType *FAsmTypeCallee2 = TypeBuilder<AsmTypeCallee2, false>::get(C);
-    Value *Asm2 = InlineAsm::get(FAsmTypeCallee2, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+    FunctionType *FAsmTypeCallee2 = FunctionType::get(Type::getVoidTy(C), {Type::getInt64Ty(C)}, false);
+    InlineAsm* Asm2 = InlineAsm::get(FAsmTypeCallee2, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     B.CreateCall(Asm2, {prevSP});
 #endif
 #endif
 
   } else {
-    // Get the unwind entry
-    Value* gSeedSpVal = B.CreateLoad(gSeedSp); //void **
-    // seed_sp--
-    Value* gSeedSpValInt =  B.CreateCast(Instruction::PtrToInt, gSeedSpVal, IntegerType::getInt64Ty(C));
-    gSeedSpValInt = B.CreateSub(gSeedSpValInt, ONEBYTE);
-    Value* gSeedSpVal2 = B.CreateCast(Instruction::IntToPtr, gSeedSpValInt, IntegerType::getInt8Ty(C)->getPointerTo()->getPointerTo());
-    B.CreateStore(gSeedSpVal2, gSeedSp);
-    // Get the entry
-    unwindEntryVal = B.CreateLoad(gSeedSpVal); //void*
-    // Set the value to zero
-    B.CreateStore(NULL8, gSeedSpVal);
-
-    unwindEntryVal = B.CreateCast(Instruction::PtrToInt, unwindEntryVal, IntegerType::getInt64Ty(C));
-
+    assert(0 && "Should not be here");
   }
   //====================================================================================================
   // if (*p_parent_unwind == 0)
@@ -3471,23 +3349,18 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     B.SetInsertPoint(resumeInterruptedBB);
 
     //B.CreateStore(ZERO, gUnwindStackCnt);
-    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(gUnwindContext, 0, 0 );
+    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(VoidPtrTy->getPointerTo()->getPointerTo(), gUnwindContext, 0, 0 );
 
     if(EnableSaveRestoreCtx) {
       //auto restoreCallee = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_restore_callee);
       //B.CreateCall(restoreCallee, {B.CreateBitCast(gPTmpContext, IntegerType::getInt8Ty(C)->getPointerTo())});
 
-      auto restoreContext = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_restore_context);
+      auto restoreContext = Intrinsic::getDeclaration(M, Intrinsic::uli_restore_context);
       //restoreContext->addFnAttr(Attribute::Forkable);
       CallInst* result = B.CreateCall(restoreContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(C)->getPointerTo())});
       //result->setTailCall(true);
     } else {
-      Value *result = B.CreateCall(MYLONGJMP_CALLEE, {gunwind_ctx});
-      dyn_cast<CallInst>(result)->setCallingConv(CallingConv::Fast);
-
-      // FIXME : should be inlined
-      llvm::InlineFunctionInfo ifi;
-      llvm::InlineFunction(dyn_cast<CallInst>(result), ifi, nullptr, true);
+      assert(0 && "Should not entered here");
     }
     B.CreateUnreachable();
   }
@@ -3497,20 +3370,20 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 
     // Switch stack
 #ifndef STICK_STACKXCGH_FUNC
-    Value* prevSP = B.CreateLoad(gPrevSp);
+    Value* prevSP = B.CreateLoad(Int64Ty, gPrevSp);
     using AsmTypeCallee = void (long);
-    FunctionType *FAsmTypeCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
-    Value *Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+    FunctionType *FAsmTypeCallee = FunctionType::get(Type::getVoidTy(C), {Type::getInt64Ty(C)}, false);
+    InlineAsm* Asm = InlineAsm::get(FAsmTypeCallee, "movq $0, %rsp\n", "r,~{rsp},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     B.CreateCall(Asm, {prevSP});
 #endif
 
     // Change the gPrevRa to my return address
-    B.CreateStore(B.CreateLoad(myRA), gPrevRa);
+    B.CreateStore(B.CreateLoad(Int64Ty, myRA), gPrevRa);
     // Change my return address to unwnd entry
     B.CreateStore(unwindEntryVal, myRA);
 
     // Restore back the calleee
-    auto restoreCallee = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_restore_callee);
+    auto restoreCallee = Intrinsic::getDeclaration(M, Intrinsic::uli_restore_callee);
     B.CreateCall(restoreCallee, {B.CreateBitCast(gPTmpContext, IntegerType::getInt8Ty(C)->getPointerTo())});
 
     // Restore rsp to get proper stack (if there is only dynamic alloca)
@@ -3519,7 +3392,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 #else
     if(true) {
 #endif
-      Function *SetupRSPfromRBP = Intrinsic::getDeclaration(M, Intrinsic::x86_setup_rsp_from_rbp);
+      Function *SetupRSPfromRBP = Intrinsic::getDeclaration(M, Intrinsic::setup_rsp_from_rbp);
       B.CreateCall(SetupRSPfromRBP);
     }
     // return 0; or anything empty
@@ -3534,7 +3407,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     else if (F.getReturnType()->isStructTy()) {
       auto stType = dyn_cast<StructType>(F.getReturnType());
       Value* returnST = B.CreateAlloca(stType, DL.getAllocaAddrSpace(), nullptr, "returnStType");
-      Value* returnLoadSt = B.CreateLoad(returnST);
+      Value* returnLoadSt = B.CreateLoad(stType, returnST);
 #if 0
       for(auto elem: stType->elements()){
         if(isa<StructType>(elem)) {
@@ -3548,12 +3421,12 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     } else if (F.getReturnType()->isArrayTy()) {
       auto atType = dyn_cast<ArrayType>(F.getReturnType());
       Value* returnAT = B.CreateAlloca(atType, DL.getAllocaAddrSpace(), nullptr, "returnAtType");
-      Value* returnLoadAt = B.CreateLoad(returnAT);
+      Value* returnLoadAt = B.CreateLoad(atType, returnAT);
       B.CreateRet(returnLoadAt);
     } else if (F.getReturnType()->isVectorTy()) {
       auto vtType = dyn_cast<VectorType>(F.getReturnType());
       Value* returnVT = B.CreateAlloca(vtType, DL.getAllocaAddrSpace(), nullptr, "returnVtType");
-      Value* returnLoadVt = B.CreateLoad(returnVT);
+      Value* returnLoadVt = B.CreateLoad(vtType, returnVT);
       B.CreateRet(returnLoadVt);
     } else {
       errs() << "Have not supported " << *F.getReturnType() << " yet\n";
@@ -3652,8 +3525,8 @@ BasicBlock * LazyDTransPass::createGotStolenHandlerBB(DetachInst& Detach, BasicB
   LLVMContext& C = F->getContext();
 
   Instruction * spawnCI = nullptr;
-  Constant* suspend2scheduler = Get_suspend2scheduler(*M);
-  Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
+  FunctionCallee suspend2scheduler = Get_suspend2scheduler(*M);
+  Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::uli_potential_jump);
 
   BasicBlock * detachBB = Detach.getDetached();
 
@@ -3664,6 +3537,8 @@ BasicBlock * LazyDTransPass::createGotStolenHandlerBB(DetachInst& Detach, BasicB
   IRBuilder<> builder(C);
   SmallVector<Instruction*, 4> workList;
   Instruction * startOfclone = nullptr;
+
+  Type* Int32Ty = IntegerType::getInt32Ty(C);
 
   // Add potential jump from detachBB to got stolen handler
   // Add potential jump after "spawn to fib" to avoid merging the gotstolen handler and the detachBlock
@@ -3694,7 +3569,7 @@ BasicBlock * LazyDTransPass::createGotStolenHandlerBB(DetachInst& Detach, BasicB
         CallInst* CI = dyn_cast<CallInst>(&II);
         Function* fcn = CI->getCalledFunction();
 
-        if (fcn->getIntrinsicID() != Intrinsic::x86_uli_potential_jump) {
+        if (fcn->getIntrinsicID() != Intrinsic::uli_potential_jump) {
           // Get pointer for instruction that needs cloning
           startOfclone = II.getNextNode()->getNextNode();
           // Get next node
@@ -3715,8 +3590,8 @@ BasicBlock * LazyDTransPass::createGotStolenHandlerBB(DetachInst& Detach, BasicB
 
   builder.SetInsertPoint(stolenHandlerPathEntry);
   // Write the content of stolenHandlerEntry
-  Value * locVal = builder.CreateLoad(locAlloc, 1, "locVal");
-  Value * ownerVal = builder.CreateLoad(ownerAlloc, 1, "ownerVal");
+  Value * locVal = builder.CreateLoad(Int32Ty, locAlloc, 1, "locVal");
+  Value * ownerVal = builder.CreateLoad(Int32Ty, ownerAlloc, 1, "ownerVal");
   Instruction * insertInst = builder.CreateCall(suspend2scheduler, {locVal, ownerVal, builder.getInt32(0)});
   dyn_cast<CallInst>(insertInst)->setTailCall(false);
 
@@ -3795,24 +3670,6 @@ BasicBlock * LazyDTransPass::createGotStolenHandlerBB(DetachInst& Detach, BasicB
   return stolenHandlerPathEntry;
 }
 
-void LazyDTransPass::instrumentPushPop(Function& F, SmallVector<BasicBlock*, 8>& bb2clones) {
-  Module* M = F.getParent();
-  LLVMContext& C = M->getContext();
-  IRBuilder<> B(C);
-  Constant* push_ss  = Get_push_ss(*M);
-  Constant* pop_ss = Get_pop_ss(*M);
-
-  if(!DisablePushPopSeed) {
-    for (auto pBB : bb2clones){
-      Instruction * termInst = pBB->getTerminator();
-      if(isa<ReturnInst>(termInst) ){
-        B.SetInsertPoint(termInst);
-        B.CreateCall(pop_ss);
-      }
-    }
-  }
-}
-
 void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder,
                         Value* locAlloc, Value* ownerAlloc, Value* bHaveUnwindAlloc, Value* fromSlowPathAlloc, SmallVector<SyncInst*, 8>& syncInsts, ValueToValueMapTy&  VMapSlowPath,
                         DenseMap<DetachInst *, SmallPtrSet<BasicBlock*, 8>>& RDIBB,
@@ -3821,6 +3678,9 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
   Module* M = F.getParent();
   LLVMContext& C = M->getContext();
   IRBuilder<> B(C);
+
+  Type *VoidPtrTy  = PointerType::getInt8PtrTy(C);
+  Type* Int32Ty = IntegerType::getInt32Ty(C);
 
   SmallVector<DetachInst*, 4> bbOrder;
   bbOrder.append(seqOrder.begin(), seqOrder.end());
@@ -3872,15 +3732,15 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
 
     // Get the workctx
 #if 0
-    Constant* GetStackletCtxFcnCall = Get_get_stacklet_ctx(*M);
+    FunctionCallee GetStackletCtxFcnCall = Get_get_stacklet_ctx(*M);
     Value* workCtx = B.CreateCall(GetStackletCtxFcnCall);
 #else
-    Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
+    Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::read_sp);
     Value* mySP = B.CreateCall(getSP);
     mySP = B.CreateCast(Instruction::IntToPtr, mySP, IntegerType::getInt8Ty(C)->getPointerTo());
 
-    Constant* GetWorkCtxFcnCall = Get_get_workcontext_locowner(*M);
-    Value* workCtx = B.CreateCall(GetWorkCtxFcnCall, {B.CreateLoad(locAlloc, 1, "locVal"), B.CreateLoad(ownerAlloc, 1, "ownerVal"), mySP});
+    FunctionCallee GetWorkCtxFcnCall = Get_get_workcontext_locowner(*M);
+    Value* workCtx = B.CreateCall(GetWorkCtxFcnCall, {B.CreateLoad(Int32Ty, locAlloc, 1, "locVal"), B.CreateLoad(Int32Ty, ownerAlloc, 1, "ownerVal"), mySP});
 #endif
 
     //workCtx = SSAUpdateWorkContext.GetValueAtEndOfBlock (pBBSlowPath);
@@ -3901,7 +3761,7 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
     if(EnableSaveRestoreCtx){
       Value* NULL8 = ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
       auto donothingFcn = Intrinsic::getDeclaration(M, Intrinsic::donothing);
-      auto saveContextNoSP = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_save_context_nosp);
+      auto saveContextNoSP = Intrinsic::getDeclaration(M, Intrinsic::uli_save_context_nosp);
       //B.CreateCall(saveContextNoSP, {B.CreateBitCast(workCtx, IntegerType::getInt8Ty(C)->getPointerTo()), BlockAddress::get(continueSlowPath)});
       //saveContextNoSP->addFnAttr(Attribute::Forkable);
       auto res = B.CreateCall(saveContextNoSP, {B.CreateBitCast(workCtx, IntegerType::getInt8Ty(C)->getPointerTo()), NULL8});
@@ -3909,25 +3769,10 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
       //auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), detachedSlowPath, {multiRetCall->getIndirectDest(0)}, {});
       auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), detachedSlowPath, {continueSlowPath}, {});
       diSlowPath->eraseFromParent();
-
       //B.SetInsertPoint(insertPoint);
       //B.CreateCall(saveContextNoSP, {B.CreateBitCast(workCtx, IntegerType::getInt8Ty(C)->getPointerTo()), BlockAddress::get(pBBSlowPath, 1)});
-
-
     } else {
-      Constant* MYSETJMP_CALLEE_NOSP = UNWINDRTS_FUNC(mysetjmp_callee_nosp, *M);
-      auto setjmp = B.CreateCall(MYSETJMP_CALLEE_NOSP, {(workCtx)});
-
-      if(EnableMultiRetIR) {
-        auto donothingFcn = Intrinsic::getDeclaration(M, Intrinsic::donothing);
-        //B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), detachedSlowPath, {multiRetCall->getIndirectDest(0)}, {});
-        B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), detachedSlowPath, {continueSlowPath}, {});
-        diSlowPath->eraseFromParent();
-      } else {
-        auto isEqZero64 = B.CreateICmpEQ(setjmp, B.getInt32(0));
-        auto branchInst = BranchInst::Create(detachedSlowPath, continueSlowPath, isEqZero64);
-        ReplaceInstWithInst(diSlowPath, branchInst);
-      }
+      assert(0 && "Should not be here");
     }
 
     // Replace reattach with branch (if detach is removed, reattach should also remove, otherwise invariant assume in passes is not met
@@ -3956,12 +3801,12 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
       %11 = call i8** @pop_workctx()
       reattach within %syncreg, label %det.cont14.slowPath
     */
-    Constant* PUSH_WORKCTX = Get_push_workctx(*M);
-    Constant* POP_WORKCTX = Get_pop_workctx(*M);
+    FunctionCallee PUSH_WORKCTX = Get_push_workctx(*M);
+    FunctionCallee POP_WORKCTX = Get_pop_workctx(*M);
     B.SetInsertPoint(detachedSlowPath->getFirstNonPHIOrDbgOrLifetime());
 
     if(EnableSaveRestoreCtx) {
-      Value* savedPc = B.CreateConstGEP1_32(workCtx, 1);
+      Value* savedPc = B.CreateConstGEP1_32(VoidPtrTy, workCtx, 1);
       B.CreateStore(BlockAddress::get(pBBSlowPath, 1), savedPc);
     }
 
@@ -4023,7 +3868,7 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
 #else
     mySP = B.CreateCall(getSP);
     mySP = B.CreateCast(Instruction::IntToPtr, mySP, IntegerType::getInt8Ty(C)->getPointerTo());
-    workCtx = B.CreateCall(GetWorkCtxFcnCall, {B.CreateLoad(locAlloc, 1, "locVal"), B.CreateLoad(ownerAlloc, 1, "ownerVal"), mySP});
+    workCtx = B.CreateCall(GetWorkCtxFcnCall, {B.CreateLoad(Int32Ty, locAlloc, 1, "locVal"), B.CreateLoad(Int32Ty, ownerAlloc, 1, "ownerVal"), mySP});
 #endif
     Function* wrapperFcn = nullptr;
     if(!ci->getCalledFunction()->getReturnType()->isVoidTy())
@@ -4036,16 +3881,17 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
     wrapperFcn->addFnAttr(Attribute::OptimizeNone); // Can cause a ud2 in assembly?
 
 #if 1
-    auto Attrs = wrapperFcn->getAttributes();
-    StringRef ValueStr("true" );
-    Attrs = Attrs.addAttribute(wrapperFcn->getContext(), AttributeList::FunctionIndex,
-                               "no-frame-pointer-elim", ValueStr);
-    wrapperFcn->setAttributes(Attrs);
+    //auto Attrs = wrapperFcn->getAttributes();
+    //StringRef ValueStr("true" );
+    //Attrs = Attrs.addAttribute(wrapperFcn->getContext(), AttributeList::FunctionIndex,
+    //                           "no-frame-pointer-elim", ValueStr);
+    //wrapperFcn->setAttributes(Attrs);
+    wrapperFcn->addFnAttr("no-frame-pointer-elim");
 #endif
 
 
     SmallVector<Value*, 4> args;
-    for(int i = 0; i<ci->getNumArgOperands(); i++){
+    for(int i = 0; i<ci->arg_size(); i++){
       args.push_back(ci->getArgOperand(i));
     }
     args.push_back(workCtx);
@@ -4072,7 +3918,7 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
 #endif
 
 #if 0
-    B.CreateAlignedStore(B.getInt32(1), fromSlowPathAlloc, 4, 1);
+    B.CreateAlignedStore(B.getInt32(1), fromSlowPathAlloc, Align(4), 1);
 #endif
 
     //----------------------------------------------------------------------------------------------------
@@ -4159,19 +4005,19 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
     //B.SetInsertPoint(syncSlowPath);
 
     // Check if we can resume directly
-    Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
+    Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::read_sp);
     Value* mySP = B.CreateCall(getSP);
     mySP = B.CreateCast(Instruction::IntToPtr, mySP, IntegerType::getInt8Ty(C)->getPointerTo());
 
-    Value * locVal = B.CreateLoad(locAlloc, 1, "locVal");
-    Value * ownerVal = B.CreateLoad(ownerAlloc, 1, "ownerVal");
+    Value * locVal = B.CreateLoad(Int32Ty, locAlloc, 1, "locVal");
+    Value * ownerVal = B.CreateLoad(Int32Ty, ownerAlloc, 1, "ownerVal");
 
     // FIXME: Why is not working for cholesky
     //if(EnableUnwindOnce && !DisableUnwindPoll) {
     //B.CreateStore(B.getInt1(0), bHaveUnwindAlloc);
     //}
 
-    Constant* sync_slowpath = Get_sync_slowpath(*M);
+    FunctionCallee sync_slowpath = Get_sync_slowpath(*M);
     auto canResume = B.CreateCall(sync_slowpath, {locVal, ownerVal, mySP});
     auto canResume2 = B.CreateICmpEQ(canResume, B.getInt8(1));
     B.CreateCondBr(canResume2, syncSucc, syncSaveCtxBB);
@@ -4179,9 +4025,9 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
     B.SetInsertPoint(syncSaveCtxBB);
 
     //Value* workCtx = B.CreateCall(GetWorkCtx);
-    Constant* GetWorkCtxFcnCall = Get_get_workcontext(*M);
+    FunctionCallee GetWorkCtxFcnCall = Get_get_workcontext(*M);
     // Get the workctx
-    Constant* GetStackletCtxFcnCall = Get_get_stacklet_ctx(*M);
+    FunctionCallee GetStackletCtxFcnCall = Get_get_stacklet_ctx(*M);
     Value* workCtx = B.CreateCall(GetStackletCtxFcnCall);
 
     //workCtx = SSAUpdateWorkContext.GetValueAtEndOfBlock (syncBBSlowPath);
@@ -4198,7 +4044,7 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
 
     if(EnableSaveRestoreCtx) {
       auto donothingFcn = Intrinsic::getDeclaration(M, Intrinsic::donothing);
-      auto saveContextNoSP = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_save_context_nosp);
+      auto saveContextNoSP = Intrinsic::getDeclaration(M, Intrinsic::uli_save_context_nosp);
       //saveContextNoSP->addFnAttr(Attribute::Forkable);
       CallInst* result = B.CreateCall(saveContextNoSP, {B.CreateBitCast(workCtx2, IntegerType::getInt8Ty(C)->getPointerTo()), NULL8});
       //result->setTailCall(true);
@@ -4221,23 +4067,8 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
         }
       }
 #endif
-
     } else {
-      B.SetInsertPoint(syncSlowPath);
-
-      Constant* MYSETJMP_CALLEE_NOSP = UNWINDRTS_FUNC(mysetjmp_callee_nosp, *M);
-      setjmp = B.CreateCall(MYSETJMP_CALLEE_NOSP, {(workCtx2)});
-
-      if(EnableMultiRetIR) {
-        auto donothingFcn = Intrinsic::getDeclaration(M, Intrinsic::donothing);
-        B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), syncRuntimeBB, {syncSucc}, {});
-        syncSlowPath->eraseFromParent();
-      } else {
-        auto isEqZero64 = B.CreateICmpEQ(setjmp, B.getInt32(0));
-        auto branchInst = BranchInst::Create(syncRuntimeBB, syncSucc, isEqZero64);
-        ReplaceInstWithInst(syncSlowPath, branchInst);
-      }
-
+      assert(0 && "Should not be here");
     }
 
     /*
@@ -4248,22 +4079,22 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
 
     // Create a basic block that performs the synchronization
     B.SetInsertPoint(syncRuntimeBB);
-    Value* savedPc = B.CreateConstGEP1_32(workCtx2, 1); //void** (no loading involved)
+    Value* savedPc = B.CreateConstGEP1_32(VoidPtrTy, workCtx2, 1); //void** (no loading involved)
 
     if(EnableMultiRetIR)
       B.CreateStore(BlockAddress::get(syncSaveCtxBB, 1), savedPc);
     else
       B.CreateStore(BlockAddress::get(syncSucc), savedPc);
 
-    Value* newsp = B.CreateConstGEP1_32(workCtx, 18);
-    newsp = B.CreateLoad(newsp);
+    Value* newsp = B.CreateConstGEP1_32(VoidPtrTy, workCtx, 18);
+    newsp = B.CreateLoad(VoidPtrTy, newsp);
 
     // FIXME: Why is not working for cholesky
     //if(EnableUnwindOnce && !DisableUnwindPoll) {
     //B.CreateStore(B.getInt1(0), bHaveUnwindAlloc);
     //}
 
-    Constant* resume2scheduler = Get_resume2scheduler(*M);
+    FunctionCallee resume2scheduler = Get_resume2scheduler(*M);
     B.CreateCall(resume2scheduler, {workCtx2, newsp});
     B.CreateUnreachable();
     //B.CreateBr(syncSucc);
@@ -4271,7 +4102,7 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
     // Inline the setjmp
     if(setjmp) {
       llvm::InlineFunctionInfo ifi;
-      llvm::InlineFunction(dyn_cast<CallInst>(setjmp), ifi, nullptr, true);
+      llvm::InlineFunction(*setjmp, ifi, nullptr, true);
     }
 #if 1
     /*
@@ -4315,10 +4146,10 @@ void LazyDTransPass::instrumentMainFcn(Function& F) {
   Module* M = F.getParent();
   IRBuilder<> B(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
 
-  Constant* INITWORKERS_ENV = Get_initworkers_env(*M);
-  Constant* DEINITWORKERS_ENV = Get_deinitworkers_env(*M);
-  Constant* INITPERWORKERS_SYNC = Get_initperworkers_sync(*M);
-  Constant* DEINITPERWORKERS_SYNC = Get_deinitperworkers_sync(*M);
+  FunctionCallee INITWORKERS_ENV = Get_initworkers_env(*M);
+  FunctionCallee DEINITWORKERS_ENV = Get_deinitworkers_env(*M);
+  FunctionCallee INITPERWORKERS_SYNC = Get_initperworkers_sync(*M);
+  FunctionCallee DEINITPERWORKERS_SYNC = Get_deinitperworkers_sync(*M);
 
   Value* ONE = B.getInt32(1);
   Value* ZERO = B.getInt32(0);
@@ -4340,15 +4171,7 @@ void LazyDTransPass::instrumentMainFcn(Function& F) {
 // Do some initialization
 bool LazyDTransPass::runInitialization(Module &M) {
   // Create a new function needed for this Module
-  auto * fcn = UNWINDRTS_FUNC(mylongwithoutjmp_callee, M);
-  fcn->addFnAttr(Attribute::NoUnwindPath);
-  fcn = UNWINDRTS_FUNC(mylongjmp_callee, M);
-  fcn->addFnAttr(Attribute::NoUnwindPath);
-  fcn = UNWINDRTS_FUNC(mysetjmp_callee, M);
-  fcn->addFnAttr(Attribute::NoUnwindPath);
-  fcn = UNWINDRTS_FUNC(mysetjmp_callee_nosp, M);
-  fcn->addFnAttr(Attribute::NoUnwindPath);
-  fcn = UNWINDRTS_FUNC(unwind_gnuhash, M);
+  auto * fcn = UNWINDRTS_FUNC(unwind_gnuhash, M);
   fcn->addFnAttr(Attribute::NoUnwindPath);
   fcn = UNWINDRTS_FUNC(unwind_queryunwindaddress, M);
   fcn->addFnAttr(Attribute::NoUnwindPath);
@@ -4621,7 +4444,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   LLVMContext& C = M->getContext();
   const DataLayout &DL = M->getDataLayout();
   // Potential Jump Fcn
-  Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_potential_jump);
+  Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::uli_potential_jump);
   IRBuilder<> B(C);
 
   //===================================================================================================
@@ -4636,22 +4459,27 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     }
   }
 
+  Type *Int64Ty = Type::getInt64Ty(C);
+  Type *Int32Ty = Type::getInt32Ty(C);
+  Type *Int1Ty  = Type::getInt1Ty(C);
+  Type *VoidTy  = Type::getVoidTy(C);
+
   // Location of the work
-  Value* locAlloc = B.CreateAlloca(TypeBuilder<int, false>::get(M->getContext()), DL.getAllocaAddrSpace(), nullptr, "loc");
+  Value* locAlloc = B.CreateAlloca(Int32Ty, DL.getAllocaAddrSpace(), nullptr, "loc");
   Value* insertPoint  = locAlloc;
 
   // Indicate that we arrive at the cont path from the the detach block instead from the runtime
-  Value* fromSlowPathAlloc  = B.CreateAlloca(TypeBuilder<int, false>::get(M->getContext()), DL.getAllocaAddrSpace(), nullptr, "fromSlowPath");
+  Value* fromSlowPathAlloc  = B.CreateAlloca(Int32Ty, DL.getAllocaAddrSpace(), nullptr, "fromSlowPath");
   insertPoint  = fromSlowPathAlloc;
 
   // The owner of the work
-  Value* ownerAlloc = B.CreateAlloca(IntegerType::getInt32Ty(M->getContext()), DL.getAllocaAddrSpace(), nullptr, "owner");
+  Value* ownerAlloc = B.CreateAlloca(Int32Ty, DL.getAllocaAddrSpace(), nullptr, "owner");
   insertPoint = ownerAlloc;
 
   Value* bHaveUnwindAlloc = nullptr;
   if(EnableUnwindOnce) {
     // Create memory to store haveBeenUnwind
-    bHaveUnwindAlloc = B.CreateAlloca(IntegerType::getInt1Ty(M->getContext()), DL.getAllocaAddrSpace(), nullptr, "bHaveUnwind");
+    bHaveUnwindAlloc = B.CreateAlloca(Int1Ty, DL.getAllocaAddrSpace(), nullptr, "bHaveUnwind");
     if (DisableUnwindPoll || !bHaveFork)
       insertPoint = bHaveUnwindAlloc;
     else
@@ -4663,9 +4491,9 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   //if(bHaveFork && !(F.getFnAttribute("poll-at-loop").getValueAsString()=="true") && !bHavePforHelper) {
   if(bHaveFork && !(F.getFnAttribute("poll-at-loop").getValueAsString()=="true")) {
   //if(bHaveFork) {
-    GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(C), 32), *M, true);
+    GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(Int64Ty, 32), *M, true);
     Value* L_ONE = B.getInt64(1);
-    auto workExists = B.CreateConstInBoundsGEP2_64(prequestcell, 0, 1 );
+    auto workExists = B.CreateConstInBoundsGEP2_64(Type::getInt32Ty(C), prequestcell, 0, 1 );
     insertPoint = B.CreateStore(L_ONE, workExists);
   }
 
@@ -4682,9 +4510,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
   // Stores the workcontext value from the slow path entry and will be used to rematerialze the work context in the slowpath
   SSAUpdater SSAUpdateWorkContext;
-
-  // TODO: May not be needed since we use the PreHashTable to get the location of the unwind path
-  instrumentPushPop(F, bb2clones);
 
   // Create the slow path (inserting phi node to capture data from fast path, renaming slow path variable with phi node or fast path variable if needed)
   DenseMap<BasicBlock*, BasicBlock*> syncBB2syncPred;
@@ -4731,8 +4556,8 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
 #if 0
         // Debug purpose
-        Value * locVal = B.CreateLoad(locAlloc, 1, "locVal");
-        Constant* measure_resume_parent = Get_measure_resume_parent(*M);
+        Value * locVal = B.CreateLoad(Int32Ty, locAlloc, 1, "locVal");
+        FunctionCallee measure_resume_parent = Get_measure_resume_parent(*M);
         B.CreateCall(measure_resume_parent, {locVal});
 #endif
 
@@ -4829,11 +4654,11 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
         IRBuilder<> B(C);
         B.SetInsertPoint(syncBB2syncPred[syncSucc]->getFirstNonPHIOrDbgOrLifetime());
         for (auto potAllocaInst : reachingStore) {
-          DEBUG(dbgs() << "PotAllocaInst: " << *potAllocaInst << "\n");
+          LLVM_DEBUG(dbgs() << "PotAllocaInst: " << *potAllocaInst << "\n");
 
           AllocaInst* ai = dyn_cast<AllocaInst>(potAllocaInst);
           if(ai && AllocaSet.find(ai) != AllocaSet.end()) {
-            B.CreateLoad(ai, true);
+            B.CreateLoad(ai->getAllocatedType(), ai, true);
           } else {
             // If the definition uses one of the alloca variable
             unsigned nOp = potAllocaInst->getNumOperands();
@@ -4841,7 +4666,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
               auto opVal = potAllocaInst->getOperand(i);
               AllocaInst* ai2 = dyn_cast<AllocaInst>(opVal);
               if(ai2 && AllocaSet.find(ai2) != AllocaSet.end()) {
-                B.CreateLoad(ai2, true);
+                B.CreateLoad(ai2->getAllocatedType(), ai2, true);
               }
             }
           }
@@ -4966,9 +4791,9 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     for (Function::const_arg_iterator J = F.arg_begin(); J != F.arg_end(); ++J) {
       if(J->hasStructRetAttr()){
         IRBuilder<> B(dyn_cast<Instruction>(insertPoint)->getNextNode());
-        using AsmTypeCallee = void (void);
-        FunctionType *killCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
-        Value *Asm = InlineAsm::get(killCallee, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{rdi},~{rsi},~{r8},~{r9},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+        //using AsmTypeCallee = void (void);
+        FunctionType *killCallee = FunctionType::get(VoidTy, {VoidTy}, false);
+        InlineAsm* Asm = InlineAsm::get(killCallee, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{rdi},~{rsi},~{r8},~{r9},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
         B.CreateCall(Asm);
         outs()<<"Function: " << F.getName() << " callee unoptimized\n";
         break;
@@ -4996,9 +4821,9 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     for (Function::const_arg_iterator J = F.arg_begin(); J != F.arg_end(); ++J) {
       if(J->hasStructRetAttr()){
         IRBuilder<> B(dyn_cast<Instruction>(insertPointEnd)->getNextNode());
-        using AsmTypeCallee = void (void);
-        FunctionType *killCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
-        Value *Asm = InlineAsm::get(killCallee, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{rdi},~{rsi},~{r8},~{r9},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
+        //using AsmTypeCallee = void (void);
+        FunctionType *killCallee = FunctionType::get(VoidTy, {VoidTy}, false);
+        InlineAsm* Asm = InlineAsm::get(killCallee, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{rdi},~{rsi},~{r8},~{r9},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
         B.CreateCall(Asm);
         outs()<<"Function: " << F.getName() << " callee unoptimized\n";
         break;
@@ -5018,23 +4843,16 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 #ifdef LAZYD_POLL
   //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // Instrument prologue and epilogue to insert parallel runtime call
-  Constant* push_ss  = Get_push_ss(*M);
-  Constant* pop_ss = Get_pop_ss(*M);
-
   B.SetInsertPoint(dyn_cast<Instruction>(insertPoint)->getNextNode());
-  if(!DisablePushPopSeed) {
-    // Insert the push of the unwind path entry and polling
-    B.CreateCall(push_ss, {BlockAddress::get( unwindPathEntry )});
-  }
 
   // Insert poling
   // Polling @prologue
   if( (!DisableUnwindPoll && !F.hasFnAttribute(Attribute::ULINoPolling)) && !(F.getFnAttribute("poll-at-loop").getValueAsString()=="true") ) {
-    Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll);
+    Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::uli_unwind_poll);
     //pollFcn->addFnAttr(Attribute::Forkable);
     auto res = B.CreateCall(pollFcn);
     //res->setTailCall(true);
-    DEBUG(dbgs() << F.getName() << " : Polling at prologue\n");
+    LLVM_DEBUG(dbgs() << F.getName() << " : Polling at prologue\n");
   }
 
 #if 0
@@ -5045,12 +4863,12 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
       B.SetInsertPoint(termInst);
 
       if( (!DisableUnwindPoll && !F.hasFnAttribute(Attribute::ULINoPolling)) ) {
-        Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll);
+        Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::uli_unwind_poll);
         //pollFcn->addFnAttr(Attribute::Forkable);
         if(EnableProperPolling >= 1 ) {
           auto res = B.CreateCall(pollFcn);
           res->setTailCall(true);
-          DEBUG(dbgs() << F.getName() << " : Polling at epilogue\n");
+          LLVM_DEBUG(dbgs() << F.getName() << " : Polling at epilogue\n");
         }
       }
     }
@@ -5091,9 +4909,9 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
         if (Intrinsic::tapir_loop_grainsize == IntrinsicI->getIntrinsicID()){
           ii2delete.push_back(IntrinsicI);
           lowerGrainsizeCall(IntrinsicI);
-        } else if(Intrinsic::x86_uli_unwind_poll_pfor == IntrinsicI->getIntrinsicID()) {
+        } else if(Intrinsic::uli_unwind_poll_pfor == IntrinsicI->getIntrinsicID()) {
           ii2delete.push_back(IntrinsicI);
-          Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll_pfor2);
+          Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::uli_unwind_poll_pfor2);
           IRBuilder<> B(IntrinsicI);
           CallInst* call = dyn_cast<CallInst>(&II);
           B.CreateCall(pollFcn, {call->getArgOperand(0),call->getArgOperand(1), call->getArgOperand(2), bHaveUnwindAlloc});

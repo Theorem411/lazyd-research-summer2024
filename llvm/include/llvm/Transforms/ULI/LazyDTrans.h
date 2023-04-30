@@ -29,7 +29,6 @@
 #include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/MDBuilder.h"
-#include "llvm/IR/TypeBuilder.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar/GVN.h"

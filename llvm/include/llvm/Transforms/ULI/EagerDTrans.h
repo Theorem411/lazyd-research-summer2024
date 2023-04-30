@@ -29,7 +29,6 @@
 #include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/MDBuilder.h"
-#include "llvm/IR/TypeBuilder.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar/GVN.h"
@@ -91,6 +90,7 @@ namespace llvm {
 
   struct EagerDTransPass : public PassInfoMixin<EagerDTransPass> {
   private:
+
     Value* lowerGrainsizeCall(CallInst *GrainsizeCall);
     void replaceUses(Instruction *liveVar, Instruction *slowLiveVar);
     void simplifyFcn(Function &F);
