@@ -7289,7 +7289,7 @@ static void handleUserLevelInterruptAttr(Sema &S, Decl *D, const ParsedAttr &AL)
 
   // Number of arguments must be at least 4 (from, rdi, flags, and RA)
   // Later, this change in the future as from is implicit
-  FunctionDecl *FD = NULL; 
+  FunctionDecl *FD = NULL;
   FD = dyn_cast<FunctionDecl>(D) ;
   if (FD && FD->getNumParams() < 4) {
       S.Diag(D->getLocation(), diag::err_uli_non_atomic_arguments)
@@ -8279,8 +8279,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case ParsedAttr::AT_X86ForceAlignArgPointer:
     handleX86ForceAlignArgPointerAttr(S, D, AL);
-  case ParseAttr::AT_NoUnwindPath:
-    handleNoUnwindPathAttr(S, D, Attr);
+    break;
+  case ParsedAttr::AT_NoUnwindPath:
+    handleNoUnwindPathAttr(S, D, AL);
     break;
   case ParsedAttr::AT_DLLExport:
   case ParsedAttr::AT_DLLImport:

@@ -2213,16 +2213,16 @@ template <class ELFT> void Writer<ELFT>::addStartEndSymbols() {
   define("__fini_array_start", "__fini_array_end", Out::finiArray);
 
   if (OutputSection *Sec = findSection(".ARM.exidx"))
-    Define("__exidx_start", "__exidx_end", Sec);
+    define("__exidx_start", "__exidx_end", Sec);
 
   if (OutputSection *Sec = findSection(".pre_bst_table"))
-    Define("__pre_bst_table_start", "__pre_bst_table_end", Sec);
+    define("__pre_bst_table_start", "__pre_bst_table_end", Sec);
 
   if (OutputSection *Sec = findSection(".pre_hash_table"))
-    Define("__pre_hash_table_start", "__pre_hash_table_end", Sec);
+    define("__pre_hash_table_start", "__pre_hash_table_end", Sec);
 
   if (OutputSection *Sec = findSection(".pre_prologepilog_table"))
-    Define("__pre_prologepilog_table_start", "__pre_prologepilog_table_end", Sec);
+    define("__pre_prologepilog_table_start", "__pre_prologepilog_table_end", Sec);
 }
 
 // If a section name is valid as a C identifier (which is rare because of

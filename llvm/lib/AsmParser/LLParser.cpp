@@ -6767,8 +6767,10 @@ bool LLParser::parseCleanupPad(Instruction *&Inst, PerFunctionState &PFS) {
 ///       OptionalAttrs OptionalOperandBundles 'to' TypeAndValue
 ///       '[' LabelList ']'
 bool LLParser::parseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS) {
+  // Copied mostly from parse parseCallBr
+
   LocTy CallLoc = Lex.getLoc();
-  AttrBuilder RetAttrs, FnAttrs;
+  AttrBuilder RetAttrs(M->getContext()), FnAttrs(M->getContext());
   std::vector<unsigned> FwdRefAttrGrps;
   LocTy NoBuiltinLoc;
   unsigned CC;
@@ -6781,7 +6783,7 @@ bool LLParser::parseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS) {
   BasicBlock *DefaultDest;
   if (parseOptionalCallingConv(CC) || parseOptionalReturnAttrs(RetAttrs) ||
       parseType(RetType, RetTypeLoc, true /*void allowed*/) ||
-      parseValID(CalleeID) || ParseParameterList(ArgList, PFS) ||
+      parseValID(CalleeID, &PFS) || parseParameterList(ArgList, PFS) ||
       parseFnAttributeValuePairs(FnAttrs, FwdRefAttrGrps, false,
                                  NoBuiltinLoc) ||
       parseOptionalOperandBundles(BundleList, PFS) ||
@@ -6838,7 +6840,7 @@ bool LLParser::parseMultiRetCall(Instruction *&Inst, PerFunctionState &PFS) {
 
   // Look up the callee.
   Value *Callee;
-  if (ConvertValIDToValue(PointerType::getUnqual(Ty), CalleeID, Callee, &PFS))
+  if (convertValIDToValue(PointerType::getUnqual(Ty), CalleeID, Callee, &PFS))
     return true;
 
   // Set up the Attribute for the function.

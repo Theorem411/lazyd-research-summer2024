@@ -23,7 +23,7 @@ namespace llvm {
 
   namespace X86ISD {
     // X86 Specific DAG Nodes
-<<<<<<< HEAD
+#if 1
   enum NodeType : unsigned {
     // Start the numbering where the builtin ops leave off.
     FIRST_NUMBER = ISD::BUILTIN_OP_END,
@@ -74,7 +74,7 @@ namespace llvm {
     ///     #2 - The second register result value (optional)
     ///
     CALL,
-=======
+#else
     enum NodeType : unsigned {
       // Start the numbering where the builtin ops leave off.
       FIRST_NUMBER = ISD::BUILTIN_OP_END,
@@ -315,7 +315,7 @@ namespace llvm {
 
       // Thread Local Storage.
       TLSADDR,
->>>>>>> LLVM ULI changes 2017-10-18 to 2019-05-27
+#endif
 
     /// Same as call except it adds the NoTrack prefix.
     NT_CALL,
@@ -375,6 +375,12 @@ namespace llvm {
 
     /// Return from interrupt. Operand 0 is the number of bytes to pop.
     IRET,
+
+    /// Return from user interrupt.
+    UIRET,
+
+    /// Return from user-level interrupt. No operands
+    ULIRET,
 
     /// Repeat fill, corresponds to X86::REP_STOSx.
     REP_STOS,
