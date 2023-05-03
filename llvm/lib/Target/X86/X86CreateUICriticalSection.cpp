@@ -1,5 +1,6 @@
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "X86.h"
 
 #include "X86FrameLowering.h"
 #include "X86InstrBuilder.h"
