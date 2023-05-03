@@ -15367,7 +15367,7 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
   case X86::BI__builtin_uli_send: { // custom emitting for uli_send intrinsic
     SmallVector<Value *, 4> arg_vector; // expect 4 arguments
     Value *proc, *intr, *handle, *tmparg;
-    Value *F = CGM.getIntrinsic(Intrinsic::x86_uli_send);
+    auto F = CGM.getIntrinsic(Intrinsic::uli_send);
 
     proc = EmitScalarExpr(E->getArg(0));
     intr = EmitScalarExpr(E->getArg(1));
@@ -15390,7 +15390,7 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
   case X86::BI__builtin_uli_reply : { // custom emitting for uli_reply intrinsic
     SmallVector<Value *, 4> arg_vector; // expects 4 arguments
     Value * handle, *tmparg;
-    Value * F = CGM.getIntrinsic(Intrinsic::x86_uli_reply);
+    auto F = CGM.getIntrinsic(Intrinsic::uli_reply);
 
     handle = EmitScalarExpr(E->getArg(0));
     arg_vector.push_back(handle);
@@ -15474,7 +15474,8 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
 
     auto ce = dyn_cast<ConstantExpr>(bitcastI);
     assert(ce && "bitcastI not a constant expression");
-    fcn = dyn_cast<Function>(ce->getOperand(0));
+    // TODO: CNP fix this comment below
+    //fcn = dyn_cast<Function>(ce->getOperand(0));
     assert(fcn && "Function cannot be null");
 
     auto br = inspectedbb->getTerminator();

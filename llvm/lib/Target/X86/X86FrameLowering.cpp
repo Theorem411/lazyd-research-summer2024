@@ -1502,7 +1502,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
       Fn.arg_size() == 2) {
     StackSize += 8;
     MFI.setStackSize(StackSize);
-    emitSPUpdate(MBB, MBBI, -8, /*InEpilogue=*/false);
+    emitSPUpdate(MBB, MBBI, DL, -8, /*InEpilogue=*/false);
   }
 
   // If this is x86-64 and the Red Zone is not disabled, if we are a leaf
@@ -1573,8 +1573,8 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
   // 128 bytes below the stack. Therefore, we adjust the stack pointer before
   // running any of the interrupt code.
   // This doesn't need to be done on windows, which has no red zone.
-  if (Fn.hasFnAttribute(Attribute::UserLevelInterrupt) && !IsWin64CC)  {
-    emitSPUpdate(MBB, MBBI, -128, false);
+  if (Fn.hasFnAttribute(Attribute::UserLevelInterrupt) && !IsWin64Prologue)  {
+    emitSPUpdate(MBB, MBBI, DL, -128, false);
   }
 
   if (HasFP) {
@@ -1964,7 +1964,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
         .addReg(NewRSP)
         .addImm(stacklet_size_log2);
 
-      BuildMI(CheckMBB, DL, TII.get(X86::JE_1)).addMBB(&MBB);
+      BuildMI(CheckMBB, DL, TII.get(X86::JCC_1)).addMBB(&MBB).addImm(X86::COND_E);
 
       // Overflow
       // Add label before the actual prologue
@@ -1993,7 +1993,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
 	addSym(LabelRet);
 
       // Return to caller
-      const unsigned RetOpc = Is64Bit ? X86::RETQ : X86::RETL;
+      const unsigned RetOpc = Is64Bit ? X86::RET64 : X86::RET32;
       BuildMI(OverflowMBB, DL, TII.get(RetOpc));
 
       BuildMI(OverflowMBB, DL, TII.get(TargetOpcode::EH_LABEL)).
@@ -2013,7 +2013,7 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
     }
 
     if (NumBytes) {
-      emitSPUpdate(MBB, MBBI, -(int64_t)NumBytes, /*InEpilogue=*/false);
+      emitSPUpdate(MBB, MBBI, DL, -(int64_t)NumBytes, /*InEpilogue=*/false);
     }
   } else if (NumBytes) {
     emitSPUpdate(MBB, MBBI, DL, -(int64_t)NumBytes, /*InEpilogue=*/false);
@@ -2199,12 +2199,16 @@ void X86FrameLowering::emitPrologue(MachineFunction &MF,
           if (!HasFP && NumBytes) {
               // Define the current CFA rule to use the provided offset.
               assert(StackSize);
-              BuildCFI(MBB, MBBI, DL, MCCFIInstruction::createDefCfaOffset(
-                                                                           nullptr, -StackSize + stackGrowth));
+              //BuildCFI(MBB, MBBI, DL, MCCFIInstruction::createDefCfaOffset(
+              //                                                             nullptr, -StackSize + stackGrowth));
+	      BuildCFI(MBB, MBBI, DL,
+               MCCFIInstruction::cfiDefCfaOffset(
+                   nullptr, -StackSize + stackGrowth));
+
           }
           
           // Emit DWARF info specifying the offsets of the callee-saved registers.
-          emitCalleeSavedFrameMoves(MBB, MBBI, DL);
+          emitCalleeSavedFrameMoves(MBB, MBBI, DL, false);
       }
   }
  
@@ -2440,7 +2444,7 @@ void X86FrameLowering::emitEpilogue(MachineFunction &MF,
   // Undo the user level interrupt frame adjustment to avoid red zone on linux
   bool IsWin64CC = STI.isCallingConvWin64(Fn.getCallingConv());
   if (Fn.hasFnAttribute(Attribute::UserLevelInterrupt) && !IsWin64CC)  {
-    emitSPUpdate(MBB, MBBI, 128, false);
+    emitSPUpdate(MBB, MBBI, DL, 128, false);
     --MBBI;
   }
 
@@ -3694,7 +3698,7 @@ eliminateCallFramePseudoInstr(MachineFunction &MF, MachineBasicBlock &MBB,
 	// to the gotstolen handler (for example, if after call inst, there is an "addq 8, rsp", then copy the "addq 8, rsp"
 	// to the gotstolen handler
 	if(bSpawnBB) {
-	  if (!(F.optForMinSize() &&
+	  if (!(F.hasMinSize() &&
 		adjustStackWithPops(*gotStolen->getParent(), gotStolen, DL, StackAdjustment)))
 	    BuildStackAdjustment(*gotStolen->getParent(), gotStolen, DL, StackAdjustment,
 				 /*InEpilogue=*/false);
