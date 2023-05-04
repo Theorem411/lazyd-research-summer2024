@@ -15471,12 +15471,13 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
     assert(dyn_cast<Constant>(bitcastI) && "FunctionType cannot be null");
 
     Function* fcn = nullptr;
-
+#if 0
     auto ce = dyn_cast<ConstantExpr>(bitcastI);
     assert(ce && "bitcastI not a constant expression");
     // TODO: CNP fix this comment below
-    //fcn = dyn_cast<Function>(ce->getOperand(0));
+    fcn = dyn_cast<Function>(ce->getOperand(0));
     assert(fcn && "Function cannot be null");
+#endif
 
     auto br = inspectedbb->getTerminator();
     br->eraseFromParent();
