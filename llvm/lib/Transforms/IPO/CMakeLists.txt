@@ -70,6 +70,7 @@ add_llvm_component_library(LLVMipo
   Scalar
   Support
   TapirOpts
+  UserLevelInterrupt
   TransformUtils
   Vectorize
   Instrumentation
