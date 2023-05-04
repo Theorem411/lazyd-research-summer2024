@@ -264,11 +264,6 @@ namespace {
       (void) llvm::createHandleUnwindPollPass();
       (void) llvm::createLazyDTransPass();
       (void) llvm::createEagerDTransPass();
-      (void) llvm::createSmallBlockPass();
-      (void) llvm::createRedundantSpawnPass();
-      (void) llvm::createSpawnRestructurePass();
-      (void) llvm::createSyncEliminationPass();
-      (void) llvm::createSpawnUnswitchPass();
 #if 0
       (void) llvm::createTaskSimplifyPass();
 #endif
