@@ -2056,7 +2056,22 @@ Scope *Sema::getScopeForContext(DeclContext *Ctx) {
 
 /// Enter a new function scope
 void Sema::PushFunctionScope( bool isInlet ) {
+#if 1
 
+  if (FunctionScopes.empty() && CachedFunctionScope) {
+    // Use CachedFunctionScope to avoid allocating memory when possible.
+    CachedFunctionScope->Clear();
+    FunctionScopes.push_back(CachedFunctionScope.release());
+  } else if (FunctionScopes.size() > 1 && isInlet) {
+    InletScopeInfo *ISI = new InletScopeInfo(getDiagnostics());
+    FunctionScopes.push_back(ISI);
+  } else {
+    FunctionScopes.push_back(new FunctionScopeInfo(getDiagnostics()));
+  }
+  if (LangOpts.OpenMP)
+    pushOpenMPFunctionRegion();
+
+#else
   if (FunctionScopes.empty() && CachedFunctionScope) {
     // Use CachedFunctionScope to avoid allocating memory when possible.
     CachedFunctionScope->Clear();
@@ -2078,6 +2093,7 @@ void Sema::PushFunctionScope( bool isInlet ) {
   FunctionScopes.push_back(new FunctionScopeInfo(getDiagnostics()));
   if (LangOpts.OpenMP)
     pushOpenMPFunctionRegion();
+#endif
 }
 
 void Sema::PushBlockScope(Scope *BlockScope, BlockDecl *Block) {

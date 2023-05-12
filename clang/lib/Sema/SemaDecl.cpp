@@ -8656,7 +8656,8 @@ static FunctionDecl *CreateNewFunctionDecl(Sema &SemaRef, Declarator &D,
         ConstexprSpecKind::Unspecified,
         /*TrailingRequiresClause=*/nullptr);
 
-    bool isInlet = D.getDeclSpec().isInletSpecified();
+    bool isInlet = false;
+    //bool isInlet = D.getDeclSpec().isInletSpecified();
     NewFD->setInletSpecified(isInlet);
 
     bool isUserLevelInterrupt = false;
@@ -9195,8 +9196,9 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   DeclContext *OriginalDC = DC;
   bool IsLocalExternDecl = false;
   // Do not adjust context for inlets so captures are not looked up in parent scope
-  if (!D.getDeclSpec().isInletSpecified())
-    IsLocalExternDecl = adjustContextForLocalExternDecl(DC);
+  // TODO: CNP fix this
+  //if (!D.getDeclSpec().isInletSpecified())
+  //  IsLocalExternDecl = adjustContextForLocalExternDecl(DC);
 
   FunctionDecl *NewFD = CreateNewFunctionDecl(*this, D, DC, R, TInfo, SC,
                                               isVirtualOkay);
@@ -9591,6 +9593,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
     }
 #endif
 
+#if 0
     if (isUserLevelInterrupt) {
       // Add implicit void * environment argument
       QualType EnvTy = Context.UnsignedIntTy;
@@ -9613,6 +9616,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       Env->setImplicit();
       Params.push_back(Env);
     }
+#endif
 
     // Check for C99 6.7.5.3p10 - foo(void) is a non-varargs
     // function that takes no arguments, not a function that takes a
@@ -14469,12 +14473,13 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D,
         FD->isConsteval() ? ExpressionEvaluationContext::ConstantEvaluated
                           : ExprEvalContexts.back().Context);
 
+#if 0
   if (FD->isInletSpecified()) {
     // getCurFunctionDecl() refers to the containing function since it is the
     // function that we are currently inside of while parsing this inlet
     FD->inletSetContainingFunction(getCurFunctionDecl());
   }
-
+#endif
 
   // Check for defining attributes before the check for redefinition.
   if (const auto *Attr = FD->getAttr<AliasAttr>()) {
@@ -15092,6 +15097,7 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
 
   if (!IsInstantiation)
     PopDeclContext();
+#if 0
   if (FD->isInletSpecified()) {
     assert(isa<InletScopeInfo>(FunctionScopes.back()));
     InletScopeInfo *ISI = cast<InletScopeInfo>(FunctionScopes.back());
@@ -15106,6 +15112,7 @@ Decl *Sema::ActOnFinishFunctionBody(Decl *dcl, Stmt *Body,
     }
     FD->inletContainingFunction()->inletAddCaptures(Context, Captures);
   }
+#endif
 
   PopFunctionScopeInfo(ActivePolicy, dcl);
   // If any errors have occurred, clear out any temporaries that may have

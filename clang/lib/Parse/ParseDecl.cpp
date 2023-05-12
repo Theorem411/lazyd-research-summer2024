@@ -2069,24 +2069,26 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
           return nullptr;
         }
       } else {
+#if 1
         if (Tok.is(tok::l_brace)) {
           Diag(Tok, diag::err_function_definition_not_allowed);
           SkipMalformedDecl();
           return nullptr;
         }
-      }
-    } else {
-      // ULI: allow parsing function within function (for inlets)
-      if (isStartOfFunctionDefinition(D)) {
-        assert(DS.isInletSpecified() && "Nested functions must be inlets");
-        if (DS.getStorageClassSpec() == DeclSpec::SCS_typedef) {
-          Diag(Tok, diag::err_function_declared_typedef);
-          // Recover by treating the 'typedef' as spurious
-          DS.ClearStorageClassSpecs();
-        }
+#else
+	// ULI: allow parsing function within function (for inlets)
+	if (isStartOfFunctionDefinition(D)) {
+	  assert(DS.isInletSpecified() && "Nested functions must be inlets");
+	  if (DS.getStorageClassSpec() == DeclSpec::SCS_typedef) {
+	    Diag(Tok, diag::err_function_declared_typedef);
+	    // Recover by treating the 'typedef' as spurious
+	    DS.ClearStorageClassSpecs();
+	  }
 
-        Decl *TheDecl = ParseFunctionDefinition(D, ParsedTemplateInfo(), &LateParsedAttrs);
-        return Actions.ConvertDeclToDeclGroup(TheDecl);
+	  Decl *TheDecl = ParseFunctionDefinition(D, ParsedTemplateInfo(), &LateParsedAttrs);
+	  return Actions.ConvertDeclToDeclGroup(TheDecl);
+	}
+#endif
       }
     }
   }
@@ -5925,7 +5927,7 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
           }
         }
       }
-        
+
       switch (Args.size()) {
       case 0:
         break;
