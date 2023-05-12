@@ -208,6 +208,7 @@ PipelineTuningOptions::PipelineTuningOptions() {
   CallGraphProfile = true;
   MergeFunctions = EnableMergeFunctions;
   EagerlyInvalidateAnalyses = EnableEagerlyInvalidateAnalyses;
+  ForkDLowering = llvm::ForkDTargetType::None;
 }
 
 namespace llvm {
@@ -1343,6 +1344,8 @@ PassBuilder::buildTapirLoweringPipeline(OptimizationLevel Level,
 
   LoopPassManager LPM1, LPM2;
 
+  outs() << "BuildTapirLoweringPipeline\n";
+
   // Rotate Loop - disable header duplication at -Oz
   LPM1.addPass(LoopRotatePass(Level != OptimizationLevel::Oz));
   LPM1.addPass(LICMPass(PTO.LicmMssaOptCap, PTO.LicmMssaNoAccForPromotionCap,
@@ -1381,10 +1384,32 @@ PassBuilder::buildTapirLoweringPipeline(OptimizationLevel Level,
   // Canonicalize the representation of tasks.
   MPM.addPass(createModuleToFunctionPassAdaptor(TaskCanonicalizePass()));
 
+  // If loop spawn strategy is hybrid, instrument pfor
+  if((PTO.ForkDLowering == llvm::ForkDTargetType::LazyD || PTO.ForkDLowering == llvm::ForkDTargetType::ULID || PTO.ForkDLowering == llvm::ForkDTargetType::SIGUSRD)){
+    FPM.addPass(InstrumentPforPass());
+  }
+
   // Lower Tapir to target runtime calls.
   MPM.addPass(TapirToTargetPass());
   if (VerifyTapirLowering)
     MPM.addPass(VerifierPass());
+
+  if ((PTO.ForkDLowering == llvm::ForkDTargetType::ULID || PTO.ForkDLowering == llvm::ForkDTargetType::SIGUSRD)) {
+    // If using ULI: insert TLS variable to "disable/enable" interrupt
+    FPM.addPass(InsertLazyDEnDisUIPass());
+  }
+
+  // TODO: Separate polling from codegen
+  if((PTO.ForkDLowering == llvm::ForkDTargetType::LazyD || PTO.ForkDLowering == llvm::ForkDTargetType::ULID || PTO.ForkDLowering == llvm::ForkDTargetType::SIGUSRD)) {
+    //assert(!tapirTarget && "Can only create lazyD / uliD when -ftapir=serial");
+    FPM.addPass(LazyDTransPass());
+  } else if ((PTO.ForkDLowering == llvm::ForkDTargetType::EagerD)) {
+    //assert(!tapirTarget && "Can only create eagerD when -ftapir=serial");
+    FPM.addPass(EagerDTransPass());
+  }
+
+  FPM.addPass(HandleInletsPass());
+  FPM.addPass(HandleUnwindPollPass());
 
   // The TapirToTarget pass may leave cruft around.  Clean it up using the
   // function simplification pipeline.

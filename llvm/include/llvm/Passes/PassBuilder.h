@@ -26,6 +26,16 @@
 #include "llvm/Transforms/IPO/ModuleInliner.h"
 #include "llvm/Transforms/Instrumentation.h"
 #include "llvm/Transforms/Scalar/LoopPassManager.h"
+
+#include "llvm/Transforms/ULI/EagerDTrans.h"
+#include "llvm/Transforms/ULI/ForkDTypes.h"
+#include "llvm/Transforms/ULI/HandleInlets.h"
+#include "llvm/Transforms/ULI/HandleUnwindPoll.h"
+#include "llvm/Transforms/ULI/InsertLazyDEnDisUI.h"
+#include "llvm/Transforms/ULI/InstrumentPfor.h"
+#include "llvm/Transforms/ULI/LazyDTrans.h"
+
+
 #include <vector>
 
 namespace llvm {
@@ -87,6 +97,8 @@ public:
   // analyses after various module->function or cgscc->function adaptors in the
   // default pipelines.
   bool EagerlyInvalidateAnalyses;
+
+  ForkDTargetType ForkDLowering;
 };
 
 /// This class provides access to building LLVM's passes.
