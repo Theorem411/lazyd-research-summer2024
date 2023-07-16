@@ -976,8 +976,7 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   PMBuilder.PrepareForThinLTO = CodeGenOpts.PrepareForThinLTO;
   PMBuilder.PrepareForLTO = CodeGenOpts.PrepareForLTO;
   PMBuilder.RerollLoops = CodeGenOpts.RerollLoops;
-  PMBuilder.ForkDLowering = LangOpts.ForkDLowering;
-
+  PMBuilder.ForkDLowering = static_cast<ForkDTargetType>(CodeGenOpts.getForkDLowering());
   MPM.add(new TargetLibraryInfoWrapperPass(*TLII));
 
   if (TM)
@@ -1602,6 +1601,7 @@ void EmitAssemblyHelper::RunOptimizationPipeline(
   // Only enable CGProfilePass when using integrated assembler, since
   // non-integrated assemblers don't recognize .cgprofile section.
   PTO.CallGraphProfile = !CodeGenOpts.DisableIntegratedAS;
+  PTO.ForkDLowering = static_cast<ForkDTargetType>(CodeGenOpts.getForkDLowering());
 
   LoopAnalysisManager LAM;
   FunctionAnalysisManager FAM;

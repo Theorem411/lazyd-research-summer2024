@@ -1439,6 +1439,16 @@ void CompilerInvocation::GenerateCodeGenArgs(
           serializeTapirTarget(Opts.getTapirTarget()))
     GenerateArg(Args, OPT_ftapir_EQ, *TapirTargetStr, SA);
 
+  auto fforkd_enum = Opts.getForkDLowering();
+  if(fforkd_enum==llvm::ForkDTargetType::LazyD)
+    GenerateArg(Args, OPT_fforkd_EQ, "lazy", SA);
+  else if(fforkd_enum==llvm::ForkDTargetType::ULID)
+    GenerateArg(Args, OPT_fforkd_EQ, "uli", SA);
+  else if(fforkd_enum==llvm::ForkDTargetType::SIGUSRD)
+    GenerateArg(Args, OPT_fforkd_EQ, "sigusr", SA);
+  else if(fforkd_enum==llvm::ForkDTargetType::EagerD)
+    GenerateArg(Args, OPT_fforkd_EQ, "eager", SA);
+
   Optional<StringRef> DebugInfoVal;
   switch (Opts.DebugInfo) {
   case codegenoptions::DebugLineTablesOnly:
@@ -1901,18 +1911,25 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
   assert(Opts.ULIStackletOverflowCheckSize < 64);
   Opts.PForSpawnStrategy = getLastArgIntValue(Args, OPT_fpfor_spawn_strategy, 1);
   assert(Opts.PForSpawnStrategy < 3 && Opts.PForSpawnStrategy >= 0);
-  //auto fforkd_str = Args.getLastArgValue(OPT_fforkd_EQ);
-  //Opts.ForkDLowering = llvm::StringSwitch<llvm::ForkDTargetType>(fforkd_str)
-  //  .Case("lazy", llvm::ForkDTargetType::LazyD)
-  //  .Case("uli", llvm::ForkDTargetType::ULID)
-  //  .Case("sigusr", llvm::ForkDTargetType::SIGUSRD)
-  //  .Case("eager", llvm::ForkDTargetType::EagerD)
-  //  .Default(llvm::ForkDTargetType::None);
+
+  ForkDTargetType fforkd_enum = ForkDTargetType::None;
+  auto fforkd_str = "";
+  if (const Arg *A = Args.getLastArg(OPT_fforkd_EQ)) {
+    fforkd_str = A->getValue();
+    fforkd_enum = llvm::StringSwitch<llvm::ForkDTargetType>(fforkd_str)
+      .Case("lazy", llvm::ForkDTargetType::LazyD)
+      .Case("uli", llvm::ForkDTargetType::ULID)
+      .Case("sigusr", llvm::ForkDTargetType::SIGUSRD)
+      .Case("eager", llvm::ForkDTargetType::EagerD)
+      .Default(llvm::ForkDTargetType::None);
+
+  }
+  Opts.setForkDLowering(fforkd_enum);
 
   Opts.EnableULITransform = Args.hasArg(OPT_fenable_uli_transform);
   Opts.EnableULIRewrite = Args.hasArg(OPT_fenable_uli_rewrite);
   Opts.DisableULIPollInsertion = Args.hasArg(OPT_fdisable_uli_poll_insertion);
-#if 0  
+#if 0
   Opts.UnwindTables = Args.hasArg(OPT_munwind_tables);
   Opts.RelocationModel = getRelocModel(Args, Diags);
   Opts.ThreadModel = Args.getLastArgValue(OPT_mthread_model, "posix");
@@ -4740,17 +4757,6 @@ bool CompilerInvocation::CreateFromArgsImpl(
   if (Res.getFrontendOpts().ProgramAction == frontend::RewriteObjC)
     LangOpts.ObjCExceptions = 1;
 
-
-  //LangOpts.Cilk = Args.hasArg(OPT_fcilkplus);
-  //LangOpts.Detach = Args.hasArg(OPT_fdetach);
-  //LangOpts.Rhino = Args.hasArg(OPT_frhino);
-  //TapirTargetID TapirTarget = parseTapirTarget(Args);
-  //if (TapirTarget == TapirTargetID::Last_TapirTargetID)
-  //  if (const Arg *A = Args.getLastArg(OPT_ftapir_EQ))
-  //    Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args)
-  //                                              << A->getValue();
-  //LangOpts.TapirTarget = TapirTarget;
-
   auto fforkd_str = Args.getLastArgValue(OPT_fforkd_EQ);
   LangOpts.ForkDLowering = llvm::StringSwitch<llvm::ForkDTargetType>(fforkd_str)
     .Case("lazy", llvm::ForkDTargetType::LazyD)
@@ -4758,9 +4764,6 @@ bool CompilerInvocation::CreateFromArgsImpl(
     .Case("sigusr", llvm::ForkDTargetType::SIGUSRD)
     .Case("eager", llvm::ForkDTargetType::EagerD)
     .Default(llvm::ForkDTargetType::None);
-
-  //if (LangOpts.Cilk && (LangOpts.ObjC1 || LangOpts.ObjC2))
-  //  Diags.Report(diag::err_drv_cilk_objc);
 
   if (LangOpts.CUDA) {
     // During CUDA device-side compilation, the aux triple is the

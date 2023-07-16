@@ -19,6 +19,7 @@
 #include "llvm/ADT/FloatingPointMode.h"
 #include "llvm/Support/CodeGen.h"
 #include "clang/Basic/Tapir.h"
+#include "llvm/Transforms/ULI/ForkDTypes.h"
 #include "llvm/Support/Regex.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Transforms/Instrumentation/AddressSanitizerOptions.h"
@@ -28,6 +29,8 @@
 #include <vector>
 
 namespace clang {
+
+using ForkDTargetType = llvm::ForkDTargetType;
 
 /// Bitfields of CodeGenOptions, split out from CodeGenOptions to ensure
 /// that this large collection of bitfields is a trivial class type.
