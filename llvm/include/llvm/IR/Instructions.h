@@ -4503,7 +4503,7 @@ MultiRetCallInst::MultiRetCallInst(FunctionType *Ty, Value *Func, BasicBlock *De
                        ArrayRef<Value *> Args,
                        ArrayRef<OperandBundleDef> Bundles, int NumOperands,
                        const Twine &NameStr, Instruction *InsertBefore)
-    : CallBase(Ty->getReturnType(), Instruction::CallBr,
+    : CallBase(Ty->getReturnType(), Instruction::MultiRetCall,
                OperandTraits<CallBase>::op_end(this) - NumOperands, NumOperands,
                InsertBefore) {
   init(Ty, Func, DefaultDest, IndirectDests, Args, Bundles, NameStr);
@@ -4514,7 +4514,7 @@ MultiRetCallInst::MultiRetCallInst(FunctionType *Ty, Value *Func, BasicBlock *De
                        ArrayRef<Value *> Args,
                        ArrayRef<OperandBundleDef> Bundles, int NumOperands,
                        const Twine &NameStr, BasicBlock *InsertAtEnd)
-    : CallBase(Ty->getReturnType(), Instruction::CallBr,
+    : CallBase(Ty->getReturnType(), Instruction::MultiRetCall,
                OperandTraits<CallBase>::op_end(this) - NumOperands, NumOperands,
                InsertAtEnd) {
   init(Ty, Func, DefaultDest, IndirectDests, Args, Bundles, NameStr);

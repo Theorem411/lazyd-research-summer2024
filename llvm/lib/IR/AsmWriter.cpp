@@ -4268,16 +4268,16 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
       writeOperand(CBI->getIndirectDest(i), true);
     }
     Out << ']';
-  } else if (const MultiRetCallInst *II = dyn_cast<MultiRetCallInst>(&I)) {
-    Operand = II->getCalledValue();
-    FunctionType *FTy = II->getFunctionType();
+  } else if (const MultiRetCallInst *MRCI = dyn_cast<MultiRetCallInst>(&I)) {
+    Operand = MRCI->getCalledValue();
+    FunctionType *FTy = MRCI->getFunctionType();
     Type *RetTy = FTy->getReturnType();
-    const AttributeList &PAL = II->getAttributes();
+    const AttributeList &PAL = MRCI->getAttributes();
 
     // Print the calling convention being used.
-    if (II->getCallingConv() != CallingConv::C) {
+    if (MRCI->getCallingConv() != CallingConv::C) {
       Out << " ";
-      PrintCallingConv(II->getCallingConv(), Out);
+      PrintCallingConv(MRCI->getCallingConv(), Out);
     }
 
     if (PAL.hasRetAttrs())
@@ -4293,32 +4293,32 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
     writeOperand(Operand, false);
     Out << '(';
 
-    for (unsigned op = 0, Eop = CI->arg_size(); op < Eop; ++op) {
+    for (unsigned op = 0, Eop = MRCI->arg_size(); op < Eop; ++op) {
       if (op)
         Out << ", ";
-      writeParamOperand(CI->getArgOperand(op), PAL.getParamAttrs(op));
+      writeParamOperand(MRCI->getArgOperand(op), PAL.getParamAttrs(op));
     }
 
     // Emit an ellipsis if this is a musttail call in a vararg function.  This
     // is only to aid readability, musttail calls forward varargs by default.
-    if (CI->isMustTailCall() && CI->getParent() &&
-        CI->getParent()->getParent() &&
-        CI->getParent()->getParent()->isVarArg())
+    if (MRCI->isMustTailCall() && MRCI->getParent() &&
+        MRCI->getParent()->getParent() &&
+        MRCI->getParent()->getParent()->isVarArg())
       Out << ", ...";
 
     Out << ')';
     if (PAL.hasFnAttrs())
       Out << " #" << Machine.getAttributeGroupSlot(PAL.getFnAttrs());
 
-    writeOperandBundles(II);
+    writeOperandBundles(MRCI);
 
     Out << "\n          to ";
-    writeOperand(II->getDefaultDest(), true);
+    writeOperand(MRCI->getDefaultDest(), true);
     Out << " [";
-    for (unsigned i = 0, e = II->getNumIndirectDests(); i != e; ++i) {
+    for (unsigned i = 0, e = MRCI->getNumIndirectDests(); i != e; ++i) {
       if (i != 0)
 	Out << ", ";
-      writeOperand(II->getIndirectDest(i), true);
+      writeOperand(MRCI->getIndirectDest(i), true);
     }
     Out << " ]";
   } else if (const AllocaInst *AI = dyn_cast<AllocaInst>(&I)) {

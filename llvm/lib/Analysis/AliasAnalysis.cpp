@@ -866,11 +866,16 @@ ModRefInfo AAResults::getModRefInfo(const Instruction *I,
   case Instruction::Call:
   case Instruction::CallBr:
   case Instruction::Invoke:
+  case Instruction::MultiRetCall:
     return getModRefInfo((const CallBase *)I, Loc, AAQIP);
   case Instruction::CatchPad:
     return getModRefInfo((const CatchPadInst *)I, Loc, AAQIP);
   case Instruction::CatchRet:
+  case Instruction::RetPad:
     return getModRefInfo((const CatchReturnInst *)I, Loc, AAQIP);
+  // TODO: CNP why this cause segfault
+  //case Instruction::RetPad:
+    //return getModRefInfo((const RetPadInst *)I, Loc, AAQIP);
   case Instruction::Detach:
     return getModRefInfo((const DetachInst *)I, Loc, AAQIP);
   case Instruction::Sync:

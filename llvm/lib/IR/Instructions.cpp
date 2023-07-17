@@ -301,7 +301,10 @@ Function *CallBase::getCaller() { return getParent()->getParent(); }
 
 unsigned CallBase::getNumSubclassExtraOperandsDynamic() const {
   assert((getOpcode() == Instruction::CallBr || getOpcode() == Instruction::MultiRetCall)  && "Unexpected opcode!");
-  return cast<CallBrInst>(this)->getNumIndirectDests() + 1;
+  if(getOpcode() == Instruction::CallBr)
+    return cast<CallBrInst>(this)->getNumIndirectDests() + 1;
+  else if (getOpcode() == Instruction::MultiRetCall)
+    return cast<MultiRetCallInst>(this)->getNumIndirectDests() + 1;
 }
 
 bool CallBase::isIndirectCall() const {
@@ -1012,6 +1015,9 @@ void MultiRetCallInst::init(FunctionType *FTy, Value *Fn, BasicBlock *Fallthroug
   for (unsigned i = 0; i != NumIndirectDests; ++i)
     setIndirectDest(i, IndirectDests[i]);
   setCalledOperand(Fn);
+
+  // TODO: CNP why is this needed. Can this be comment out
+  setCalledFunction(dyn_cast<Function>(Fn));
 
 #ifndef NDEBUG
   assert(((Args.size() == FTy->getNumParams()) ||
