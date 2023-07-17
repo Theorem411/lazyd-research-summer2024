@@ -46,7 +46,6 @@ static cl::opt<int> MaxInstPoll(
 "lazy-set-maxinstpoll", cl::init(0), cl::NotHidden,
   cl::desc("Maximum number of instruction to enable poll"));
 
-
 // Polling at prologue, epilogue, and inner loop
 static cl::opt<int> EnableProperPolling(
 "lazy-enable-proper-polling", cl::init(0), cl::NotHidden,
@@ -140,7 +139,7 @@ static FunctionCallee Get_sync_slowpath(Module& M) {
 //using can_direct_steal_ty = void ();
 static FunctionCallee Get_can_direct_steal(Module& M) {
   LLVMContext &Ctx = M.getContext();
-  return M.getOrInsertFunction("can_direct_steal", FunctionType::get(Type::getVoidTy(Ctx), {Type::getVoidTy(Ctx)}, false));
+  return M.getOrInsertFunction("can_direct_steal", FunctionType::get(Type::getVoidTy(Ctx), {}, false));
 }
 
 
@@ -167,26 +166,26 @@ static FunctionCallee Get_get_workcontext_locowner(Module& M) {
 //using get_stacklet_ctx_ty = void** ();
 static FunctionCallee Get_get_stacklet_ctx(Module& M) {
   LLVMContext &Ctx = M.getContext();
-  return M.getOrInsertFunction("get_stacklet_ctx", FunctionType::get(PointerType::getInt8PtrTy(Ctx)->getPointerTo(), {Type::getVoidTy(Ctx)}, false));
+  return M.getOrInsertFunction("get_stacklet_ctx", FunctionType::get(PointerType::getInt8PtrTy(Ctx)->getPointerTo(), {}, false));
 }
 
 //using initialize_parallel_ctx_ty = void (void**, void*, void*);
 static FunctionCallee Get_initialize_parallel_ctx(Module& M) {
   LLVMContext &Ctx = M.getContext();
-  return M.getOrInsertFunction("initialize_parallel_ctx", FunctionType::get(Type::getVoidTy(Ctx), {PointerType::getInt8PtrTy(Ctx)->getPointerTo(), PointerType::getInt8PtrTy(Ctx)->getPointerTo(), PointerType::getInt8PtrTy(Ctx)}, false));
+  return M.getOrInsertFunction("initialize_parallel_ctx", FunctionType::get(Type::getVoidTy(Ctx), {PointerType::getInt8PtrTy(Ctx)->getPointerTo(), PointerType::getInt8PtrTy(Ctx), PointerType::getInt8PtrTy(Ctx)}, false));
 }
 
 //using initworkers_env_ty = void (void );
 static FunctionCallee Get_initworkers_env(Module& M) {
   LLVMContext &Ctx = M.getContext();
-  return M.getOrInsertFunction("initworkers_env", FunctionType::get(Type::getVoidTy(Ctx), {Type::getVoidTy(Ctx)}, false));
+  return M.getOrInsertFunction("initworkers_env", FunctionType::get(Type::getVoidTy(Ctx), {}, false));
 }
 
 
 //using deinitworkers_env_ty = void (void );
 static FunctionCallee Get_deinitworkers_env(Module& M) {
   LLVMContext &Ctx = M.getContext();
-  return M.getOrInsertFunction("deinitworkers_env", FunctionType::get(Type::getVoidTy(Ctx), {Type::getVoidTy(Ctx)}, false));
+  return M.getOrInsertFunction("deinitworkers_env", FunctionType::get(Type::getVoidTy(Ctx), {}, false));
 }
 
 
@@ -201,6 +200,38 @@ static FunctionCallee Get_deinitperworkers_sync(Module& M) {
 static FunctionCallee Get_initperworkers_sync(Module& M) {
   LLVMContext &Ctx = M.getContext();
   return M.getOrInsertFunction("initperworkers_sync", FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt32Ty(Ctx), Type::getInt32Ty(Ctx)}, false));
+}
+
+
+// Based on HWAddressSanitizer.cpp
+static Value *readRegister(IRBuilder<> &IRB, StringRef Name) {
+  Module *M = IRB.GetInsertBlock()->getParent()->getParent();
+  LLVMContext *C = &(M->getContext());
+  Type * Int64Ty = IRB.getInt64Ty();
+  auto *ReadRegister = Intrinsic::getDeclaration(M, Intrinsic::read_register, Int64Ty);
+  MDNode *MD = MDNode::get(*C, {MDString::get(*C, Name)});
+  Value *Args[] = {MetadataAsValue::get(*C, MD)};
+  return IRB.CreateCall(ReadRegister, Args);
+}
+
+static Value* getSP(IRBuilder<> &B, Function& F) {
+  auto TargetTriple = Triple(F.getParent()->getTargetTriple());
+  return readRegister(B, (TargetTriple.getArch() == Triple::x86_64) ? "rsp" : "sp");
+}
+
+static Value *writeRegister(IRBuilder<> &IRB, StringRef Name, Value* val) {
+  Module *M = IRB.GetInsertBlock()->getParent()->getParent();
+  LLVMContext *C = &(M->getContext());
+  Type * Int64Ty = IRB.getInt64Ty();
+  auto *WriteRegister = Intrinsic::getDeclaration(M, Intrinsic::write_register, Int64Ty);
+  MDNode *MD = MDNode::get(*C, {MDString::get(*C, Name)});
+  Value *Args[] = {MetadataAsValue::get(*C, MD), val};
+  return IRB.CreateCall(WriteRegister, Args);
+}
+
+static Value* setSP(IRBuilder<> &B, Function& F, Value* val) {
+  auto TargetTriple = Triple(F.getParent()->getTargetTriple());
+  return writeRegister(B, (TargetTriple.getArch() == Triple::x86_64) ? "rsp" : "sp", val);
 }
 
 
@@ -248,7 +279,6 @@ namespace {
     FunctionType *FTy = FunctionType::get(Type::getInt32Ty(C), {}, false);
     return M.getOrInsertFunction("__cilkrts_get_nworkers", FTy, AL);
   }
-
 
   Function* Get__unwindrts_unwind_gnuhash(Module& M) {
     //using unwind_gnuhash_ty = unsigned (char *);
@@ -827,7 +857,7 @@ namespace {
         IRBuilder<> B (cond);
         auto one = B.getInt32(1); // Indicate that this is a potential jump
         auto stringptr = B.CreateGlobalStringPtr("test", "potentialjump");
-        CallInst* res = B.CreateCall(annotateFcn, {BlockAddress::get( oriBB ), stringptr, stringptr, one});
+        CallInst* res = B.CreateCall(annotateFcn, {BlockAddress::get( oriBB ), stringptr, stringptr, one, stringptr});
         // Somehow need to set this to true to avoid cloberring with the alloca for fork result (analysis restul from MemoryDependency analysis)
         res->setTailCall(true);
       }
@@ -864,7 +894,7 @@ namespace {
 
     // Create MultiRetCall
     B.SetInsertPoint(bb);
-    B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), afterBB, indirectBBs, {});
+    auto res = B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), afterBB, indirectBBs, {});
 
     // delete the call instruction
     terminator->eraseFromParent();
@@ -1432,12 +1462,12 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
           Asm = InlineAsm::get(reloadCaller, "", "~{rbx},~{r12},~{r13},~{r14},~{r15},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
 
           // Create a variable annotation indicating that this either a slow path
-          Function* varAnnotate = Intrinsic::getDeclaration(M, Intrinsic::var_annotation);
+          Function*  annotateFcn = Intrinsic::getDeclaration(M, Intrinsic::var_annotation);
           auto parentSpawn = ii->getParent();
           auto parentBA = BlockAddress::get( parentSpawn );
           auto two = B.getInt32(2);
           auto stringptr = B.CreateGlobalStringPtr("test", "slowpath");
-          CallInst* res = B.CreateCall(varAnnotate, {parentBA, stringptr, stringptr, two});
+          CallInst* res = B.CreateCall(annotateFcn, {parentBA, stringptr, stringptr, two, stringptr});
           // Somehow need to set this to true to avoid cloberring with the alloca for fork result (analysis restul from MemoryDependency analysis)
           res->setTailCall(true);
           // -----------------------------------------------------------------------------------------
@@ -2202,6 +2232,20 @@ void LazyDTransPass::updateSlowVariables_2(Function& F,
                 // Get all the incoming variable
                 unsigned incomingPair = phiInst->getNumIncomingValues();
 
+		// If phi node after sync already have incoming variable from slow path, then ignore.
+		// TODO: CNP why is this needed for usingt the new clang++
+		bool bCont = false;
+		for(unsigned i = 0; i<incomingPair; i++)  {
+                  BasicBlock* incomingBB = phiInst->getIncomingBlock(i);
+                  Instruction* incomingInst = dyn_cast<Instruction>(phiInst->getIncomingValue(i));
+		  // If incoming BB already from pre.sync? But how?
+		  if(incomingBB  == syncBB2syncPred[continueBB])
+		    bCont = true;
+		}
+		if(bCont)
+		  continue;
+
+
                 for(unsigned i = 0; i<incomingPair; i++)  {
                   BasicBlock* incomingBB = phiInst->getIncomingBlock(i);
                   Instruction* incomingInst = dyn_cast<Instruction>(phiInst->getIncomingValue(i));
@@ -2211,6 +2255,17 @@ void LazyDTransPass::updateSlowVariables_2(Function& F,
                     SSAUpdate.AddAvailableValue(incomingBB, phiInst->getIncomingValue(i));
                     continue;
                   }
+
+		  // TODO: CNP
+		  // In LU
+		  // %cmp.i.slowPath148 = phi i1 [ %cmp.i.slowPath149, %pre.sync ], [ %cmp.i, %det.cont.i ], [ %cmp.i, %if.then.i ]
+		  // After changes
+		  //%cmp.i.slowPath148 = phi i1 [ %cmp.i.slowPath149, %pre.sync ], [ %cmp.i, %det.cont.i ], [ %cmp.i, %if.then.i ], [ %cmp.i159, %pre.sync ]
+		  // Where do cmp.i.slowPath149 comes from?
+		  // Which value in pre.sync should i use, cmp.i.slowpath149 or cmp.i159
+
+		  if(!VMapSlowPath[incomingInst])
+		    continue;
 
                   auto incomingInstSlow = dyn_cast<Instruction>(VMapSlowPath[incomingInst]);
                   if(!incomingInstSlow)
@@ -2535,6 +2590,7 @@ void LazyDTransPass::simplifyFcn(Function &F, FunctionAnalysisManager &AM) {
 void LazyDTransPass::replaceResultOfMultiRetCallWithRetpad(Function &F) {
   for( auto &BB : F ) {
     for (auto &II : BB ) {
+
       if(isa<MultiRetCallInst>(&II) && !(dyn_cast<MultiRetCallInst>(&II)->getCalledFunction()->getReturnType()->isVoidTy()) ) {
         auto mrc = dyn_cast<MultiRetCallInst>(&II);
 
@@ -2896,7 +2952,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   auto annotateFcn = Intrinsic::getDeclaration(M, Intrinsic::var_annotation);
   auto three = B.getInt32(3); // Indicate that this is a unwind handler
   auto stringptr = B.CreateGlobalStringPtr("test", "unwindhandler");
-  CallInst* res = B.CreateCall(annotateFcn, {BlockAddress::get( unwindPathEntry ), stringptr, stringptr, three});
+  CallInst* res = B.CreateCall(annotateFcn, {BlockAddress::get( unwindPathEntry ), stringptr, stringptr, three, stringptr});
   // Somehow need to set this to true to avoid cloberring with the alloca for fork result (analysis restul from MemoryDependency analysis)
   res->setTailCall(true);
   //====================================================================================================
@@ -2927,8 +2983,8 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   //
   //====================================================================================================
   // Function Needed
-  Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::read_sp);
-  Function* setSP = Intrinsic::getDeclaration(M, Intrinsic::write_sp);
+  //Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::read_sp);
+  //Function* setSP = Intrinsic::getDeclaration(M, Intrinsic::write_sp);
   Function* getFrameSize = Intrinsic::getDeclaration(M, Intrinsic::get_frame_size);
 
   // Constant
@@ -2941,7 +2997,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   //====================================================================================================
   // Save the context at a temporary variable
 
-  Value* gPTmpContext = B.CreateConstInBoundsGEP2_64(VoidPtrTy->getPointerTo(), gTmpContext, 0, 0 ); //void**
+  Value* gPTmpContext = B.CreateConstInBoundsGEP2_64(workcontext_ty, gTmpContext, 0, 0 ); //void**
   if(EnableSaveRestoreCtx) {
     auto donothingFcn = Intrinsic::getDeclaration(M, Intrinsic::donothing);
     auto saveContext = Intrinsic::getDeclaration(M, Intrinsic::uli_save_callee);
@@ -2966,7 +3022,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   pChildRA = B.CreateBitCast(pChildRA, IntegerType::getInt8Ty(C)->getPointerTo()->getPointerTo());
 
   // Get my return address's address
-  auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress);
+  auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress, {VoidPtrTy});
   Value* myRA = B.CreateCall(addrOfRA);
   myRA = B.CreateBitCast(myRA, IntegerType::getInt64Ty(C)->getPointerTo());
 
@@ -2983,7 +3039,6 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 
   // FIXME: first unwindPathNewStackBB should be resumeInterruptedBB
   if(EnableUnwindOnce) {
-
     BasicBlock* stackAlreadyUnwindCheckBB = BasicBlock::Create(C, "unwind.path.already.unwind.check", &F);
 
     Value* haveBeenUnwind = nullptr;
@@ -2995,8 +3050,8 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     }
     //xchg unwind_stack, rsp
 #ifndef STICK_STACKXCGH_FUNC
-    Value* unwindStack = B.CreateLoad(Int32Ty, gUnwindStack);
-    Value* mySP = B.CreateCall(getSP);
+    Value* unwindStack = B.CreateLoad(VoidPtrTy, gUnwindStack);
+    Value* mySP = getSP(B, F);
     B.CreateStore(mySP, gPrevSp);
     //using AsmTypeCallee = void (void*);
     FunctionType *FAsmTypeCallee = FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C)}, false);
@@ -3100,7 +3155,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
       //B.CreateConstInBoundsGEP2_64(gTmpContext, 0, 0 ); //void**
 
       Value* gWorkContextValPerThreadPerBot = B.CreateInBoundsGEP(workcontext_ty, gWorkContextValPerThreadVal, botVal);
-      Value* gWorkContextPtr = B.CreateConstInBoundsGEP2_64(VoidPtrTy->getPointerTo(), gWorkContextValPerThreadPerBot, 0, 0 ); //void**
+      Value* gWorkContextPtr = B.CreateConstInBoundsGEP2_64(workcontext_ty, gWorkContextValPerThreadPerBot, 0, 0 ); //void**
 
       // Savee the callee register
 #ifdef OPTIMIZE_UNWIND
@@ -3134,12 +3189,12 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 #ifdef OPTIMIZE_UNWIND_FUNC
       // Call a function to update parallel context (ip, join counter, owner of work, location, locRef
 #ifdef STICK_STACKXCGH_FUNC
-    Value* unwindStack = B.CreateLoad(Int32Ty, gUnwindStack);
-    Value* mySP = B.CreateCall(getSP);
+    Value* unwindStack = B.CreateLoad(VoidPtrTy, gUnwindStack);
+    Value* mySP = getSP(B, F);
     B.CreateStore(mySP, gPrevSp);
 #ifdef OPTIMIZE_FP
     auto unwindStackInt = B.CreateCast(Instruction::PtrToInt, unwindStack, IntegerType::getInt64Ty(C));
-    B.CreateCall(setSP, {unwindStackInt});
+    setSP(B, F, unwindStackInt);
 #else
     //using AsmTypeCallee = void (void*);
     FunctionType *FAsmTypeCallee = FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C)}, false);
@@ -3153,7 +3208,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 #ifdef STICK_STACKXCGH_FUNC
     Value* prevSP = B.CreateLoad(Int64Ty, gPrevSp);
 #ifdef OPTIMIZE_FP
-    B.CreateCall(setSP, {prevSP});
+    setSP(B, F, prevSP);
 #else
     using AsmTypeCallee2 = void (long);
     FunctionType *FAsmTypeCallee2 = FunctionType::get(Type::getVoidTy(C), {Type::getInt64Ty(C)}, false);
@@ -3308,12 +3363,12 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   if(DisablePushPopSeed) {
     // Get the unwind path entry based on return address
 #ifdef STICK_STACKXCGH_FUNC
-    Value* unwindStack = B.CreateLoad(Int32Ty, gUnwindStack);
-    Value* mySP = B.CreateCall(getSP);
+    Value* unwindStack = B.CreateLoad(VoidPtrTy, gUnwindStack);
+    Value* mySP = getSP(B, F);
     B.CreateStore(mySP, gPrevSp);
 #ifdef OPTIMIZE_FP
     auto unwindStackInt = B.CreateCast(Instruction::PtrToInt, unwindStack, IntegerType::getInt64Ty(C));
-    B.CreateCall(setSP, {unwindStackInt});
+    setSP(B, F, unwindStackInt);
 #else
     using AsmTypeCallee = void (void*);
     FunctionType *FAsmTypeCallee = FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C)}, false);
@@ -3328,7 +3383,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 #ifdef STICK_STACKXCGH_FUNC
     Value* prevSP = B.CreateLoad(Int64Ty, gPrevSp);
 #ifdef OPTIMIZE_FP
-    B.CreateCall(setSP, {prevSP});
+    setSP(B, F, prevSP);
 #else
     using AsmTypeCallee2 = void (long);
     FunctionType *FAsmTypeCallee2 = FunctionType::get(Type::getVoidTy(C), {Type::getInt64Ty(C)}, false);
@@ -3349,7 +3404,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     B.SetInsertPoint(resumeInterruptedBB);
 
     //B.CreateStore(ZERO, gUnwindStackCnt);
-    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(VoidPtrTy->getPointerTo()->getPointerTo(), gUnwindContext, 0, 0 );
+    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(workcontext_ty, gUnwindContext, 0, 0 );
 
     if(EnableSaveRestoreCtx) {
       //auto restoreCallee = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_restore_callee);
@@ -3658,12 +3713,12 @@ BasicBlock * LazyDTransPass::createGotStolenHandlerBB(DetachInst& Detach, BasicB
   builder.SetInsertPoint(stolenHandlerPathEntry->getFirstNonPHIOrDbgOrLifetime());
 
   // Create a variable annotation indicating that this either a gotstolen handler: 0
-  Function* varAnnotate = Intrinsic::getDeclaration(M, Intrinsic::var_annotation);
+  Function*  annotateFcn = Intrinsic::getDeclaration(M, Intrinsic::var_annotation);
   auto parentSpawn = spawnCI->getParent();
   auto parentBA = BlockAddress::get( parentSpawn );
   auto zero = builder.getInt32(0);
   auto stringptr = builder.CreateGlobalStringPtr("test", "gotstolen");
-  CallInst* res = builder.CreateCall(varAnnotate, {parentBA, stringptr, stringptr, zero});
+  CallInst* res = builder.CreateCall(annotateFcn, {parentBA, stringptr, stringptr, zero, stringptr});
   // Somehow need to set this to true to avoid cloberring with the alloca for fork result (analysis restul from MemoryDependency analysis)
   res->setTailCall(true);
   // Return the stolen handler
@@ -3735,8 +3790,7 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
     FunctionCallee GetStackletCtxFcnCall = Get_get_stacklet_ctx(*M);
     Value* workCtx = B.CreateCall(GetStackletCtxFcnCall);
 #else
-    Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::read_sp);
-    Value* mySP = B.CreateCall(getSP);
+    Value* mySP = getSP(B, F);
     mySP = B.CreateCast(Instruction::IntToPtr, mySP, IntegerType::getInt8Ty(C)->getPointerTo());
 
     FunctionCallee GetWorkCtxFcnCall = Get_get_workcontext_locowner(*M);
@@ -3866,7 +3920,7 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
 #if 0
     workCtx = B.CreateCall(GetStackletCtxFcnCall);
 #else
-    mySP = B.CreateCall(getSP);
+    mySP = getSP(B, F);
     mySP = B.CreateCast(Instruction::IntToPtr, mySP, IntegerType::getInt8Ty(C)->getPointerTo());
     workCtx = B.CreateCall(GetWorkCtxFcnCall, {B.CreateLoad(Int32Ty, locAlloc, 1, "locVal"), B.CreateLoad(Int32Ty, ownerAlloc, 1, "ownerVal"), mySP});
 #endif
@@ -3895,11 +3949,6 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
       args.push_back(ci->getArgOperand(i));
     }
     args.push_back(workCtx);
-
-    //Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::x86_read_sp);
-    //Value* mySP = B.CreateCall(getSP);
-    //mySP = B.CreateCast(Instruction::IntToPtr, mySP, IntegerType::getInt8Ty(C)->getPointerTo());
-
     args.push_back(mySP);
 
     if(!ci->getCalledFunction()->getReturnType()->isVoidTy()) {
@@ -4005,8 +4054,7 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
     //B.SetInsertPoint(syncSlowPath);
 
     // Check if we can resume directly
-    Function* getSP = Intrinsic::getDeclaration(M, Intrinsic::read_sp);
-    Value* mySP = B.CreateCall(getSP);
+    Value* mySP = getSP(B, F);
     mySP = B.CreateCast(Instruction::IntToPtr, mySP, IntegerType::getInt8Ty(C)->getPointerTo());
 
     Value * locVal = B.CreateLoad(Int32Ty, locAlloc, 1, "locVal");
@@ -4019,7 +4067,7 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
 
     FunctionCallee sync_slowpath = Get_sync_slowpath(*M);
     auto canResume = B.CreateCall(sync_slowpath, {locVal, ownerVal, mySP});
-    auto canResume2 = B.CreateICmpEQ(canResume, B.getInt8(1));
+    auto canResume2 = B.CreateICmpEQ(canResume, B.getInt1(1));
     B.CreateCondBr(canResume2, syncSucc, syncSaveCtxBB);
 
     B.SetInsertPoint(syncSaveCtxBB);
@@ -4493,7 +4541,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   //if(bHaveFork) {
     GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(Int64Ty, 32), *M, true);
     Value* L_ONE = B.getInt64(1);
-    auto workExists = B.CreateConstInBoundsGEP2_64(Type::getInt32Ty(C), prequestcell, 0, 1 );
+    auto workExists = B.CreateConstInBoundsGEP2_64(ArrayType::get(Int64Ty, 32), prequestcell, 0, 1 );
     insertPoint = B.CreateStore(L_ONE, workExists);
   }
 
@@ -4931,7 +4979,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
 PreservedAnalyses
 LazyDTransPass::run(Function &F, FunctionAnalysisManager &AM) {
-
   // Run on function.
   DominatorTree &DT = AM.getResult<DominatorTreeAnalysis>(F);
   // Get Dominance Tree and Dominance Frontier to add extra phi node (fix data flow)
