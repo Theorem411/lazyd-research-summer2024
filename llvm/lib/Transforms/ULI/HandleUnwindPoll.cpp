@@ -96,6 +96,15 @@ static cl::opt<bool> EnablePollTrace(
                                   );                                                 \
   }
 
+#define DEFAULT_GET_LIB_FUNC_VOID(name, returnTy)				\
+  static FunctionCallee Get_##name(Module& M) {                                       \
+   LLVMContext &Ctx = M.getContext();                                             \
+   return M.getOrInsertFunction( #name,                                            \
+				 FunctionType::get(returnTy(Ctx), {}, false) \
+                                  );                                                 \
+  }
+
+
 //using mylongjmp_callee_ty = void (void**);
 //DEFAULT_GET_LIB_FUNC(mylongjmp_callee, Type::getVoidTy, )
 
@@ -103,31 +112,47 @@ static cl::opt<bool> EnablePollTrace(
 //DEFAULT_GET_LIB_FUNC(mysetjmp_callee)
 
 //using postunwind_ty = void (void );
-DEFAULT_GET_LIB_FUNC(postunwind, Type::getVoidTy, Type::getVoidTy)
+DEFAULT_GET_LIB_FUNC_VOID(postunwind, Type::getVoidTy)
 
 //using postunwind_steal_ty = void (void );
-DEFAULT_GET_LIB_FUNC(postunwind_steal, Type::getVoidTy, Type::getVoidTy)
+DEFAULT_GET_LIB_FUNC_VOID(postunwind_steal, Type::getVoidTy)
 
 //using pollepoch_ty = void (void );
-DEFAULT_GET_LIB_FUNC(pollepoch, Type::getVoidTy, Type::getVoidTy)
+DEFAULT_GET_LIB_FUNC_VOID(pollepoch, Type::getVoidTy)
 
 //using calleverypoll_ty = void (void );
-DEFAULT_GET_LIB_FUNC(calleverypoll, Type::getVoidTy, Type::getVoidTy)
+DEFAULT_GET_LIB_FUNC_VOID(calleverypoll, Type::getVoidTy)
 
 //using preunwind_steal_ty = void (void );
-DEFAULT_GET_LIB_FUNC(preunwind_steal, Type::getVoidTy, Type::getVoidTy)
+DEFAULT_GET_LIB_FUNC_VOID(preunwind_steal, Type::getVoidTy)
 
 //using reduce_threshold_ty = void (void );
-DEFAULT_GET_LIB_FUNC(reduce_threshold, Type::getVoidTy, Type::getVoidTy)
+DEFAULT_GET_LIB_FUNC_VOID(reduce_threshold, Type::getVoidTy)
 
 //using check_workexists_and_modify_threshold_ty = int (void);
-DEFAULT_GET_LIB_FUNC(check_workexists_and_modify_threshold, Type::getInt32Ty, Type::getVoidTy)
+DEFAULT_GET_LIB_FUNC_VOID(check_workexists_and_modify_threshold, Type::getInt32Ty)
 
 //using unwind_workexists_ty = int (void );
-DEFAULT_GET_LIB_FUNC(unwind_workexists, Type::getInt32Ty, Type::getVoidTy)
+DEFAULT_GET_LIB_FUNC_VOID(unwind_workexists, Type::getInt32Ty)
 
 //using POLL_ty = void (int, void*, void*) ;
-//DEFAULT_GET_LIB_FUNC(POLL)
+//DEFAULT_GET_LIB_FUNC_VOID(POLL)
+
+// Based on HWAddressSanitizer.cpp
+static Value *readRegister(IRBuilder<> &IRB, StringRef Name) {
+  Module *M = IRB.GetInsertBlock()->getParent()->getParent();
+  LLVMContext *C = &(M->getContext());
+  Type * Int64Ty = IRB.getInt64Ty();
+  auto *ReadRegister = Intrinsic::getDeclaration(M, Intrinsic::read_register, Int64Ty);
+  MDNode *MD = MDNode::get(*C, {MDString::get(*C, Name)});
+  Value *Args[] = {MetadataAsValue::get(*C, MD)};
+  return IRB.CreateCall(ReadRegister, Args);
+}
+
+static Value* getSP(IRBuilder<> &B, Function& F) {
+  auto TargetTriple = Triple(F.getParent()->getTargetTriple());
+  return readRegister(B, (TargetTriple.getArch() == Triple::x86_64) ? "rsp" : "sp");
+}
 
 static FunctionCallee Get_POLL(Module& M) {
    LLVMContext &Ctx = M.getContext();
@@ -137,10 +162,10 @@ static FunctionCallee Get_POLL(Module& M) {
   }
 
 //using POLL2_ty = void (int, void*, void*, void*) ;
-//DEFAULT_GET_LIB_FUNC(POLL2)
+//DEFAULT_GET_LIB_FUNC_VOID(POLL2)
 
 //using stealRequestHandler_poll_ty = void (void*, void*, void*) ;
-//DEFAULT_GET_LIB_FUNC(stealRequestHandler_poll)
+//DEFAULT_GET_LIB_FUNC_VOID(stealRequestHandler_poll)
 
 static FunctionCallee Get_stealRequestHandler_poll(Module& M) {
   LLVMContext &Ctx = M.getContext();
@@ -150,10 +175,10 @@ static FunctionCallee Get_stealRequestHandler_poll(Module& M) {
 
 
 //using unwind_gosteal_ty = void (void );
-DEFAULT_GET_LIB_FUNC(unwind_gosteal, Type::getVoidTy, Type::getVoidTy)
+DEFAULT_GET_LIB_FUNC_VOID(unwind_gosteal, Type::getVoidTy)
 
 //using unwind_suspend_ty = void (void );
-DEFAULT_GET_LIB_FUNC(unwind_suspend, Type::getVoidTy, Type::getVoidTy)
+DEFAULT_GET_LIB_FUNC_VOID(unwind_suspend, Type::getVoidTy)
 
 namespace {
   struct HandleUnwindPoll : public FunctionPass {
@@ -322,10 +347,11 @@ namespace {
 
 
   Function* Get__unwindrts_unwind_poll(Module& M) {
+    assert(0 && "Not used");
     Function* Fn = nullptr;
     LLVMContext& Ctx = M.getContext();
     // int (void)
-    FunctionType* unwind_poll_ty = FunctionType::get(Type::getInt32Ty(Ctx), {Type::getVoidTy(Ctx)}, false);
+    FunctionType* unwind_poll_ty = FunctionType::get(Type::getInt32Ty(Ctx), {}, false);
     if (GetOrCreateFunction("unwind_poll_llvm", M, unwind_poll_ty, Fn))
       return Fn;
 
@@ -353,7 +379,7 @@ namespace {
     GlobalVariable* pthresholdTime = GetGlobalVariable("thresholdTime", IntegerType::getInt64Ty(Ctx), M, true);
 
     GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
-    Value* prequestCell = B.CreateConstInBoundsGEP2_64(IntegerType::getInt64Ty(Ctx)->getPointerTo(), prequestCellG, 0, 0 );
+    Value* prequestCell = B.CreateConstInBoundsGEP2_64(ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), prequestCellG, 0, 0 );
 
     if(EnablePollEpoch) {
       FunctionCallee pollepoch = Get_pollepoch(M);
@@ -439,7 +465,7 @@ namespace {
     // mysetjmp_callee(unwindCtx)
     // Store my context
     GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", workcontext_ty, M, true);
-    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(PointerType::getInt8PtrTy(Ctx)->getPointerTo(), gUnwindContext, 0, 0 );
+    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(workcontext_ty, gUnwindContext, 0, 0 );
 
     FunctionCallee preunwind_steal = Get_preunwind_steal(M);
     B.CreateCall(preunwind_steal);
@@ -523,10 +549,11 @@ namespace {
 
   // Suspend. Only create work if there is no parallel task
   Function* Get__unwindrts_unwind_suspend(Module& M) {
+    assert(0 && "Not used");
     Function* Fn = nullptr;
     LLVMContext& Ctx = M.getContext();
     // int (void)
-    FunctionType* unwind_poll_ty = FunctionType::get(Type::getInt32Ty(Ctx), {Type::getVoidTy(Ctx)}, false);
+    FunctionType* unwind_poll_ty = FunctionType::get(Type::getInt32Ty(Ctx), {}, false);
     if (GetOrCreateFunction("unwind_suspend_llvm", M, unwind_poll_ty, Fn))
       return Fn;
 
@@ -579,9 +606,9 @@ namespace {
     // Store my context
     B.SetInsertPoint(InitiateUnwind);
     GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", workcontext_ty, M, true);
-    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(PointerType::getInt8PtrTy(Ctx)->getPointerTo(), gUnwindContext, 0, 0 );
+    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(workcontext_ty, gUnwindContext, 0, 0 );
 
-    if(!EnableSaveRestoreCtx_2) {
+    if(EnableSaveRestoreCtx_2) {
       auto donothingFcn = Intrinsic::getDeclaration(&M, Intrinsic::donothing);
       auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::uli_save_context);
       B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(ResumeParent)});
@@ -653,10 +680,11 @@ namespace {
 
   // Use for checking if there is a request for work
   Function* Get__unwindrts_unwind_communicate(Module& M) {
+    assert(0 && "Not used");
     Function* Fn = nullptr;
     LLVMContext& Ctx = M.getContext();
     // int (void)
-    FunctionType* unwind_poll_ty = FunctionType::get(Type::getInt32Ty(Ctx), {Type::getVoidTy(Ctx)}, false);
+    FunctionType* unwind_poll_ty = FunctionType::get(Type::getInt32Ty(Ctx), {}, false);
     if (GetOrCreateFunction("unwind_communicate_llvm", M, unwind_poll_ty, Fn))
       return Fn;
 
@@ -684,7 +712,7 @@ namespace {
 
     GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
     GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
-    auto prequestCell = B.CreateConstInBoundsGEP2_64(IntegerType::getInt64Ty(Ctx)->getPointerTo(), prequestCellG, 0, 0 );
+    auto prequestCell = B.CreateConstInBoundsGEP2_64(ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), prequestCellG, 0, 0 );
 
     //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
 
@@ -712,7 +740,7 @@ namespace {
     // Store my context
     B.SetInsertPoint(InitiateUnwind);
     GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", workcontext_ty, M, true);
-    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(PointerType::getInt8PtrTy(Ctx)->getPointerTo(), gUnwindContext, 0, 0 );
+    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(workcontext_ty, gUnwindContext, 0, 0 );
 
     FunctionCallee preunwind_steal = Get_preunwind_steal(M);
     B.CreateCall(preunwind_steal);
@@ -755,10 +783,11 @@ namespace {
 
   // Use for checking if there is a request for work
   Function* Get__unwindrts_unwind_ulifsim(Module& M) {
+    assert(0 && "Not used");
     Function* Fn = nullptr;
     LLVMContext& Ctx = M.getContext();
     // int (void)
-    FunctionType* unwind_poll_ty = FunctionType::get(Type::getInt32Ty(Ctx), {Type::getVoidTy(Ctx)}, false);
+    FunctionType* unwind_poll_ty = FunctionType::get(Type::getInt32Ty(Ctx), {}, false);
     if (GetOrCreateFunction("unwind_ulifsim_llvm", M, unwind_poll_ty, Fn))
       return Fn;
 
@@ -786,7 +815,7 @@ namespace {
 
     GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
     GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
-    auto prequestCell = B.CreateConstInBoundsGEP2_64(IntegerType::getInt64Ty(Ctx)->getPointerTo(), prequestCellG, 0, 0 );
+    auto prequestCell = B.CreateConstInBoundsGEP2_64(ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), prequestCellG, 0, 0 );
 
     //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
 
@@ -819,12 +848,12 @@ namespace {
     // Store my context
     B.SetInsertPoint(InitiateUnwind);
     GlobalVariable *gUnwindContext = GetGlobalVariable("unwindCtx", workcontext_ty, M, true);
-    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(PointerType::getInt8PtrTy(Ctx)->getPointerTo(), gUnwindContext, 0, 0 );
+    Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(workcontext_ty, gUnwindContext, 0, 0 );
 
     FunctionCallee preunwind_steal = Get_preunwind_steal(M);
     B.CreateCall(preunwind_steal);
 
-    if(!EnableSaveRestoreCtx_2) {
+    if(EnableSaveRestoreCtx_2) {
       auto donothingFcn = Intrinsic::getDeclaration(&M, Intrinsic::donothing);
       auto saveContext = Intrinsic::getDeclaration(&M, Intrinsic::uli_save_context);
       //B.CreateCall(saveContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(Ctx)->getPointerTo()), BlockAddress::get(InitiateUnwind, 1)});
@@ -858,6 +887,7 @@ namespace {
     Function* Fn = nullptr;
     LLVMContext& Ctx = M.getContext();
     //int (void*)
+    Type *VoidPtrTy  = PointerType::getInt8PtrTy(Ctx);
     FunctionType* unwind_poll_jmpimm_ty = FunctionType::get(Type::getInt32Ty(Ctx), {PointerType::getInt8PtrTy(Ctx)}, false);
 
     if (GetOrCreateFunction("unwind_ulifsim_llvm", M, unwind_poll_jmpimm_ty, Fn))
@@ -883,7 +913,7 @@ namespace {
 
     GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
     GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
-    auto prequestCell = B.CreateConstInBoundsGEP2_64(IntegerType::getInt64Ty(Ctx)->getPointerTo(), prequestCellG, 0, 0 );
+    auto prequestCell = B.CreateConstInBoundsGEP2_64(ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), prequestCellG, 0, 0 );
 
     //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
 
@@ -907,15 +937,14 @@ namespace {
     auto unwindPathEntry = &*args;
 
 
-    Function* getSP = Intrinsic::getDeclaration(&M, Intrinsic::read_sp);
-    Value* mySP = B.CreateCall(getSP);
+    Value* mySP = getSP(B, *B.GetInsertBlock()->getParent());
     mySP = B.CreateCast(Instruction::IntToPtr, mySP, IntegerType::getInt8Ty(Ctx)->getPointerTo());
 
 
     // Get my base pointer
     Value* EIGHT = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
 
-    auto addrOfRA = Intrinsic::getDeclaration(&M, Intrinsic::addressofreturnaddress);
+    auto addrOfRA = Intrinsic::getDeclaration(&M, Intrinsic::addressofreturnaddress, {VoidPtrTy});
     Value* myRA = B.CreateCall(addrOfRA);
     //myRA = B.CreateBitCast(myRA, IntegerType::getInt8Ty(Ctx)->getPointerTo());
     myRA = B.CreateCast(Instruction::PtrToInt, myRA, IntegerType::getInt64Ty(Ctx));
@@ -938,6 +967,7 @@ namespace {
     Function* Fn = nullptr;
     LLVMContext& Ctx = M.getContext();
     // int(long, long, long*, char*)
+    Type *VoidPtrTy  = PointerType::getInt8PtrTy(Ctx);
     FunctionType* unwind_poll_pfor_ty = FunctionType::get(Type::getInt32Ty(Ctx), {Type::getInt64Ty(Ctx), Type::getInt64Ty(Ctx), PointerType::getInt64PtrTy(Ctx), PointerType::getInt8PtrTy(Ctx)}, false);
     if (GetOrCreateFunction("unwind_poll_pfor_llvm", M, unwind_poll_pfor_ty, Fn))
       return Fn;
@@ -961,7 +991,7 @@ namespace {
 
     GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
     GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
-    auto prequestCell = B.CreateConstInBoundsGEP2_64(IntegerType::getInt64Ty(Ctx)->getPointerTo(), prequestCellG, 0, 0 );
+    auto prequestCell = B.CreateConstInBoundsGEP2_64(ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), prequestCellG, 0, 0 );
 
     //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
 
@@ -994,15 +1024,13 @@ namespace {
     //auto nextIteration = B.CreateAdd(ivValue, ivInc);
     B.CreateStore(ivValue, ivStorage, true);
 
-    Function* getSP = Intrinsic::getDeclaration(&M, Intrinsic::read_sp);
-    Value* mySP = B.CreateCall(getSP);
+    Value* mySP = getSP(B, *B.GetInsertBlock()->getParent());
     mySP = B.CreateCast(Instruction::IntToPtr, mySP, IntegerType::getInt8Ty(Ctx)->getPointerTo());
-
 
     // Get my base pointer
     Value* EIGHT = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
 
-    auto addrOfRA = Intrinsic::getDeclaration(&M, Intrinsic::addressofreturnaddress);
+    auto addrOfRA = Intrinsic::getDeclaration(&M, Intrinsic::addressofreturnaddress, {VoidPtrTy});
     Value* myRA = B.CreateCall(addrOfRA);
     //myRA = B.CreateBitCast(myRA, IntegerType::getInt8Ty(Ctx)->getPointerTo());
     myRA = B.CreateCast(Instruction::PtrToInt, myRA, IntegerType::getInt64Ty(Ctx));
@@ -1030,8 +1058,8 @@ namespace {
 bool HandleUnwindPollPass::detachExists(Function& F) {
   Module* M = F.getParent();
 
-  for(auto &Fcn : *M) {
-    for (auto &BB : Fcn) {
+  //for(auto &Fcn : *M) {
+    for (auto &BB : F) {
       for (auto it = BB.begin(); it != BB.end(); ++it) {
         auto &instr = *it;
 
@@ -1039,7 +1067,7 @@ bool HandleUnwindPollPass::detachExists(Function& F) {
           return true;
       }
     }
-  }
+    //}
   return false;
 }
 
@@ -1161,7 +1189,7 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
     // TODO: Kill callee-saved register
     //using AsmTypeCallee = void (void);
     //FunctionType *killCallee = TypeBuilder<AsmTypeCallee, false>::get(C);
-    FunctionType *killCallee = FunctionType::get(Type::getVoidTy(C), {Type::getVoidTy(C)}, false);
+    FunctionType *killCallee = FunctionType::get(Type::getVoidTy(C), {}, false);
 
     InlineAsm* Asm = InlineAsm::get(killCallee, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
     B.CreateCall(Asm);
@@ -1230,6 +1258,7 @@ bool HandleUnwindPollPass::handleChangeRetAddr(BasicBlock &BB)  {
   Function* F = BB.getParent();
   LLVMContext& C = BB.getContext();
   IRBuilder<> B(C);
+  Type *VoidPtrTy  = PointerType::getInt8PtrTy(C);
 
   SmallVector<Instruction*, 4> inst2delete;
   bool modified = false;
@@ -1261,14 +1290,14 @@ bool HandleUnwindPollPass::handleChangeRetAddr(BasicBlock &BB)  {
     B.SetInsertPoint(ii);
 
     if(fn->getIntrinsicID() == Intrinsic::uli_change_returnaddress) {
-      auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress);
+      auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress, {VoidPtrTy});
       Value* myRA = B.CreateCall(addrOfRA);
       myRA = B.CreateBitCast(myRA, IntegerType::getInt64Ty(C)->getPointerTo());
       Value* newAddr = B.CreateCast(Instruction::PtrToInt, call->getArgOperand(0), IntegerType::getInt64Ty(C));
       // Store new returnaddress to location of returnaddress
       B.CreateStore(newAddr, myRA);
     } else if(fn->getIntrinsicID() == Intrinsic::uli_save_returnaddress) {
-      auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress);
+      auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress, {VoidPtrTy});
       Value* myRA = B.CreateCall(addrOfRA);
       myRA = B.CreateBitCast(myRA, IntegerType::getInt64Ty(C)->getPointerTo());
       Value* raValue = B.CreateLoad(IntegerType::getInt64Ty(C), myRA);
@@ -1295,25 +1324,26 @@ bool HandleUnwindPollPass::runImpl(Function &F) {
   bool changed = false;
 
   bool bDetachExists= detachExists(F);
+  assert(!bDetachExists && "Detach still exists");
   auto unwindPathEntry = findUnwindPathEntry(F);
 
   if(unwindPathEntry && !initialized) {
     Module &M = *(F.getParent());
-    auto fcn = UNWINDRTS_FUNC(unwind_poll, M);
-    fcn->addFnAttr(Attribute::NoUnwindPath);
-    fcn = UNWINDRTS_FUNC(unwind_suspend, M);
-    fcn->addFnAttr(Attribute::NoUnwindPath);
-    fcn = UNWINDRTS_FUNC(unwind_communicate, M);
-    fcn->addFnAttr(Attribute::NoUnwindPath);
+    //auto fcn = UNWINDRTS_FUNC(unwind_poll, M);
+    //fcn->addFnAttr(Attribute::NoUnwindPath);
+    //fcn = UNWINDRTS_FUNC(unwind_suspend, M);
+    //fcn->addFnAttr(Attribute::NoUnwindPath);
+    //fcn = UNWINDRTS_FUNC(unwind_communicate, M);
+    //fcn->addFnAttr(Attribute::NoUnwindPath);
 
-    fcn = UNWINDRTS_FUNC(mysetjmp_callee, M);
-    fcn->addFnAttr(Attribute::NoUnwindPath);
-    fcn = UNWINDRTS_FUNC(mysetjmp_callee_nosp, M);
-    fcn->addFnAttr(Attribute::NoUnwindPath);
-    fcn = UNWINDRTS_FUNC(mylongwithoutjmp_callee, M);
-    fcn->addFnAttr(Attribute::NoUnwindPath);
-    fcn = UNWINDRTS_FUNC(mylongjmp_callee, M);
-    fcn->addFnAttr(Attribute::NoUnwindPath);
+    //fcn = UNWINDRTS_FUNC(mysetjmp_callee, M);
+    //fcn->addFnAttr(Attribute::NoUnwindPath);
+    //fcn = UNWINDRTS_FUNC(mysetjmp_callee_nosp, M);
+    //fcn->addFnAttr(Attribute::NoUnwindPath);
+    //fcn = UNWINDRTS_FUNC(mylongwithoutjmp_callee, M);
+    //fcn->addFnAttr(Attribute::NoUnwindPath);
+    //fcn = UNWINDRTS_FUNC(mylongjmp_callee, M);
+    //fcn->addFnAttr(Attribute::NoUnwindPath);
 
     initialized = true;
   }
