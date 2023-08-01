@@ -3111,7 +3111,7 @@ void SelectionDAGBuilder::visitMultiRetCall(const MultiRetCallInst &I) {
   // Retrieve successors.
   MachineBasicBlock *Return = FuncInfo.MBBMap[I.getDefaultDest()];
 
-  const Value *Callee(I.getCalledValue());
+  const Value *Callee(I.getCalledOperand());
   const Function *Fn = dyn_cast<Function>(Callee);
   if (isa<InlineAsm>(Callee)) {
     assert(0 && "MultiRetCall does not lower InlineAsm\n");
@@ -3207,7 +3207,7 @@ void SelectionDAGBuilder::visitRetPad(const RetPadInst &I) {
   assert(MRCI == MRCI2 && "The parent's terminator should be the same with the operand of the retpad");
 #endif
 
-  const Value *Callee(MRCI->getCalledValue());
+  const Value *Callee(MRCI->getCalledOperand());
 
   // Create DAG for the remaining of the function call
   LowerMultiRetCallEpilogueTo(*MRCI, getValue(Callee), false, nullptr);
