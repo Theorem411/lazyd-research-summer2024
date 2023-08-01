@@ -1010,15 +1010,6 @@ void MultiRetCallInst::init(FunctionType *FTy, Value *Fn, BasicBlock *Fallthroug
   assert((int)getNumOperands() == ComputeNumOperands(Args.size(), IndirectDests.size(), CountBundleInputs(Bundles)) && "NumOperands not set up?");
 
 
-  NumIndirectDests = IndirectDests.size();
-  setDefaultDest(Fallthrough);
-  for (unsigned i = 0; i != NumIndirectDests; ++i)
-    setIndirectDest(i, IndirectDests[i]);
-  setCalledOperand(Fn);
-
-  // TODO: CNP why is this needed. Can this be comment out
-  setCalledFunction(dyn_cast<Function>(Fn));
-
 #ifndef NDEBUG
   assert(((Args.size() == FTy->getNumParams()) ||
           (FTy->isVarArg() && Args.size() > FTy->getNumParams())) &&
@@ -1031,6 +1022,14 @@ void MultiRetCallInst::init(FunctionType *FTy, Value *Fn, BasicBlock *Fallthroug
 #endif
 
   std::copy(Args.begin(), Args.end(), op_begin());
+  NumIndirectDests = IndirectDests.size();
+  setDefaultDest(Fallthrough);
+  for (unsigned i = 0; i != NumIndirectDests; ++i)
+    setIndirectDest(i, IndirectDests[i]);
+  setCalledOperand(Fn);
+
+  // TODO: CNP why is this needed. Can this be comment out
+  //setCalledFunction(dyn_cast<Function>(Fn));
 
   auto It = populateBundleOperandInfos(Bundles, Args.size());
   (void)It;
@@ -1043,8 +1042,10 @@ void MultiRetCallInst::updateArgBlockAddresses(unsigned i, BasicBlock *B) {
   assert(getNumIndirectDests() > i && "IndirectDest # out of range for multiretcall");
   if (BasicBlock *OldBB = getIndirectDest(i)) {
     // TODO: Check why I need the parent
-    BlockAddress *Old = BlockAddress::get(OldBB->getParent(), OldBB);
-    BlockAddress *New = BlockAddress::get(OldBB->getParent(), B);
+    //BlockAddress *Old = BlockAddress::get(OldBB->getParent(), OldBB);
+    //BlockAddress *New = BlockAddress::get(OldBB->getParent(), B);
+    BlockAddress *Old = BlockAddress::get(OldBB);
+    BlockAddress *New = BlockAddress::get(B);
     for (unsigned ArgNo = 0, e = arg_size(); ArgNo != e; ++ArgNo)
       if (dyn_cast<BlockAddress>(getArgOperand(ArgNo)) == Old)
 	setArgOperand(ArgNo, New);
@@ -1067,7 +1068,8 @@ MultiRetCallInst *MultiRetCallInst::Create(MultiRetCallInst *II, ArrayRef<Operan
                                Instruction *InsertPt) {
   std::vector<Value *> Args(II->arg_begin(), II->arg_end());
 
-  auto *NewII = MultiRetCallInst::Create(II->getCalledValue(), II->getDefaultDest(),
+  //auto *NewII = MultiRetCallInst::Create(II->getCalledValue(), II->getDefaultDest(),
+  auto *NewII = MultiRetCallInst::Create(II->getFunctionType(), II->getCalledOperand(), II->getDefaultDest(),
                                    II->getIndirectDests(), Args, OpB,
                                    II->getName(), InsertPt);
   NewII->setCallingConv(II->getCallingConv());

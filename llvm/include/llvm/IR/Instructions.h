@@ -4220,24 +4220,12 @@ CallBrInst::CallBrInst(FunctionType *Ty, Value *Func, BasicBlock *DefaultDest,
 ///
 class MultiRetCallInst : public CallBase {
   unsigned NumIndirectDests;
-  AttributeList Attrs;
-  FunctionType *FTy;
 
   MultiRetCallInst(const MultiRetCallInst &BI);
 
   /// Construct an MultiRetCallInst given a range of arguments.
   ///
   /// Construct an MultiRetCallInst from a range of arguments
-  inline MultiRetCallInst(Value *Func, BasicBlock *Fallthrough,
-		    ArrayRef<BasicBlock* > IndirectDests,
-		    ArrayRef<Value *> Args, ArrayRef<OperandBundleDef> Bundles,
-                    int NumOperands, const Twine &NameStr,
-                    Instruction *InsertBefore)
-      : MultiRetCallInst(cast<FunctionType>(
-                       cast<PointerType>(Func->getType())->getElementType()),
-                   Func, Fallthrough, IndirectDests, Args, Bundles, NumOperands, NameStr,
-                   InsertBefore) {}
-
   inline MultiRetCallInst(FunctionType *Ty, Value *Func, BasicBlock *Fallthrough,
                     ArrayRef<BasicBlock* > IndirectDests, ArrayRef<Value *> Args,
                     ArrayRef<OperandBundleDef> Bundles, int NumOperands,
@@ -4252,14 +4240,6 @@ class MultiRetCallInst : public CallBase {
                     BasicBlock *InsertAtEnd);
 
   bool hasDescriptor() const { return HasDescriptor; }
-
-  void init(Value *Func, BasicBlock *Fallthrough, ArrayRef<BasicBlock* > IndirectDests,
-            ArrayRef<Value *> Args, ArrayRef<OperandBundleDef> Bundles,
-            const Twine &NameStr) {
-    init(cast<FunctionType>(
-             cast<PointerType>(Func->getType())->getElementType()),
-         Func, Fallthrough, IndirectDests, Args, Bundles, NameStr);
-  }
 
   void init(FunctionType *FTy, Value *Func, BasicBlock *Fallthrough,
             ArrayRef<BasicBlock* > IndirectDests, ArrayRef<Value *> Args,
@@ -4283,72 +4263,95 @@ protected:
   MultiRetCallInst *cloneImpl() const;
 
 public:
-  static MultiRetCallInst *Create(Value *Func, BasicBlock *Fallthrough,
-                            ArrayRef<BasicBlock* > IndirectDests, ArrayRef<Value *> Args,
-                            const Twine &NameStr,
+  static MultiRetCallInst *Create(FunctionType *Ty, Value *Func,
+                            BasicBlock *DefaultDest,
+                            ArrayRef<BasicBlock *> IndirectDests,
+                            ArrayRef<Value *> Args, const Twine &NameStr,
                             Instruction *InsertBefore = nullptr) {
-    return Create(cast<FunctionType>(
-                      cast<PointerType>(Func->getType())->getElementType()),
-                  Func, Fallthrough, IndirectDests, Args, None, NameStr,
-                  InsertBefore);
+    int NumOperands = ComputeNumOperands(Args.size(), IndirectDests.size());
+    return new (NumOperands)
+        MultiRetCallInst(Ty, Func, DefaultDest, IndirectDests, Args, None,
+                   NumOperands, NameStr, InsertBefore);
   }
 
-  static MultiRetCallInst *Create(Value *Func, BasicBlock *Fallthrough,
-                            ArrayRef<BasicBlock* > IndirectDests, ArrayRef<Value *> Args,
+  static MultiRetCallInst *Create(FunctionType *Ty, Value *Func,
+                            BasicBlock *DefaultDest,
+                            ArrayRef<BasicBlock *> IndirectDests,
+                            ArrayRef<Value *> Args,
                             ArrayRef<OperandBundleDef> Bundles = None,
                             const Twine &NameStr = "",
                             Instruction *InsertBefore = nullptr) {
-    return Create(cast<FunctionType>(
-                      cast<PointerType>(Func->getType())->getElementType()),
-                  Func, Fallthrough, IndirectDests, Args, Bundles, NameStr,
-                  InsertBefore);
-  }
-
-  static MultiRetCallInst *Create(FunctionType *Ty, Value *Func, BasicBlock *Fallthrough,
-                            ArrayRef<BasicBlock* > IndirectDests, ArrayRef<Value *> Args,
-                            const Twine &NameStr,
-                            Instruction *InsertBefore = nullptr) {
-    unsigned Values = unsigned(Args.size()) + 2 + unsigned(IndirectDests.size());
-    return new (Values) MultiRetCallInst(Ty, Func, Fallthrough, IndirectDests, Args, None,
-                                   Values, NameStr, InsertBefore);
-  }
-
-  static MultiRetCallInst *Create(FunctionType *Ty, Value *Func, BasicBlock *Fallthrough,
-                            ArrayRef<BasicBlock* > IndirectDests, ArrayRef<Value *> Args,
-                            ArrayRef<OperandBundleDef> Bundles = None,
-                            const Twine &NameStr = "",
-                            Instruction *InsertBefore = nullptr) {
-    unsigned Values = unsigned(Args.size()) + CountBundleInputs(Bundles) +
-      2 + unsigned(IndirectDests.size());
-
+    int NumOperands = ComputeNumOperands(Args.size(), IndirectDests.size(),
+                                         CountBundleInputs(Bundles));
     unsigned DescriptorBytes = Bundles.size() * sizeof(BundleOpInfo);
 
-    return new (Values, DescriptorBytes)
-        MultiRetCallInst(Ty, Func, Fallthrough, IndirectDests, Args, Bundles, Values,
-                   NameStr, InsertBefore);
+    return new (NumOperands, DescriptorBytes)
+        MultiRetCallInst(Ty, Func, DefaultDest, IndirectDests, Args, Bundles,
+                   NumOperands, NameStr, InsertBefore);
   }
 
-  static MultiRetCallInst *Create(Value *Func,
-                            BasicBlock *Fallthrough, ArrayRef<BasicBlock* > IndirectDests,
+  static MultiRetCallInst *Create(FunctionType *Ty, Value *Func,
+                            BasicBlock *DefaultDest,
+                            ArrayRef<BasicBlock *> IndirectDests,
                             ArrayRef<Value *> Args, const Twine &NameStr,
                             BasicBlock *InsertAtEnd) {
-    unsigned Values = unsigned(Args.size()) + 2 + unsigned(IndirectDests.size());
-    return new (Values) MultiRetCallInst(cast<FunctionType>(cast<PointerType>(Func->getType())->getElementType()), Func, Fallthrough, IndirectDests, Args, None,
-                                   Values, NameStr, InsertAtEnd);
+    int NumOperands = ComputeNumOperands(Args.size(), IndirectDests.size());
+    return new (NumOperands)
+        MultiRetCallInst(Ty, Func, DefaultDest, IndirectDests, Args, None,
+                   NumOperands, NameStr, InsertAtEnd);
   }
 
-  static MultiRetCallInst *Create(Value *Func, BasicBlock *Fallthrough,
-                            ArrayRef<BasicBlock* > IndirectDests, ArrayRef<Value *> Args,
+  static MultiRetCallInst *Create(FunctionType *Ty, Value *Func,
+                            BasicBlock *DefaultDest,
+                            ArrayRef<BasicBlock *> IndirectDests,
+                            ArrayRef<Value *> Args,
                             ArrayRef<OperandBundleDef> Bundles,
                             const Twine &NameStr, BasicBlock *InsertAtEnd) {
-    unsigned Values = unsigned(Args.size()) + CountBundleInputs(Bundles) +
-      2 + unsigned(IndirectDests.size());
+    int NumOperands = ComputeNumOperands(Args.size(), IndirectDests.size(),
+                                         CountBundleInputs(Bundles));
     unsigned DescriptorBytes = Bundles.size() * sizeof(BundleOpInfo);
 
-    return new (Values, DescriptorBytes)
-        MultiRetCallInst(cast<FunctionType>(cast<PointerType>(Func->getType())->getElementType()), Func, Fallthrough, IndirectDests, Args, Bundles, Values, NameStr,
-                   InsertAtEnd);
+    return new (NumOperands, DescriptorBytes)
+        MultiRetCallInst(Ty, Func, DefaultDest, IndirectDests, Args, Bundles,
+                   NumOperands, NameStr, InsertAtEnd);
   }
+
+  static MultiRetCallInst *Create(FunctionCallee Func, BasicBlock *DefaultDest,
+                            ArrayRef<BasicBlock *> IndirectDests,
+                            ArrayRef<Value *> Args, const Twine &NameStr,
+                            Instruction *InsertBefore = nullptr) {
+    return Create(Func.getFunctionType(), Func.getCallee(), DefaultDest,
+                  IndirectDests, Args, NameStr, InsertBefore);
+  }
+
+  static MultiRetCallInst *Create(FunctionCallee Func, BasicBlock *DefaultDest,
+                            ArrayRef<BasicBlock *> IndirectDests,
+                            ArrayRef<Value *> Args,
+                            ArrayRef<OperandBundleDef> Bundles = None,
+                            const Twine &NameStr = "",
+                            Instruction *InsertBefore = nullptr) {
+    return Create(Func.getFunctionType(), Func.getCallee(), DefaultDest,
+                  IndirectDests, Args, Bundles, NameStr, InsertBefore);
+  }
+
+  static MultiRetCallInst *Create(FunctionCallee Func, BasicBlock *DefaultDest,
+                            ArrayRef<BasicBlock *> IndirectDests,
+                            ArrayRef<Value *> Args, const Twine &NameStr,
+                            BasicBlock *InsertAtEnd) {
+    return Create(Func.getFunctionType(), Func.getCallee(), DefaultDest,
+                  IndirectDests, Args, NameStr, InsertAtEnd);
+  }
+
+  static MultiRetCallInst *Create(FunctionCallee Func,
+                            BasicBlock *DefaultDest,
+                            ArrayRef<BasicBlock *> IndirectDests,
+                            ArrayRef<Value *> Args,
+                            ArrayRef<OperandBundleDef> Bundles,
+                            const Twine &NameStr, BasicBlock *InsertAtEnd) {
+    return Create(Func.getFunctionType(), Func.getCallee(), DefaultDest,
+                  IndirectDests, Args, Bundles, NameStr, InsertAtEnd);
+  }
+
 
   /// Create a clone of \p II with a different set of operand bundles and
   /// insert it before \p InsertPt.
@@ -4361,67 +4364,6 @@ public:
 
   /// Provide fast operand accessors
   //DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
-
-#if 0
-  /// Return the number of multiretcall arguments.
-  ///
-  unsigned getNumArgOperands() const {
-    return getNumOperands() - getNumTotalBundleOperands() - getNumIndirectDests() - 1 - 1;
-  }
-
-  /// getArgOperand/setArgOperand - Return/set the i-th invoke argument.
-  ///
-  Value *getArgOperand(unsigned i) const {
-    assert(i < getNumArgOperands() && "Out of bounds!");
-    return getOperand(i);
-  }
-  void setArgOperand(unsigned i, Value *v) {
-    assert(i < getNumArgOperands() && "Out of bounds!");
-    setOperand(i, v);
-  }
-
-  /// Return the iterator pointing to the end of the argument list.
-  op_iterator arg_end() {
-    // [ invoke args ], [ operand bundles ], [ indirect destination ], normal dest, callee
-    return op_end() - getNumTotalBundleOperands() - getNumIndirectDests() - 2;
-  }
-
-  /// Iteration adapter for range-for loops.
-  iterator_range<op_iterator> arg_operands() {
-    return make_range(arg_begin(), arg_end());
-  }
-
-  /// Return the iterator pointing to the end of the argument list.
-  const_op_iterator arg_end() const {
-    // [ invoke args ], [ operand bundles ], [ indirect destination ], normal dest, callee
-    return op_end() - getNumTotalBundleOperands() - getNumIndirectDests() - 2;
-  }
-
-  /// Iteration adapter for range-for loops.
-  iterator_range<const_op_iterator> arg_operands() const {
-    return make_range(arg_begin(), arg_end());
-  }
-
-  /// Wrappers for getting the \c Use of a invoke argument.
-  const Use &getArgOperandUse(unsigned i) const {
-    assert(i < getNumArgOperands() && "Out of bounds!");
-    return getOperandUse(i);
-  }
-  Use &getArgOperandUse(unsigned i) {
-    assert(i < getNumArgOperands() && "Out of bounds!");
-    return getOperandUse(i);
-  }
-
-  /// If one of the arguments has the 'returned' attribute, return its
-  /// operand value. Otherwise, return nullptr.
-  Value *getReturnedArgOperand() const;
-#endif
-
-  /// Get a pointer to the function that is invoked by this
-  /// instruction
-  const Value *getCalledValue() const { return Op<-1>(); }
-        Value *getCalledValue()       { return Op<-1>(); }
-
   /// Return the number of multiretcall indirect's dest labels
   ///
   unsigned getNumIndirectDests() const { return NumIndirectDests; }
@@ -5382,12 +5324,6 @@ public:
   RetPadInst(Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd);
   RetPadInst(Type *Ty, Value *MultiRetCallVal, const Twine &NameStr, BasicBlock *InsertAtEnd);
   RetPadInst(Type *Ty, const Twine &NameStr, BasicBlock *InsertAtEnd);
-
-#if 0
-  Value* getMultiRetCallOperand() { return getOperand(0); }
-  const Value* getMultiRetCallOperand() const { return getOperand(0); }
-  Type* getMultiRetCallOperandType() const { return getMultiRetCallOperand()->getType(); }
-#endif
 
   // Methods for support type inquiry through isa, cast, and dyn_cast:
   static bool classof(const Instruction *I) {

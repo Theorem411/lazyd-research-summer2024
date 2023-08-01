@@ -5075,12 +5075,13 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
         }
       }
 
-      I = MultiRetCallInst::Create(Callee, DefaultDest, IndirectDests, Ops, OperandBundles);
+      I = MultiRetCallInst::Create(FTy, Callee, DefaultDest, IndirectDests, Ops, OperandBundles);
       OperandBundles.clear();
       InstructionList.push_back(I);
       cast<MultiRetCallInst>(I)->setCallingConv(
           static_cast<CallingConv::ID>(CallingConv::MaxID & CCInfo));
       cast<MultiRetCallInst>(I)->setAttributes(PAL);
+      //propagateAttributeTypes(cast<CallBase>(I), ArgsTys);
       break;
     }
     case bitc::FUNC_CODE_INST_PHI: { // PHI: [ty, val0,bb0, ...]

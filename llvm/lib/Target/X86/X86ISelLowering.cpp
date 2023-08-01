@@ -26442,18 +26442,6 @@ static SDValue scalarizeVectorStore(StoreSDNode *Store, MVT StoreVT,
   if (!Store->isSimple())
     return SDValue();
 
-#if 0
-  case Intrinsic::x86_read_sp:
-  case Intrinsic::x86_write_sp:
-    return  SDValue();    // Don't custom lower most intrinsics.
-  case Intrinsic::x86_avx2_permd:
-  case Intrinsic::x86_avx2_permps:
-    // Operands intentionally swapped. Mask is last operand to intrinsic,
-    // but second operand for node/instruction.
-    return DAG.getNode(X86ISD::VPERMV, dl, Op.getValueType(),
-                       Op.getOperand(2), Op.getOperand(1));
-#endif
-
   MVT StoreSVT = StoreVT.getScalarType();
   unsigned NumElems = StoreVT.getVectorNumElements();
   unsigned ScalarSize = StoreSVT.getStoreSize();

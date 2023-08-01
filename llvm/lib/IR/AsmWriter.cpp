@@ -4269,7 +4269,7 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
     }
     Out << ']';
   } else if (const MultiRetCallInst *MRCI = dyn_cast<MultiRetCallInst>(&I)) {
-    Operand = MRCI->getCalledValue();
+    Operand = MRCI->getCalledOperand();
     FunctionType *FTy = MRCI->getFunctionType();
     Type *RetTy = FTy->getReturnType();
     const AttributeList &PAL = MRCI->getAttributes();

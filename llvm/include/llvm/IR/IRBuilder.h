@@ -1190,21 +1190,20 @@ public:
 				     OpBundles), Name);
   }
 
-  MultiRetCallInst *CreateMultiRetCall(Function *Callee,
-				       BasicBlock *DefaultDest,
-				       ArrayRef<BasicBlock *> IndirectDests,
-				       ArrayRef<Value *> Args,
-				       ArrayRef<OperandBundleDef> OpBundles,
-			   const Twine &Name = "") {
-    return CreateMultiRetCall(Callee->getFunctionType(), Callee, DefaultDest, IndirectDests, Args, OpBundles, Name);
+  MultiRetCallInst *CreateMultiRetCall(FunctionCallee Callee, BasicBlock *DefaultDest,
+                           ArrayRef<BasicBlock *> IndirectDests,
+                           ArrayRef<Value *> Args = None,
+                           const Twine &Name = "") {
+    return CreateMultiRetCall(Callee.getFunctionType(), Callee.getCallee(),
+                        DefaultDest, IndirectDests, Args, Name);
   }
-
-  MultiRetCallInst *CreateMultiRetCall(Function *Callee,
-				       BasicBlock *DefaultDest,
-				       ArrayRef<BasicBlock *> IndirectDests,
-				       ArrayRef<Value *> Args,
-			   const Twine &Name = "") {
-    return CreateMultiRetCall(Callee->getFunctionType(), Callee, DefaultDest, IndirectDests, Args, Name);
+  MultiRetCallInst *CreateMultiRetCall(FunctionCallee Callee, BasicBlock *DefaultDest,
+                           ArrayRef<BasicBlock *> IndirectDests,
+                           ArrayRef<Value *> Args,
+                           ArrayRef<OperandBundleDef> OpBundles,
+                           const Twine &Name = "") {
+    return CreateMultiRetCall(Callee.getFunctionType(), Callee.getCallee(),
+                        DefaultDest, IndirectDests, Args, Name);
   }
 
   /// \brief Create an retpad instruction

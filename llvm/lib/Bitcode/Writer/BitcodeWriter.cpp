@@ -3080,7 +3080,7 @@ void ModuleBitcodeWriter::writeInstruction(const Instruction &I,
     break;
   case Instruction::MultiRetCall: {
     const MultiRetCallInst *II = cast<MultiRetCallInst>(&I);
-    const Value *Callee = II->getCalledValue();
+    const Value *Callee = II->getCalledOperand();
     FunctionType *FTy = II->getFunctionType();
 
     if (II->hasOperandBundles())
