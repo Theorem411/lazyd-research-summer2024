@@ -250,6 +250,7 @@ void VirtRegRewriter::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<LiveStacks>();
   AU.addPreserved<LiveStacks>();
   AU.addRequired<VirtRegMap>();
+  AU.addRequired<MachineDominatorTree>();
 
   if (!ClearVirtRegs)
     AU.addPreserved<LiveDebugVariables>();
@@ -266,6 +267,7 @@ bool VirtRegRewriter::runOnMachineFunction(MachineFunction &fn) {
   LIS = &getAnalysis<LiveIntervals>();
   VRM = &getAnalysis<VirtRegMap>();
   DebugVars = getAnalysisIfAvailable<LiveDebugVariables>();
+  MDT = &getAnalysis<MachineDominatorTree>();
   LLVM_DEBUG(dbgs() << "********** REWRITE VIRTUAL REGISTERS **********\n"
                     << "********** Function: " << MF->getName() << '\n');
   LLVM_DEBUG(VRM->dump());
@@ -679,7 +681,7 @@ void VirtRegRewriter::getCSRUsedInUnwind() {
   if (MF->getFunction().hasFnAttribute(Attribute::Naked))
     return;
 
-  // Functions which call __builtin_unwind_init get all their registers saved.
+  // Record callee registers that are only used in unwind path
   for (unsigned i = 0; CSRegs[i]; ++i) {
     unsigned Reg = CSRegs[i];
 

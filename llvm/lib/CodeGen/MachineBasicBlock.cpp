@@ -679,7 +679,7 @@ void MachineBasicBlock::moveAfter(MachineBasicBlock *NewBefore) {
 void MachineBasicBlock::updateTerminator(
     MachineBasicBlock *PreviousLayoutSuccessor) {
   LLVM_DEBUG(dbgs() << "Updating terminators on " << printMBBReference(*this)
-	     "\n");
+	     << "\n");
 
   const TargetInstrInfo *TII = getParent()->getSubtarget().getInstrInfo();
   // A block with no successors has no concerns with fall-through edges.
