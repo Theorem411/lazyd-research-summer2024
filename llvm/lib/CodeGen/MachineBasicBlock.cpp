@@ -676,10 +676,23 @@ void MachineBasicBlock::moveAfter(MachineBasicBlock *NewBefore) {
   getParent()->splice(++NewBefore->getIterator(), getIterator());
 }
 
+#ifndef NDEBUG
+/// Helper to print the name of a MBB.
+///
+/// Only used by debug logging.
+static std::string getBlockName(const MachineBasicBlock *BB) {
+  std::string Result;
+  raw_string_ostream OS(Result);
+  OS << printMBBReference(*BB);
+  OS << " ('" << BB->getName() << "')";
+  OS.flush();
+  return Result;
+}
+#endif
+
+
 void MachineBasicBlock::updateTerminator(
     MachineBasicBlock *PreviousLayoutSuccessor) {
-  LLVM_DEBUG(dbgs() << "Updating terminators on " << printMBBReference(*this)
-                    << "\n");
 
   const TargetInstrInfo *TII = getParent()->getSubtarget().getInstrInfo();
   // A block with no successors has no concerns with fall-through edges.
@@ -708,7 +721,8 @@ void MachineBasicBlock::updateTerminator(
       // and assuming that if the passed in block is in the succesor list and
       // not an EHPad, it must be the intended target.
       if (!PreviousLayoutSuccessor || !isSuccessor(PreviousLayoutSuccessor) ||
-          PreviousLayoutSuccessor->isEHPad() || PreviousLayoutSuccessor->isMultiRetCallIndirectTarget())
+          //PreviousLayoutSuccessor->isEHPad() || PreviousLayoutSuccessor->isMultiRetCallIndirectTarget())
+	  PreviousLayoutSuccessor->isEHPad())
 	return;
 #else
       // TODO: Is this needed?
@@ -743,8 +757,10 @@ void MachineBasicBlock::updateTerminator(
 #endif
       // If the unconditional successor block is not the current layout
       // successor, insert a branch to jump to it.
-      if (!isLayoutSuccessor(PreviousLayoutSuccessor))
-        TII->insertBranch(*this, PreviousLayoutSuccessor, nullptr, Cond, DL);
+      if (!isLayoutSuccessor(PreviousLayoutSuccessor)){
+	LLVM_DEBUG(dbgs() << "Insert branch to previous layout successor\n");
+	TII->insertBranch(*this, PreviousLayoutSuccessor, nullptr, Cond, DL);
+      }
     }
       return;
     }
