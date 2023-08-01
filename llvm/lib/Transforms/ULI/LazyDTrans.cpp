@@ -95,6 +95,41 @@ static cl::opt<bool> EnableMultiRetIR(
 
 // Copied from CilkABI.cpp
 
+/// Helper methods for storing to and loading from struct fields.
+static Value *GEP(IRBuilder<> &B, Value *Base, int Field) {
+  // return B.CreateStructGEP(cast<PointerType>(Base->getType()),
+  //                          Base, field);
+  return B.CreateConstInBoundsGEP2_32(
+      Base->getType()->getScalarType()->getPointerElementType(), Base, 0,
+      Field);
+
+}
+
+static unsigned GetAlignment(const DataLayout &DL, StructType *STy, int field) {
+  return DL.getPrefTypeAlignment(STy->getElementType(field));
+}
+
+static void StoreSTyField(IRBuilder<> &B, const DataLayout &DL, StructType *STy,
+                          Value *Val, Value *Dst, int Field,
+                          bool isVolatile = false,
+                          AtomicOrdering Ordering = AtomicOrdering::NotAtomic) {
+  StoreInst *S = B.CreateAlignedStore(Val, GEP(B, Dst, Field),
+                                      Align(GetAlignment(DL, STy, Field)), isVolatile);
+  S->setOrdering(Ordering);
+}
+
+static Value *LoadSTyField(
+    IRBuilder<> &B, const DataLayout &DL, StructType *STy, Value *Src,
+    int Field, bool isVolatile = false,
+    AtomicOrdering Ordering = AtomicOrdering::NotAtomic) {
+  Value *GetElPtr = GEP(B, Src, Field);
+  LoadInst *L =
+      B.CreateAlignedLoad(GetElPtr->getType()->getPointerElementType(),
+                          GetElPtr, Align(GetAlignment(DL, STy, Field)), isVolatile);
+  L->setOrdering(Ordering);
+  return L;
+}
+
 #define UNWINDRTS_FUNC(name, M) Get__unwindrts_##name(M)
 
 //using hashGnui_ty = unsigned (unsigned);
@@ -1349,6 +1384,8 @@ namespace {
       auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
       auto &DF = getAnalysis<DominanceFrontierWrapperPass>().getDominanceFrontier();
 
+      doInitialization(*F.getParent());
+
       return Impl.runImpl(F, AM, DT, DF, LI);
     }
 
@@ -2590,8 +2627,7 @@ void LazyDTransPass::simplifyFcn(Function &F, FunctionAnalysisManager &AM) {
 void LazyDTransPass::replaceResultOfMultiRetCallWithRetpad(Function &F) {
   for( auto &BB : F ) {
     for (auto &II : BB ) {
-
-      if(isa<MultiRetCallInst>(&II) && !(dyn_cast<MultiRetCallInst>(&II)->getCalledFunction()->getReturnType()->isVoidTy()) ) {
+      if(isa<MultiRetCallInst>(&II) && !(dyn_cast<MultiRetCallInst>(&II)->getFunctionType()->getReturnType()->isVoidTy()) ) {
         auto mrc = dyn_cast<MultiRetCallInst>(&II);
 
         // Get all the retpad
@@ -3159,23 +3195,23 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 
       // Savee the callee register
 #ifdef OPTIMIZE_UNWIND
-      Value* tmpRBP = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_RBP);
-      Value* tmpRSP = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_RSP);
-      Value* tmpR11 = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_R11);
-      Value* tmpRBX = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_RBX);
-      Value* tmpR12 = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_R12);
-      Value* tmpR13 = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_R13);
-      Value* tmpR14 = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_R14);
-      Value* tmpR15 = B.CreateConstGEP1_32(VoidPtrTy, gPTmpContext, I_R15);
+      Value* tmpRBP = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gPTmpContext, I_RBP);
+      Value* tmpRSP = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gPTmpContext, I_RSP);
+      Value* tmpR11 = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gPTmpContext, I_R11);
+      Value* tmpRBX = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gPTmpContext, I_RBX);
+      Value* tmpR12 = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gPTmpContext, I_R12);
+      Value* tmpR13 = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gPTmpContext, I_R13);
+      Value* tmpR14 = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gPTmpContext, I_R14);
+      Value* tmpR15 = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gPTmpContext, I_R15);
 
-      Value* savedRBP = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_RBP);
-      Value* savedRSP = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_RSP);
-      Value* savedR11 = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_R11);
-      Value* savedRBX = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_RBX);
-      Value* savedR12 = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_R12);
-      Value* savedR13 = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_R13);
-      Value* savedR14 = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_R14);
-      Value* savedR15 = B.CreateConstGEP1_32(VoidPtrTy, gWorkContextPtr, I_R15);
+      Value* savedRBP = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gWorkContextPtr, I_RBP);
+      Value* savedRSP = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gWorkContextPtr, I_RSP);
+      Value* savedR11 = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gWorkContextPtr, I_R11);
+      Value* savedRBX = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gWorkContextPtr, I_RBX);
+      Value* savedR12 = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gWorkContextPtr, I_R12);
+      Value* savedR13 = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gWorkContextPtr, I_R13);
+      Value* savedR14 = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gWorkContextPtr, I_R14);
+      Value* savedR15 = B.CreateConstGEP1_32(gPTmpContext->getType()->getScalarType()->getPointerElementType(), gWorkContextPtr, I_R15);
 
       B.CreateStore(B.CreateLoad(VoidPtrTy, tmpRBP), savedRBP);
       B.CreateStore(B.CreateLoad(VoidPtrTy, tmpRSP), savedRSP);
@@ -3749,7 +3785,6 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
   // Loop through the detach basic block that corresponds to the slow path
   for (auto di : bbOrder) {
     auto pBB = di->getParent();
-    //outs() << "Processing detach: " << *di << "\n";
     assert(pBB);
     auto diSlowPath = dyn_cast<DetachInst>(VMapSlowPath[di]);
     auto pBBSlowPath = diSlowPath->getParent();
@@ -3878,7 +3913,6 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
     SmallVector<Instruction *, 4> insts2clone;
     SmallPtrSet<Instruction *, 4> insts2cloneSet;
 
-
     CallInst* ci = nullptr;
     //StoreInst* si = nullptr;
     SmallPtrSet<Value*, 8> storageVec;
@@ -3893,7 +3927,7 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
       if(!bStartClone && isa<CallInst>(&ii) && !isa<IntrinsicInst>(&ii)) {
         ci = dyn_cast<CallInst>(&ii);
         bStartClone = true;
-        if(ci->getCalledFunction()->getReturnType()->isVoidTy()) {
+        if(ci->getFunctionType()->getReturnType()->isVoidTy()) {
           break;
         }
       }
@@ -3925,7 +3959,7 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
     workCtx = B.CreateCall(GetWorkCtxFcnCall, {B.CreateLoad(Int32Ty, locAlloc, 1, "locVal"), B.CreateLoad(Int32Ty, ownerAlloc, 1, "ownerVal"), mySP});
 #endif
     Function* wrapperFcn = nullptr;
-    if(!ci->getCalledFunction()->getReturnType()->isVoidTy())
+    if(!ci->getFunctionType()->getReturnType()->isVoidTy())
       wrapperFcn = GenerateWrapperFunc(ci, storageVec, insts2clone, workCtx->getType());
     else
       wrapperFcn = GenerateWrapperFunc(ci, storageVec, insts2clone, workCtx->getType());
@@ -3951,7 +3985,7 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
     args.push_back(workCtx);
     args.push_back(mySP);
 
-    if(!ci->getCalledFunction()->getReturnType()->isVoidTy()) {
+    if(!ci->getFunctionType()->getReturnType()->isVoidTy()) {
       for(auto storage : storageVec) {
         args.push_back(storage);
       }
@@ -4228,6 +4262,38 @@ bool LazyDTransPass::runInitialization(Module &M) {
   fcn->addFnAttr(Attribute::NoInline);
 #endif
 
+  // Create the structure for request and response channel
+  // Copied from CilkABI.cpp
+  LLVMContext &C = M.getContext();
+  Type *VoidPtrTy = Type::getInt8PtrTy(C);
+  Type *Int64Ty = Type::getInt64Ty(C);
+  Type *Int32Ty = Type::getInt32Ty(C);
+  Type *Int16Ty = Type::getInt16Ty(C);
+  Type *Int8Ty  = Type::getInt8Ty(C);
+
+  // Get or create local definitions of Cilk RTS structure types.
+  RequestChannelTy = StructType::lookupOrCreate(C, "struct._request_channel");
+  ResponseChannelTy = StructType::lookupOrCreate(C, "struct._response_channel");
+
+  if (RequestChannelTy->isOpaque()) {
+    RequestChannelTy->setBody(
+			      Int32Ty,                     // senderThreadId
+			      ArrayType::get(Int8Ty, 2),   // padding_char
+			      Int8Ty,                      // potentialParallelTask
+			      Int8Ty,                      // inLoop
+			      ArrayType::get(Int64Ty, 31)  // padding
+			      );
+  }
+
+  if (ResponseChannelTy->isOpaque())
+    ResponseChannelTy->setBody(
+			       Int32Ty,
+			       Int8Ty,
+			       Int8Ty,
+			       ArrayType::get(Int8Ty, 250)
+			       );
+
+
   if(fcn)
     return true;
 
@@ -4273,6 +4339,23 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     F.addFnAttr(Attribute::NoUnwindPath);
   }
 
+  // Delete task.frame.create and task.frame.use for now
+  SmallVector<IntrinsicInst*, 4 > taskframe2delete;
+  for(auto &BB : F) {
+    for(auto &I : BB) {
+      if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(&I)) {
+	if ( Intrinsic::taskframe_use == II->getIntrinsicID()) {
+	  taskframe2delete.push_back(II);
+	}
+      }
+    }
+  }
+
+  for(auto ii : taskframe2delete) {
+    ii->eraseFromParent();
+  }
+
+
   // Check if a function is a forking / spawning function or not
   bool bHavePforHelper = false;
   bHaveDynamicAlloca = false;
@@ -4307,7 +4390,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 #else
   if(true) {
 #endif
-    //outs() << "Add no-frame-pointer-elim: " << F.getName() << "\n";
     F.addFnAttr("no-frame-pointer-elim");
     F.addFnAttr("no-frame-pointer-elim-non-leaf");
     F.addFnAttr("no-realign-stack");
@@ -4535,6 +4617,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   }
 
 
+#if 0
   // TODO: Do this on the basic block of the fork?
   //if(bHaveFork && !(F.getFnAttribute("poll-at-loop").getValueAsString()=="true") && !bHavePforHelper) {
   if(bHaveFork && !(F.getFnAttribute("poll-at-loop").getValueAsString()=="true")) {
@@ -4544,6 +4627,65 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     auto workExists = B.CreateConstInBoundsGEP2_64(ArrayType::get(Int64Ty, 32), prequestcell, 0, 1 );
     insertPoint = B.CreateStore(L_ONE, workExists);
   }
+
+#else
+
+  GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(C), 32), *M, true);
+  GlobalVariable* reqlocal = GetGlobalVariable("req_local", RequestChannelTy, *M, true);
+
+  Value* L_ONE = B.getInt64(1);
+  auto workExists = B.CreateConstInBoundsGEP2_64(ArrayType::get(IntegerType::getInt64Ty(C), 32), prequestcell, 0, 1 );
+
+  for(auto elem: RDIPath) {
+    DetachInst * DI = elem.first;
+    BasicBlock * parent = DI->getParent();
+
+    // If loop, insert it in the preheader
+    bool skipLoop = false;
+    for (auto L : LI) {
+      if(L->contains(DI)) {
+	if(L->getLoopPreheader())
+	  B.SetInsertPoint(L->getLoopPreheader()->getTerminator());
+	else
+	  B.SetInsertPoint(L->getHeader()->getTerminator());
+#define USE_CHANNEL
+#ifdef USE_CHANNEL
+	StoreSTyField(B, DL, RequestChannelTy,
+		      B.getInt8(1),
+		      reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
+		      AtomicOrdering::NotAtomic);
+#else
+	B.CreateStore(L_ONE, workExists);
+#endif
+	skipLoop = true;
+      }
+    }
+
+    if (skipLoop)
+      continue;
+
+    // Get any basic block from a detach point that can reach this continuation
+    auto reachingBB = elem.second;
+    // Get the predecessor
+    for( pred_iterator PI = pred_begin(parent); PI != pred_end(parent); PI++ ) {
+      BasicBlock* pred = *PI;
+      // Check if predecessor in the reachingBB
+      if(reachingBB.find(pred) == reachingBB.end()) {
+	B.SetInsertPoint(pred->getTerminator());
+#define USE_CHANNEL
+#ifdef USE_CHANNEL
+	StoreSTyField(B, DL, RequestChannelTy,
+		      B.getInt8(1),
+		      reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
+		      AtomicOrdering::NotAtomic);
+#else
+	B.CreateStore(L_ONE, workExists);
+#endif
+      }
+    }
+  }
+
+#endif
 
 
 #if 0
@@ -4843,7 +4985,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
         FunctionType *killCallee = FunctionType::get(VoidTy, {VoidTy}, false);
         InlineAsm* Asm = InlineAsm::get(killCallee, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{rdi},~{rsi},~{r8},~{r9},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
         B.CreateCall(Asm);
-        outs()<<"Function: " << F.getName() << " callee unoptimized\n";
         break;
       }
     }
@@ -4870,10 +5011,9 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
       if(J->hasStructRetAttr()){
         IRBuilder<> B(dyn_cast<Instruction>(insertPointEnd)->getNextNode());
         //using AsmTypeCallee = void (void);
-        FunctionType *killCallee = FunctionType::get(VoidTy, {VoidTy}, false);
+        FunctionType *killCallee = FunctionType::get(VoidTy, {}, false);
         InlineAsm* Asm = InlineAsm::get(killCallee, "", "~{rbx},~{r10},~{r11},~{r12},~{r13},~{r14},~{r15},~{rdi},~{rsi},~{r8},~{r9},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
         B.CreateCall(Asm);
-        outs()<<"Function: " << F.getName() << " callee unoptimized\n";
         break;
       }
     }
@@ -4903,7 +5043,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     LLVM_DEBUG(dbgs() << F.getName() << " : Polling at prologue\n");
   }
 
-#if 0
+#if 1
   // Polling @epilogue
   for (auto pBB : bb2clones){
     Instruction * termInst = pBB->getTerminator();
@@ -4985,6 +5125,8 @@ LazyDTransPass::run(Function &F, FunctionAnalysisManager &AM) {
   // and perform renaming on the clone fcn (need to fix SSA)
   DominanceFrontier &DF = AM.getResult<DominanceFrontierAnalysis>(F);
   LoopInfo &LI = AM.getResult<LoopAnalysis>(F);
+
+  runInitialization(*F.getParent());
 
   bool Changed = runImpl(F, AM, DT, DF, LI);
   if (!Changed)

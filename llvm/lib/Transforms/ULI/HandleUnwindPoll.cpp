@@ -60,6 +60,41 @@ using unwind_poll_jmpimm_ty = int(void*);
 using unwind_poll_pfor_ty = int(long, long, long*, char*);
 using mylongwithoutjmp_callee_ty = void (void**);
 
+/// From CilkAbi.cpp
+/// Helper methods for storing to and loading from struct fields.
+static Value *GEP(IRBuilder<> &B, Value *Base, int Field) {
+  // return B.CreateStructGEP(cast<PointerType>(Base->getType()),
+  //                          Base, field);
+  return B.CreateConstInBoundsGEP2_32(
+      Base->getType()->getScalarType()->getPointerElementType(), Base, 0,
+      Field);
+}
+
+static Align GetAlignment(const DataLayout &DL, StructType *STy, int Field) {
+  return DL.getPrefTypeAlign(STy->getElementType(Field));
+}
+
+static void StoreSTyField(IRBuilder<> &B, const DataLayout &DL, StructType *STy,
+                          Value *Val, Value *Dst, int Field,
+                          bool isVolatile = false,
+                          AtomicOrdering Ordering = AtomicOrdering::NotAtomic) {
+  StoreInst *S = B.CreateAlignedStore(Val, GEP(B, Dst, Field),
+                                      GetAlignment(DL, STy, Field), isVolatile);
+  S->setOrdering(Ordering);
+}
+
+static Value *LoadSTyField(
+    IRBuilder<> &B, const DataLayout &DL, StructType *STy, Value *Src,
+    int Field, bool isVolatile = false,
+    AtomicOrdering Ordering = AtomicOrdering::NotAtomic) {
+  Value *GetElPtr = GEP(B, Src, Field);
+  LoadInst *L =
+      B.CreateAlignedLoad(GetElPtr->getType()->getPointerElementType(),
+                          GetElPtr, GetAlignment(DL, STy, Field), isVolatile);
+  L->setOrdering(Ordering);
+  return L;
+}
+
 #define UNWINDRTS_FUNC(name, CGF) Get__unwindrts_##name(CGF)
 
 // Set the size of the work context length
@@ -174,7 +209,7 @@ static FunctionCallee Get_stealRequestHandler_poll(Module& M) {
 }
 
 
-//using unwind_gosteal_ty = void (void );
+using unwind_gosteal_ty = void (void );
 DEFAULT_GET_LIB_FUNC_VOID(unwind_gosteal, Type::getVoidTy)
 
 //using unwind_suspend_ty = void (void );
@@ -193,6 +228,7 @@ namespace {
     }
 
     bool runOnFunction(Function &F) override {
+      doInitialization(*F.getParent());
       return Impl.runImpl(F);
 
     }
@@ -881,87 +917,6 @@ namespace {
     return Fn;
   }
 
-  // Use for checking if there is a request for work
-  // This simply poll a function
-  Function* Get__unwindrts_unwind_ulifsim2(Module& M) {
-    Function* Fn = nullptr;
-    LLVMContext& Ctx = M.getContext();
-    //int (void*)
-    Type *VoidPtrTy  = PointerType::getInt8PtrTy(Ctx);
-    FunctionType* unwind_poll_jmpimm_ty = FunctionType::get(Type::getInt32Ty(Ctx), {PointerType::getInt8PtrTy(Ctx)}, false);
-
-    if (GetOrCreateFunction("unwind_ulifsim_llvm", M, unwind_poll_jmpimm_ty, Fn))
-      return Fn;
-
-    auto workcontext_ty = ArrayType::get(PointerType::getInt8PtrTy(Ctx), WorkCtxLen2);
-
-    BasicBlock* PollEntry = BasicBlock::Create(Ctx, "poll.entry", Fn);
-    BasicBlock* CheckForWork = BasicBlock::Create(Ctx, "check.for.work", Fn);
-    BasicBlock* ReturnFromPoll = BasicBlock::Create(Ctx, "return.from.poll", Fn);
-    IRBuilder<> B(PollEntry);
-
-    Value *ONE = B.getInt32(1);
-    Value *ZERO = B.getInt32(0);
-    Value* ONEBYTE = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
-
-    FunctionCallee unwind_gosteal = Get_unwind_gosteal(M);
-
-    if(EnablePollEpoch) {
-      FunctionCallee pollepoch = Get_pollepoch(M);
-      B.CreateCall(pollepoch);
-    }
-
-    GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
-    GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
-    auto prequestCell = B.CreateConstInBoundsGEP2_64(ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), prequestCellG, 0, 0 );
-
-    //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
-
-    auto threadId = B.CreateAlignedLoad(Type::getInt32Ty(Ctx), pThreadId, Align(4));
-    auto requestCell = B.CreateAlignedLoad(Type::getInt64Ty(Ctx), prequestCell, Align(8));
-
-    // Check requirement
-    auto cmpVal = B.CreateICmpEQ(requestCell, B.getInt64(-1));
-    B.CreateCondBr(cmpVal, ReturnFromPoll, CheckForWork);
-
-    // Update latest time
-    B.SetInsertPoint(CheckForWork);
-    FunctionCallee stealRequestHandler_poll = Get_stealRequestHandler_poll(M);
-    //auto bWorkExists = B.CreateCall(POLL, B.getInt32(0));
-
-    // FIXME: can not refer to myself blockaddress(self, idx)
-    //auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(POLL), WorkExists, {InitiateUnwind},
-    //             {B.getInt32(0), BlockAddress::get(CheckForWork, 0), BlockAddress::get(CheckForWork, 1)});
-
-    Function::arg_iterator args = Fn->arg_begin();
-    auto unwindPathEntry = &*args;
-
-
-    Value* mySP = getSP(B, *B.GetInsertBlock()->getParent());
-    mySP = B.CreateCast(Instruction::IntToPtr, mySP, IntegerType::getInt8Ty(Ctx)->getPointerTo());
-
-
-    // Get my base pointer
-    Value* EIGHT = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
-
-    auto addrOfRA = Intrinsic::getDeclaration(&M, Intrinsic::addressofreturnaddress, {VoidPtrTy});
-    Value* myRA = B.CreateCall(addrOfRA);
-    //myRA = B.CreateBitCast(myRA, IntegerType::getInt8Ty(Ctx)->getPointerTo());
-    myRA = B.CreateCast(Instruction::PtrToInt, myRA, IntegerType::getInt64Ty(Ctx));
-
-    Value* myBP = B.CreateSub(myRA, EIGHT);
-    myBP = B.CreateCast(Instruction::IntToPtr, myBP, IntegerType::getInt8Ty(Ctx)->getPointerTo());
-
-    auto insertPoint = B.CreateCall(stealRequestHandler_poll.getFunctionType(), (stealRequestHandler_poll.getCallee()),
-                                    //{BlockAddress::get(CheckForWork), myBP, mySP});
-                                    {unwindPathEntry, myBP, mySP});
-    B.CreateBr(ReturnFromPoll);
-
-    B.SetInsertPoint(ReturnFromPoll);
-    B.CreateRet(ZERO);
-
-    return Fn;
-  }
 
   Function* Get__unwindrts_unwind_poll_pfor(Module& M) {
     Function* Fn = nullptr;
@@ -1070,6 +1025,105 @@ bool HandleUnwindPollPass::detachExists(Function& F) {
     //}
   return false;
 }
+
+// Use for checking if there is a request for work
+// This simply poll a function
+Function* HandleUnwindPollPass::Get__unwindrts_unwind_ulifsim2(Module& M) {
+  Function* Fn = nullptr;
+  LLVMContext& Ctx = M.getContext();
+  const DataLayout &DL = M.getDataLayout();
+  //int (void*)
+  Type *VoidPtrTy  = PointerType::getInt8PtrTy(Ctx);
+  FunctionType* unwind_poll_jmpimm_ty = FunctionType::get(Type::getInt32Ty(Ctx), {PointerType::getInt8PtrTy(Ctx)}, false);
+
+
+  if (GetOrCreateFunction("unwind_ulifsim2_llvm", M, unwind_poll_jmpimm_ty, Fn))
+    return Fn;
+
+  auto workcontext_ty = ArrayType::get(PointerType::getInt8PtrTy(Ctx), WorkCtxLen2);
+
+  BasicBlock* PollEntry = BasicBlock::Create(Ctx, "poll.entry", Fn);
+  BasicBlock* CheckForWork = BasicBlock::Create(Ctx, "check.for.work", Fn);
+  BasicBlock* ReturnFromPoll = BasicBlock::Create(Ctx, "return.from.poll", Fn);
+  IRBuilder<> B(PollEntry);
+
+  Value *ONE = B.getInt32(1);
+  Value *ZERO = B.getInt32(0);
+  Value* ONEBYTE = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
+
+  FunctionCallee unwind_gosteal = Get_unwind_gosteal(M);
+
+  if(EnablePollEpoch) {
+    FunctionCallee pollepoch = Get_pollepoch(M);
+    B.CreateCall(pollepoch);
+  }
+
+#define USE_CHANNEL
+  // Check if there is a request
+#ifdef USE_CHANNEL
+  GlobalVariable* reqlocal = GetGlobalVariable("req_local", RequestChannelTy, M, true);
+  //Value* reqchannel2 = B.CreateLoad(reqchannel);
+  //Value* reqchannelPerThread = B.CreateInBoundsGEP(reqchannel2, threadId); // &req_channel[threadId]
+  //Value* reqchannelPerThreadVal = B.CreateLoad(reqchannelPerThread); // resp_channel[threadId]
+  Value* inloop = LoadSTyField(B, DL, RequestChannelTy, reqlocal,
+			       RequestChannelFields::inLoop, /*isVolatile=*/false,
+			       AtomicOrdering::NotAtomic);
+  auto cmpVal = B.CreateICmpEQ(inloop, B.getInt8(0));
+#else
+
+  GlobalVariable* pThreadId = GetGlobalVariable("threadId", IntegerType::getInt32Ty(Ctx), M, true);
+  GlobalVariable* prequestCellG = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), M, true);
+  auto prequestCell = B.CreateConstInBoundsGEP2_64(ArrayType::get(IntegerType::getInt64Ty(Ctx), 32), prequestCellG, 0, 0 );
+
+  //GlobalVariable* pbWorkExists = GetGlobalVariable("bWorkExists", IntegerType::getInt32Ty(Ctx), M, true);
+
+  auto threadId = B.CreateAlignedLoad(Type::getInt32Ty(Ctx), pThreadId, Align(4));
+  auto requestCell = B.CreateAlignedLoad(Type::getInt64Ty(Ctx), prequestCell, Align(8));
+
+  // Check requirement
+  auto cmpVal = B.CreateICmpEQ(requestCell, B.getInt64(-1));
+#endif
+  B.CreateCondBr(cmpVal, ReturnFromPoll, CheckForWork);
+
+  // Update latest time
+  B.SetInsertPoint(CheckForWork);
+  FunctionCallee stealRequestHandler_poll = Get_stealRequestHandler_poll(M);
+  //auto bWorkExists = B.CreateCall(POLL, B.getInt32(0));
+
+  // FIXME: can not refer to myself blockaddress(self, idx)
+  //auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(POLL), WorkExists, {InitiateUnwind},
+  //             {B.getInt32(0), BlockAddress::get(CheckForWork, 0), BlockAddress::get(CheckForWork, 1)});
+
+  Function::arg_iterator args = Fn->arg_begin();
+  auto unwindPathEntry = &*args;
+
+
+  Value* mySP = getSP(B, *B.GetInsertBlock()->getParent());
+  mySP = B.CreateCast(Instruction::IntToPtr, mySP, IntegerType::getInt8Ty(Ctx)->getPointerTo());
+
+
+  // Get my base pointer
+  Value* EIGHT = ConstantInt::get(IntegerType::getInt64Ty(Ctx), 8, false);
+
+  auto addrOfRA = Intrinsic::getDeclaration(&M, Intrinsic::addressofreturnaddress, {VoidPtrTy});
+  Value* myRA = B.CreateCall(addrOfRA);
+  //myRA = B.CreateBitCast(myRA, IntegerType::getInt8Ty(Ctx)->getPointerTo());
+  myRA = B.CreateCast(Instruction::PtrToInt, myRA, IntegerType::getInt64Ty(Ctx));
+
+  Value* myBP = B.CreateSub(myRA, EIGHT);
+  myBP = B.CreateCast(Instruction::IntToPtr, myBP, IntegerType::getInt8Ty(Ctx)->getPointerTo());
+
+  auto insertPoint = B.CreateCall(stealRequestHandler_poll.getFunctionType(), (stealRequestHandler_poll.getCallee()),
+				  //{BlockAddress::get(CheckForWork), myBP, mySP});
+				  {unwindPathEntry, myBP, mySP});
+  B.CreateBr(ReturnFromPoll);
+
+  B.SetInsertPoint(ReturnFromPoll);
+  B.CreateRet(ZERO);
+
+  return Fn;
+}
+
 
 BasicBlock* HandleUnwindPollPass::findUnwindPathEntry(Function& F) {
   BasicBlock* unwindPathEntry = nullptr;
@@ -1317,6 +1371,37 @@ bool HandleUnwindPollPass::runInitialization(Module &M) {
   auto &C = M.getContext();
   BoolTy = Type::getInt1Ty(C);
   initialized = false;
+
+  // Create the structure for request and response channel
+  // Copied from CilkABI.cpp
+  Type *VoidPtrTy = Type::getInt8PtrTy(C);
+  Type *Int64Ty = Type::getInt64Ty(C);
+  Type *Int32Ty = Type::getInt32Ty(C);
+  Type *Int16Ty = Type::getInt16Ty(C);
+  Type *Int8Ty  = Type::getInt8Ty(C);
+
+  // Get or create local definitions of Cilk RTS structure types.
+  RequestChannelTy = StructType::lookupOrCreate(C, "struct._request_channel");
+  ResponseChannelTy = StructType::lookupOrCreate(C, "struct._response_channel");
+
+  if (RequestChannelTy->isOpaque()) {
+    RequestChannelTy->setBody(
+			      Int32Ty,                     // senderThreadId
+			      ArrayType::get(Int8Ty, 2),   // padding_char
+			      Int8Ty,                      // potentialParallelTask
+			      Int8Ty,                      // inLoop
+			      ArrayType::get(Int64Ty, 31)  // padding
+			      );
+  }
+
+  if (ResponseChannelTy->isOpaque())
+    ResponseChannelTy->setBody(
+			       Int32Ty,
+			       Int8Ty,
+			       Int8Ty,
+			       ArrayType::get(Int8Ty, 250)
+			       );
+
   return true;
 }
 
@@ -1329,6 +1414,9 @@ bool HandleUnwindPollPass::runImpl(Function &F) {
 
   if(unwindPathEntry && !initialized) {
     Module &M = *(F.getParent());
+    auto fcn = Get__unwindrts_unwind_ulifsim2(M);
+    fcn->addFnAttr(Attribute::NoUnwindPath);
+
     //auto fcn = UNWINDRTS_FUNC(unwind_poll, M);
     //fcn->addFnAttr(Attribute::NoUnwindPath);
     //fcn = UNWINDRTS_FUNC(unwind_suspend, M);
@@ -1352,18 +1440,19 @@ bool HandleUnwindPollPass::runImpl(Function &F) {
     // If detach have not been lowered, don't lower the poll
     if(!bDetachExists)
       changed |= handleUnwindPoll(BB, unwindPathEntry);
-
     // TODO: handleSaveRestoreCtx is not used, could be removed
     changed |= handleSaveRestoreCtx(BB);
 
     changed |= handleChangeRetAddr(BB);
   }
+
   return changed;
 }
 
 PreservedAnalyses
 HandleUnwindPollPass::run(Function &F, FunctionAnalysisManager &AM) {
 
+  runInitialization(*F.getParent());
   // Run on function.
   bool Changed = runImpl(F);
   if (!Changed)

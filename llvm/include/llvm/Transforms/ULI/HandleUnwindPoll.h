@@ -31,6 +31,21 @@ struct HandleUnwindPollPass
   bool handleChangeRetAddr(BasicBlock &BB);
   BasicBlock* findUnwindPathEntry(Function &F);
   bool   detachExists(Function &F);
+
+  StructType* RequestChannelTy = nullptr;
+  StructType* ResponseChannelTy = nullptr;
+
+  enum RequestChannelFields
+  {
+    sendThreadId = 0,
+    padding_char,
+    potentialParallelTask,
+    inLoop,
+    padding
+  };
+
+  Function* Get__unwindrts_unwind_ulifsim2(Module& M);
+
 public:
   /// \return Preserved analyses of function \p F after transformation.
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
@@ -38,7 +53,9 @@ public:
   bool runInitialization(Module &M);
   bool runImpl(Function &F);
 
-
+  // Is this still needed?
+  struct _request_channel {};
+  struct _response_channel {};
 };
 
 /// \return An instance of created pass for legacy pass manager.

@@ -377,6 +377,8 @@ void ReachingDetachInst::recalculate(Function& F, FunctionAnalysisManager &AM, D
 	    MapDetachToPath[di].insert(pBB);
 	  }
 	}
+      } else {
+	MapDetachToPath[di].insert(nullptr);
       }
     }
   }

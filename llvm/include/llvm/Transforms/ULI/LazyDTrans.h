@@ -46,7 +46,7 @@
 
 #include <iostream>
 
-#define OPTIMIZE_FP
+//#define OPTIMIZE_FP
 #define STICK_STACKXCGH_FUNC
 #define OPTIMIZE_UNWIND
 #define OPTIMIZE_UNWIND_FUNC
@@ -245,7 +245,18 @@ namespace llvm {
                             DenseMap<DetachInst *, SmallPtrSet<BasicBlock*, 8>>& RDIBB,
                             SSAUpdater& SSAUpdateWorkContext);
 
-    void instrumentMainFcn(Function& F) ;
+    void instrumentMainFcn(Function& F);
+    StructType* RequestChannelTy = nullptr;
+    StructType* ResponseChannelTy = nullptr;
+
+    enum RequestChannelFields
+    {
+      sendThreadId = 0,
+      padding_char,
+      potentialParallelTask,
+      inLoop,
+      padding
+    };
 
   public:
     /// \return Preserved analyses of function \p F after transformation.
@@ -254,6 +265,7 @@ namespace llvm {
     void runAnalysisUsage(AnalysisUsage &AU) const;
     bool runImpl(Function &F, FunctionAnalysisManager &AM, DominatorTree &DT,  DominanceFrontier &DF, LoopInfo &LI);
     bool runInitialization(Module &M);
+
 
   };
 

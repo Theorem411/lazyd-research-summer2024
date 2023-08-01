@@ -802,18 +802,20 @@ void EagerDTransPass::createParallelRegion(Function& F, SmallVector<DetachInst*,
   for (auto DI: bbOrder) {
     auto reachingBBs = RDIPath[DI];
     for(auto reachingBB: reachingBBs) {
-      parallelRegions.insert(reachingBB);
+      if(reachingBB)
+	parallelRegions.insert(reachingBB);
     }
   }
   for(auto elem: RSIPath) {
     auto reachingBBs = elem.second;
     for(auto reachingBB: reachingBBs) {
-      parallelRegions.insert(reachingBB);
+      if(reachingBB)
+	parallelRegions.insert(reachingBB);
     }
   }
 
   for(auto parallelBB : parallelRegions) {
-    //outs() << "Parallel bb: " << parallelBB->getName() << "\n";
+    LLVM_DEBUG(dbgs() << "Parallel bb: " << parallelBB->getName() << "\n");
   }
 
   //SmallPtrSet<BasicBlock*, 32> frontierParallelRegions;
@@ -829,9 +831,8 @@ void EagerDTransPass::createParallelRegion(Function& F, SmallVector<DetachInst*,
     }
   }
 
-  //outs() << "Function name: " << F.getName() << "\n";
   for(auto frontierParallelBB : frontierParallelRegions) {
-    //outs() << "Frontier Parallel BB: " << frontierParallelBB->getName() << "\n";
+    LLVM_DEBUG(dbgs() << "Frontier Parallel BB: " << frontierParallelBB->getName() << "\n");
   }
 
   for (auto bb : parallelRegions){
@@ -844,9 +845,8 @@ void EagerDTransPass::createParallelRegion(Function& F, SmallVector<DetachInst*,
   }
 
   // Look for block that is the exit of the parallel region
-  //outs() << "Function name: " << F.getName() << "\n";
   for(auto exitParallelBB : exitParallelRegions) {
-    //outs() << "Exit Parallel BB: " << exitParallelBB->getName() << "\n";
+    LLVM_DEBUG(dbgs() << "Exit Parallel BB: " << exitParallelBB->getName() << "\n");
   }
 
   return;
@@ -998,7 +998,7 @@ void EagerDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4
   // Loop through the detach basic block that corresponds to the slow path
   for (auto di : bbOrder) {
     auto pBB = di->getParent();
-    //outs() << "Processing detach: " << *di << "\n";
+    LLVM_DEBUG(dbgs() << "Processing detach: " << *di << "\n");
     assert(pBB);
     // No need to get detach from slow path instr
     auto diSlowPath = dyn_cast<DetachInst>(di);
