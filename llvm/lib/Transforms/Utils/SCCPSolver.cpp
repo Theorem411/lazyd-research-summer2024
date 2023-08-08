@@ -325,6 +325,11 @@ private:
     visitTerminator(CBI);
   }
 
+  void visitMultiRetCallInst(MultiRetCallInst &MRC) {
+    visitCallBase(MRC);
+    visitTerminator(MRC);
+  }
+
   void visitCallBase(CallBase &CB);
   void visitResumeInst(ResumeInst &I) { /*returns void*/
   }
@@ -691,6 +696,13 @@ void SCCPInstVisitor::getFeasibleSuccessors(Instruction &TI,
   // In case of callbr, we pessimistically assume that all successors are
   // feasible.
   if (isa<CallBrInst>(&TI)) {
+    Succs.assign(TI.getNumSuccessors(), true);
+    return;
+  }
+
+  // In case of multiretcall, we pessimistically assume that all successors are
+  // feasible.
+  if (isa<MultiRetCallInst>(&TI)) {
     Succs.assign(TI.getNumSuccessors(), true);
     return;
   }
