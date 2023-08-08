@@ -5008,7 +5008,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
     // Fixme: Hack
     for (Function::const_arg_iterator J = F.arg_begin(); J != F.arg_end(); ++J) {
-      if(J->hasStructRetAttr()){
+      if(J->hasStructRetAttr() || F.getReturnType()->isStructTy()){
         IRBuilder<> B(dyn_cast<Instruction>(insertPointEnd)->getNextNode());
         //using AsmTypeCallee = void (void);
         FunctionType *killCallee = FunctionType::get(VoidTy, {}, false);
