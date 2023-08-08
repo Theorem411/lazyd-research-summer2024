@@ -69,13 +69,18 @@ InsertPointAnalysis::computeLastInsertPoint(const LiveInterval &CurLI,
 
   SmallVector<const MachineBasicBlock *, 1> ExceptionalSuccessors;
   bool EHPadSuccessor = false;
+  bool MultiRetCallSucessor = false;
   // TODO: Fix this hack, separate MultiRetcall from EHPadSuccessor
   for (const MachineBasicBlock *SMBB : MBB.successors()) {
-    if (SMBB->isEHPad() || SMBB->isMultiRetCallIndirectTarget()) {
+    if (SMBB->isEHPad()) {
       ExceptionalSuccessors.push_back(SMBB);
       EHPadSuccessor = true;
-    } else if (SMBB->isInlineAsmBrIndirectTarget())
+    } else if (SMBB->isInlineAsmBrIndirectTarget()) {
       ExceptionalSuccessors.push_back(SMBB);
+    } else if (SMBB->isMultiRetCallIndirectTarget()) {
+      ExceptionalSuccessors.push_back(SMBB);
+      MultiRetCallSucessor = true;
+    }
   }
 
   // Compute insert points on the first call. The pair is independent of the
@@ -96,6 +101,7 @@ InsertPointAnalysis::computeLastInsertPoint(const LiveInterval &CurLI,
     if (ExceptionalSuccessors.empty())
       return LIP.first;
 
+    auto TLI = MBB.getParent()->getSubtarget().getTargetLowering();
     for (const MachineInstr &MI : llvm::reverse(MBB)) {
       // TODO: CNP, add multiretcall
       if ((EHPadSuccessor && MI.isCall()) ||
@@ -103,13 +109,24 @@ InsertPointAnalysis::computeLastInsertPoint(const LiveInterval &CurLI,
         LIP.second = LIS.getInstructionIndex(MI);
 	break;
       }
-    }
 
+      if(MultiRetCallSucessor) {
+	if(MI.isCall() || TLI->isSaveContextOpcode(MI)) {
+	  LIP.second = LIS.getInstructionIndex(MI);
+	  MultiRetCallSucessor = false;
+	  break;
+	}
+      }
+    }
+    if(MultiRetCallSucessor)
+      LIP.second = LIS.getInstructionIndex(MBB.instr_back());
+
+#if 0
     auto TLI = MBB.getParent()->getSubtarget().getTargetLowering();
 
     // TODO: CNP, do we need this?
     // There may not be a call instruction (?) in which case we ignore LPad.
-    LIP.second = LIP.first;
+    //LIP.second = LIP.first;
     for (MachineBasicBlock::const_iterator I = MBB.end(), E = MBB.begin();
          I != E;) {
       --I;
@@ -121,8 +138,8 @@ InsertPointAnalysis::computeLastInsertPoint(const LiveInterval &CurLI,
 	LIP.second = LIS.getInstructionIndex(*I);
         break;
       }
-
     }
+#endif
   }
 
   // If CurLI is live into a landing pad successor, move the last insert point
