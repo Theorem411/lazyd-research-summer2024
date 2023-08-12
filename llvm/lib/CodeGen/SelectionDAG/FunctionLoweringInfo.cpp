@@ -134,8 +134,9 @@ void FunctionLoweringInfo::set(const Function &fn, MachineFunction &mf,
   // semantics for the stack memory of such a function most closely resemble
   // those of a function with dynamic allocas, so we simply set this flag in
   // MachineFrameInfo.
-  if (Fn->hasFnAttribute(Attribute::Stealable))
+  if (Fn->hasFnAttribute(Attribute::Stealable) || Fn->hasFnAttribute(Attribute::Forkable)) {
     MF->getFrameInfo().setHasVarSizedObjects();
+  }
 
   // Initialize the mapping of values to registers.  This is only set up for
   // instruction values that are used outside of the block that defines

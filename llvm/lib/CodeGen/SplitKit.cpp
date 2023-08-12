@@ -118,8 +118,9 @@ InsertPointAnalysis::computeLastInsertPoint(const LiveInterval &CurLI,
 	}
       }
     }
-    if(MultiRetCallSucessor)
-      LIP.second = LIS.getInstructionIndex(MBB.instr_back());
+
+    //if(MultiRetCallSucessor)
+    //  LIP.second = LIS.getInstructionIndex(MBB.instr_back());
 
 #if 0
     auto TLI = MBB.getParent()->getSubtarget().getTargetLowering();
