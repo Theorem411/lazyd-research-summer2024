@@ -3967,7 +3967,8 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
     wrapperFcn->addFnAttr(Attribute::NoUnwindPath);
     wrapperFcn->addFnAttr(Attribute::NoInline);
     wrapperFcn->addFnAttr(Attribute::OptimizeNone); // Can cause a ud2 in assembly?
-
+    wrapperFcn->addFnAttr("no-frame-pointer-elim-non-leaf", "true");
+    //wrapperFcn->addFnAttr("no-realign-stack");
 #if 1
     //auto Attrs = wrapperFcn->getAttributes();
     //StringRef ValueStr("true" );
@@ -4493,12 +4494,14 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     //if(!EnableStoreLoadForkStorage) {
     for (auto pBB : bb2clones){
       if (DetachInst * DI = dyn_cast<DetachInst>(pBB->getTerminator())){
-
+	F.addFnAttr(Attribute::Stealable);
+	F.addFnAttr(Attribute::Forkable);
         BasicBlock * detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
         for( Instruction &II : *detachBlock ) {
           if( isa<CallInst>(&II) ) {
             dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);
             dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::ReturnsTwice);
+	    //dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Stealable);
           }
         }
       }

@@ -1346,7 +1346,7 @@ void EagerDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4
     wrapperFcn->addFnAttr(Attribute::OptimizeNone); // Can cause a ud2 in assembly?
     wrapperFcn->addFnAttr("no-frame-pointer-elim");
     wrapperFcn->addFnAttr("no-frame-pointer-elim-non-leaf", "true");
-    wrapperFcn->addFnAttr("no-realign-stack");
+    //wrapperFcn->addFnAttr("no-realign-stack");
     SmallVector<Value*, 4> args;
     for(int i = 0; i<ci->arg_size(); i++){
       args.push_back(ci->getArgOperand(i));
@@ -1712,12 +1712,12 @@ bool EagerDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominato
     if (DetachInst * DI = dyn_cast<DetachInst>(BB.getTerminator())){
       BasicBlock * detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
       detachBlock->getParent()->addFnAttr(Attribute::Forkable);
-      detachBlock->getParent()->addFnAttr(Attribute::Stealable);
+      //detachBlock->getParent()->addFnAttr(Attribute::Stealable);
       for( Instruction &II : *detachBlock ) {
 	if( isa<CallInst>(&II) ) {
-	  dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);
-	  dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::ReturnsTwice);
-	  dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Stealable);
+	  //dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);
+	  //dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::ReturnsTwice);
+	  //dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Stealable);
 	}
       }
     }
