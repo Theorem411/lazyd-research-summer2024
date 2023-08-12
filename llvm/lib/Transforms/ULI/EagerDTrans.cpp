@@ -135,13 +135,13 @@ static FunctionCallee Get_deallocate_parallelctx(Module& M) {
 //using initworkers_env_ty = void (void );
 static FunctionCallee Get_initworkers_env(Module& M) {
   LLVMContext &Ctx = M.getContext();
-  return M.getOrInsertFunction("initworkers_env", FunctionType::get(Type::getVoidTy(Ctx), {Type::getVoidTy(Ctx)}, false));
+  return M.getOrInsertFunction("initworkers_env", FunctionType::get(Type::getVoidTy(Ctx), {}, false));
 }
 
 //using deinitworkers_env_ty = void (void );
 static FunctionCallee Get_deinitworkers_env(Module& M) {
   LLVMContext &Ctx = M.getContext();
-  return M.getOrInsertFunction("deinitworkers_env", FunctionType::get(Type::getVoidTy(Ctx), {Type::getVoidTy(Ctx)}, false));
+  return M.getOrInsertFunction("deinitworkers_env", FunctionType::get(Type::getVoidTy(Ctx), {}, false));
 }
 
 //using deinitperworkers_sync_ty = void(int, int);
@@ -156,6 +156,37 @@ static FunctionCallee Get_initperworkers_sync(Module& M) {
   return M.getOrInsertFunction("initperworkers_sync", FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt32Ty(Ctx), Type::getInt32Ty(Ctx)}, false));
 }
 
+
+// Based on HWAddressSanitizer.cpp
+static Value *readRegister(IRBuilder<> &IRB, StringRef Name) {
+  Module *M = IRB.GetInsertBlock()->getParent()->getParent();
+  LLVMContext *C = &(M->getContext());
+  Type * Int64Ty = IRB.getInt64Ty();
+  auto *ReadRegister = Intrinsic::getDeclaration(M, Intrinsic::read_register, Int64Ty);
+  MDNode *MD = MDNode::get(*C, {MDString::get(*C, Name)});
+  Value *Args[] = {MetadataAsValue::get(*C, MD)};
+  return IRB.CreateCall(ReadRegister, Args);
+}
+
+static Value* getSP(IRBuilder<> &B, Function& F) {
+  auto TargetTriple = Triple(F.getParent()->getTargetTriple());
+  return readRegister(B, (TargetTriple.getArch() == Triple::x86_64) ? "rsp" : "sp");
+}
+
+static Value *writeRegister(IRBuilder<> &IRB, StringRef Name, Value* val) {
+  Module *M = IRB.GetInsertBlock()->getParent()->getParent();
+  LLVMContext *C = &(M->getContext());
+  Type * Int64Ty = IRB.getInt64Ty();
+  auto *WriteRegister = Intrinsic::getDeclaration(M, Intrinsic::write_register, Int64Ty);
+  MDNode *MD = MDNode::get(*C, {MDString::get(*C, Name)});
+  Value *Args[] = {MetadataAsValue::get(*C, MD), val};
+  return IRB.CreateCall(WriteRegister, Args);
+}
+
+static Value* setSP(IRBuilder<> &B, Function& F, Value* val) {
+  auto TargetTriple = Triple(F.getParent()->getTargetTriple());
+  return writeRegister(B, (TargetTriple.getArch() == Triple::x86_64) ? "rsp" : "sp", val);
+}
 
 namespace {
 
@@ -214,7 +245,7 @@ namespace {
 
     ValueToValueMapTy VMapGotStolenI;
 
-    auto Name = "__prsc_" + F.getName() + "Wrapper";
+    auto Name = "__prsc_" + F.getName() + "Wrapper" + to_string(storageVec.size());
     auto Fn = M->getFunction(Name.str());
     if (Fn)
       return Fn;
@@ -657,8 +688,6 @@ namespace {
         //II.dump();
       }
     }
-
-
     return Wrapper;
   }
 #endif
@@ -852,6 +881,132 @@ void EagerDTransPass::createParallelRegion(Function& F, SmallVector<DetachInst*,
   return;
 }
 
+
+void EagerDTransPass::generateWrapperFuncForDetached (Function &F, SmallVector<DetachInst*, 4>& bbOrder,
+						      DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>& LVout,
+						      DenseMap<BasicBlock *, DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>>& LVin) {
+  // Locate the instruct
+  Module* M = F.getParent();
+  LLVMContext& C = M->getContext();
+  IRBuilder<> B(C);
+
+  for (auto detachInst: bbOrder) {
+    BasicBlock* pBB = detachInst->getParent();
+    assert(pBB);
+    BasicBlock* detachBBori = detachInst->getDetached();
+
+    auto detachBB = getActualDetached(detachBBori);
+
+    BasicBlock* continueBB  = detachInst->getContinue();
+    SmallVector<Instruction *, 4> instsVec;
+    for ( auto &II : *detachBB ) {
+      instsVec.push_back(&II);
+    }
+
+    // Look for the spawn function
+    bool bFailToLocateSpawnFunction = true;
+    for (auto ii : instsVec) {
+      LLVM_DEBUG(dbgs() << "II: " << *ii << "\n");
+      if ((isa<CallInst>(ii) || isa<InvokeInst>(ii)) && isNonPHIOrDbgOrLifetime(ii) ) {
+	// Find multiple call inst, need to create wrapper
+	if(!bFailToLocateSpawnFunction) {
+	  bFailToLocateSpawnFunction = true;
+	  break;
+	}
+	bFailToLocateSpawnFunction = false;
+      }
+    }
+
+    // If we fail to locate a spawn instruction, create a function wrapper.
+    if(bFailToLocateSpawnFunction) {
+      LLVM_DEBUG(dbgs() << "Need to generate function for inst: " << *detachInst << "\n");
+
+      // Find the basicBlock needed to clone
+      SmallVector<BasicBlock*, 4> bb2clones;
+      SmallPtrSet<Value*, 4> setBb2clones;
+      SmallPtrSet<Value*, 4> fcnArgs;
+
+      BasicBlock* detachBB = detachInst->getDetached();
+
+      // Clone the basic block one at a time
+      traverseDetach(detachBB, bb2clones);
+
+      for(auto bb2clone: bb2clones) {
+	setBb2clones.insert(bb2clone);
+      }
+
+      // LiveInVar determines the function argument
+      // Find live instruction into the basic block of the first detach function, create arguments for this live variable
+      auto liveOutVars = LVout[detachBB];
+      auto liveInVars = LVin[detachBB][detachBB->getUniquePredecessor()];
+
+      LLVM_DEBUG(dbgs() << "For basic block " << detachBB->getName() << " live variables in: \n");
+      // Since in cilk, the return variable is immediately stored in memory, there should be no live variables
+      // Look for live variables inside
+
+      for (auto liveInVar : liveInVars) {
+	if(liveInVar->getType()->isTokenTy())continue;
+
+	for (auto &use : liveInVar->uses()) {
+	  auto * user = dyn_cast<Instruction>(use.getUser());
+	  if(setBb2clones.find(user->getParent()) != setBb2clones.end()) {
+	    LLVM_DEBUG(dbgs() << *liveInVar << "\n");
+	    fcnArgs.insert(liveInVar);
+	  }
+	}
+      }
+
+      // Also take into account function arguments
+      for(auto it = F.arg_begin(); it != F.arg_end(); it++) {
+	for (auto &use : it->uses()) {
+	  auto * user = dyn_cast<Instruction>(use.getUser());
+	  if(setBb2clones.find(user->getParent()) != setBb2clones.end()) {
+	    LLVM_DEBUG(dbgs() << *it << "\n");
+	    fcnArgs.insert(it);
+	  }
+	}
+      }
+
+      LLVM_DEBUG(dbgs() << "Basicblock to clone: " << "\n");
+      for(auto bb2clone: bb2clones) {
+	LLVM_DEBUG(dbgs() << "BB : " << bb2clone->getName() << "\n");
+      }
+
+
+      // Create the function
+      Function* wrapper = convertBBtoFcn(F, detachBB , bb2clones, fcnArgs);
+      wrapper->addFnAttr(Attribute::NoInline);
+      wrapper->addFnAttr("no-frame-pointer-elim");
+
+      auto bbContainReattach = getActualDetached(detachBB);
+
+      // Erase all instruction except reattach
+      SmallVector<Instruction *, 4> inst2delete;
+      for(auto &ii : *bbContainReattach) {
+	if(isa<ReattachInst>(&ii))
+	  break;
+
+	inst2delete.push_back(&ii);
+      }
+      for(auto it = inst2delete.rbegin(); it != inst2delete.rend(); it++){
+	(*it)->eraseFromParent();
+      }
+
+      B.SetInsertPoint(bbContainReattach->getTerminator());
+
+      SmallVector<Value*, 4> fcnArgVectors(fcnArgs.begin(), fcnArgs.end());
+
+      B.CreateCall(wrapper, fcnArgVectors);
+
+      detachInst->setSuccessor(0, bbContainReattach);
+
+    }
+
+  }
+  return ;
+}
+
+
 void EagerDTransPass::initializeParallelCtx(Function& F, SmallVector<DetachInst*, 4> bbOrder, DenseMap<DetachInst *, SmallPtrSet<BasicBlock*, 8>>& RDIPath, DenseMap<DetachInst *, SmallPtrSet<BasicBlock*, 8>>& RDIBB, Value* readyctx, Value* ownerAlloc, SmallPtrSet<BasicBlock*, 32>& parallelRegions, SmallPtrSet<BasicBlock*, 32>& frontierParallelRegions){
   Module* M = F.getParent();
   LLVMContext& C = M->getContext();
@@ -875,9 +1030,11 @@ void EagerDTransPass::initializeParallelCtx(Function& F, SmallVector<DetachInst*
       B.CreateCall(allocate_parallelctx2, {readyctx});
 #endif
       // Get rsp
-      auto* getSP = Intrinsic::getDeclaration(M, Intrinsic::read_sp);
-      Value* spval = B.CreateCall(getSP);
+      //auto* getSP = Intrinsic::getDeclaration(M, Intrinsic::read_sp);
+      Value* spval = getSP(B, F); //B.CreateCall(getSP);
       // Store resp to the readyctxAlloc
+      //readyctx: i8**
+      //savedSP: i8*
       auto savedSP = B.CreateConstGEP1_32(VoidPtrTy, readyctx, I_RSP);
       auto spvalAsPtr = B.CreateCast(Instruction::IntToPtr, spval, IntegerType::getInt8Ty(C)->getPointerTo());
       B.CreateStore(spvalAsPtr, savedSP);
@@ -922,8 +1079,9 @@ void EagerDTransPass::initializeParallelCtx(Function& F, SmallVector<DetachInst*
 	B.CreateCall(allocate_parallelctx2, {readyctx});
 #endif
 	// Get rsp
-	auto* getSP = Intrinsic::getDeclaration(M, Intrinsic::read_sp);
-	Value* spval = B.CreateCall(getSP);
+	//auto* getSP = Intrinsic::getDeclaration(M, Intrinsic::read_sp);
+	//Value* spval = B.CreateCall(getSP);
+	Value* spval = getSP(B, F);
 	// Store resp to the readyctxAlloc
 	auto savedSP = B.CreateConstGEP1_32(VoidPtrTy, readyctx, I_RSP);
 	auto spvalAsPtr = B.CreateCast(Instruction::IntToPtr, spval, IntegerType::getInt8Ty(C)->getPointerTo());
@@ -972,7 +1130,6 @@ void EagerDTransPass::initializeParallelCtx(Function& F, SmallVector<DetachInst*
 	  }
 	}
 	/////////////////////////////////
-
       }
     }
   }
@@ -1074,22 +1231,22 @@ void EagerDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4
       //auto saveContextNoSP = Intrinsic::getDeclaration(M, Intrinsic::uli_save_callee_nosp);
       auto saveContextNoSP = Intrinsic::getDeclaration(M, Intrinsic::uli_save_context_nosp);
 
-      //B.CreateCall(saveContextNoSP, {B.CreateBitCast(workCtx, IntegerType::getInt8Ty(C)->getPointerTo()), NULL8});
 
       BasicBlock* preDetachSlowPath = BasicBlock::Create(C, "pre.detachSlowpath", &F);
       BasicBlock* preContinueSlowPath = BasicBlock::Create(C, "pre.continueSlowpath", &F);
 
-      //auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), detachedSlowPath, {continueSlowPath}, {});
-      //auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(saveContextNoSP), detachedSlowPath, {continueSlowPath}, {B.CreateBitCast(workCtx, IntegerType::getInt8Ty(C)->getPointerTo()), NULL8});
+      //B.CreateCall(saveContextNoSP, {B.CreateBitCast(workCtx, IntegerType::getInt8Ty(C)->getPointerTo()), NULL8});
+      //auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), preDetachSlowPath, {preContinueSlowPath}, {});
       auto insertPoint = B.CreateMultiRetCall(dyn_cast<Function>(saveContextNoSP), preDetachSlowPath, {preContinueSlowPath}, {B.CreateBitCast(workCtx, IntegerType::getInt8Ty(C)->getPointerTo()), NULL8});
+
       diSlowPath->eraseFromParent();
 
       B.SetInsertPoint(preDetachSlowPath);
-      B.CreateRetPad(dyn_cast<MultiRetCallInst>(insertPoint));
+      //B.CreateRetPad(dyn_cast<MultiRetCallInst>(insertPoint));
       B.CreateBr(detachedSlowPath);
 
       B.SetInsertPoint(preContinueSlowPath);
-      B.CreateRetPad(dyn_cast<MultiRetCallInst>(insertPoint));
+      //B.CreateRetPad(dyn_cast<MultiRetCallInst>(insertPoint));
       B.CreateBr(continueSlowPath);
 
     } else {
@@ -1127,6 +1284,7 @@ void EagerDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4
     B.SetInsertPoint(detachedSlowPath->getFirstNonPHIOrDbgOrLifetime());
 
     if(EnableSaveRestoreCtx) {
+      // workCtx = i8**
       Value* savedPc = B.CreateConstGEP1_32(VoidPtrTy, workCtx, 1);
       B.CreateStore(BlockAddress::get(pBBSlowPath, 1), savedPc);
     }
@@ -1183,11 +1341,12 @@ void EagerDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4
     else
       wrapperFcn = GenerateWrapperFunc(ci, storageVec, insts2clone, workCtx->getType());
 
-    wrapperFcn->addFnAttr("no-frame-pointer-elim", "true");
     wrapperFcn->addFnAttr(Attribute::NoUnwindPath);
     wrapperFcn->addFnAttr(Attribute::NoInline);
     wrapperFcn->addFnAttr(Attribute::OptimizeNone); // Can cause a ud2 in assembly?
-
+    wrapperFcn->addFnAttr("no-frame-pointer-elim");
+    wrapperFcn->addFnAttr("no-frame-pointer-elim-non-leaf", "true");
+    wrapperFcn->addFnAttr("no-realign-stack");
     SmallVector<Value*, 4> args;
     for(int i = 0; i<ci->arg_size(); i++){
       args.push_back(ci->getArgOperand(i));
@@ -1207,7 +1366,6 @@ void EagerDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4
       ii->eraseFromParent();
     }
     ci->eraseFromParent();
-
     //----------------------------------------------------------------------------------------------------
     /*
       Example of changes:
@@ -1268,8 +1426,9 @@ void EagerDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4
     auto savedRSP = B.CreateConstGEP1_32(VoidPtrTy, readyctx, I_RSP);
     savedRSP = B.CreateBitCast(savedRSP, IntegerType::getInt8Ty(C)->getPointerTo()->getPointerTo());
 
-    auto* getSP = Intrinsic::getDeclaration(M, Intrinsic::read_sp);
-    Value* spval = B.CreateCall(getSP);
+    //auto* getSP = Intrinsic::getDeclaration(M, Intrinsic::read_sp);
+    //Value* spval = B.CreateCall(getSP);
+    Value* spval = getSP(B, F);
     auto currentRSP = B.CreateCast(Instruction::IntToPtr, spval, IntegerType::getInt8Ty(C)->getPointerTo());
 
     // Call sync function call
@@ -1332,10 +1491,9 @@ void EagerDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4
       auto donothingFcn = Intrinsic::getDeclaration(M, Intrinsic::donothing);
       //auto saveContextNoSP = Intrinsic::getDeclaration(M, Intrinsic::uli_save_callee_nosp);
       auto saveContextNoSP = Intrinsic::getDeclaration(M, Intrinsic::uli_save_context_nosp);
-      CallInst* result = B.CreateCall(saveContextNoSP, {B.CreateBitCast(readyctx, IntegerType::getInt8Ty(C)->getPointerTo()), NULL8});
-
-      B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), syncRuntimeBB, {syncPreResumeParentBB}, {});
-      //B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), syncSucc, {syncSucc}, {});
+      //CallInst* result = B.CreateCall(saveContextNoSP, {B.CreateBitCast(readyctx, IntegerType::getInt8Ty(C)->getPointerTo()), NULL8});
+      //B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), syncRuntimeBB, {syncPreResumeParentBB}, {});
+      B.CreateMultiRetCall(dyn_cast<Function>(saveContextNoSP), syncRuntimeBB, {syncPreResumeParentBB}, {B.CreateBitCast(readyctx, IntegerType::getInt8Ty(C)->getPointerTo()), NULL8});
       syncSlowPath->eraseFromParent();
 
     } else {
@@ -1351,12 +1509,10 @@ void EagerDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4
     // Create a basic block that performs the synchronization
     B.SetInsertPoint(syncRuntimeBB);
     Value* savedPc = B.CreateConstGEP1_32(VoidPtrTy, readyctx, I_RIP); //void** (no loading involved)
-
     if(EnableMultiRetIR)
       B.CreateStore(BlockAddress::get(syncPreRuntimeBB, 1), savedPc);
     else
       B.CreateStore(BlockAddress::get(syncSucc), savedPc);
-
     Value* newsp = B.CreateConstGEP1_32(VoidPtrTy, readyctx, I_NEWRSP);
     newsp = B.CreateLoad(VoidPtrTy, newsp);
 
@@ -1475,6 +1631,22 @@ bool EagerDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominato
     F.addFnAttr(Attribute::NoUnwindPath);
   }
 
+  // Delete task.frame.create and task.frame.use for now
+  SmallVector<IntrinsicInst*, 4 > taskframe2delete;
+  for(auto &BB : F) {
+    for(auto &I : BB) {
+      if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(&I)) {
+	if ( Intrinsic::taskframe_use == II->getIntrinsicID()) {
+	  taskframe2delete.push_back(II);
+	}
+      }
+    }
+  }
+
+  for(auto ii : taskframe2delete) {
+    ii->eraseFromParent();
+  }
+
   LiveVariable LV;
   ReachingDetachInst RDI;
   ReachingStoreReachableLoad RSI;
@@ -1489,6 +1661,9 @@ bool EagerDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominato
 
   auto  &seqOrder = RDI.getSeqOrderInst();
   auto  &loopOrder = RDI.getLoopOrderInst();
+
+  auto  &LVin = LV.getLiveInInstBBMap();
+  auto  &LVout = LV.getLiveOutInstBBMap();
 
   SmallVector<DetachInst*, 4> bbOrder;
   bbOrder.append(seqOrder.begin(), seqOrder.end());
@@ -1525,12 +1700,27 @@ bool EagerDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominato
 	}
       }
     }
-
+    // Delete intrinsice
     for(auto ii : ii2delete) {
       ii->eraseFromParent();
     }
-
     return false;
+  }
+
+  // Add attribute to forkable function
+  for(auto &BB : F) {
+    if (DetachInst * DI = dyn_cast<DetachInst>(BB.getTerminator())){
+      BasicBlock * detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
+      detachBlock->getParent()->addFnAttr(Attribute::Forkable);
+      detachBlock->getParent()->addFnAttr(Attribute::Stealable);
+      for( Instruction &II : *detachBlock ) {
+	if( isa<CallInst>(&II) ) {
+	  dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);
+	  dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::ReturnsTwice);
+	  dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Stealable);
+	}
+      }
+    }
   }
 
 
@@ -1552,7 +1742,10 @@ bool EagerDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominato
 
 #if 1
   Value* readyctxAlloc = B.CreateAlloca(ArrayType::get(PointerType::getInt8PtrTy(C), WorkCtxLen), DL.getAllocaAddrSpace(), nullptr, "readyCtx");
-  Value* readyctx = B.CreateConstInBoundsGEP2_64(PointerType::getInt8PtrTy(C)->getPointerTo(), readyctxAlloc, 0, 0 );
+  //[64 x i8*]*
+
+  Value* readyctx = B.CreateConstInBoundsGEP2_64(ArrayType::get(PointerType::getInt8PtrTy(C), WorkCtxLen), readyctxAlloc, 0, 0 );
+  //i8**
 #else
   FunctionCallee allocate_parallelctx = Get_allocate_parallelctx(*M);
   Value* readyctx = B.CreateCall(allocate_parallelctx);
@@ -1561,6 +1754,9 @@ bool EagerDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominato
   GlobalVariable* gThreadId = GetGlobalVariable("threadId", Type::getInt32Ty(C), *M, true);
   Value * gThreadIdVal = B.CreateAlignedLoad(Int32Ty, gThreadId, Align(4));
   B.CreateAlignedStore(gThreadIdVal, ownerAlloc, Align(4), 1);
+
+  // Generate Wrapper for inlined detachedo
+  generateWrapperFuncForDetached(F, bbOrder, LVout, LVin);
 
   //-------------------------------------------------------------------------------------------------
   // Create Parallel region
@@ -1581,7 +1777,6 @@ bool EagerDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominato
   //-------------------------------------------------------------------------------------------------
   // Deinitialize outside parallel region
   deinitializeParallelCtx(F, joincntrAlloc, readyctx, exitParallelRegions);
-
   //-------------------------------------------------------------------------------------------------
   // Post process: Simplify CFG and verify function
   postProcessCfg(F);

@@ -100,6 +100,10 @@ namespace llvm {
     void initializeParallelCtx(Function& F, SmallVector<DetachInst*, 4> bbOrder, DenseMap<DetachInst *, SmallPtrSet<BasicBlock*, 8>>& RDIPath, DenseMap<DetachInst *, SmallPtrSet<BasicBlock*, 8>>& RDIBB, Value* readyctx, Value* ownerAlloc, SmallPtrSet<BasicBlock*, 32>& parallelRegions, SmallPtrSet<BasicBlock*, 32>& frontierParallelRegions);
     void instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder,  SmallVector<SyncInst*, 8>& syncInsts, Value* ownerAlloc, Value* joincntrAlloc, Value* readyctx);
 
+    void generateWrapperFuncForDetached (Function &F, SmallVector<DetachInst*, 4>& bbOrder,
+						     DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>& LVout,
+						     DenseMap<BasicBlock *, DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>>& LVin);
+
     void deinitializeParallelCtx(Function& F, Value* joincntrAlloc, Value* readyctx, SmallPtrSet<BasicBlock*, 32>& exitParallelRegions);
     void instrumentMainFcn(Function& F);
 
