@@ -2778,7 +2778,11 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
             CGM.getOpenMPRuntime().isNontemporalDecl(VD))
           CapLVal.setNontemporal(/*Value=*/true);
         return CapLVal;
+#if 0
       } else if (isa<FunctionDecl>(CurCodeDecl) && cast<FunctionDecl>(CurCodeDecl)->isInletSpecified()) {
+#else
+      } else if(false) {
+#endif
         // We are in an inlet
         const FunctionDecl *FD = cast<FunctionDecl>(CurCodeDecl);
         assert(InletEnvArgValue.isValid() && "InletEnvArgValue must be set");

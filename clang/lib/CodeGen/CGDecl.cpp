@@ -2568,9 +2568,11 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, ParamValue Arg,
       return;
     }
   }
-
+#if 0
   if (CurCodeDecl && isa<FunctionDecl>(CurCodeDecl) && cast<FunctionDecl>(CurCodeDecl)->isInletSpecified()) {
-
+#else
+  if(false) {
+#endif
     // We are inside of an inlet. Hold onto the first argument (the
     // environment struct pointer) so we can use it when emitting references
     // to captured variables.

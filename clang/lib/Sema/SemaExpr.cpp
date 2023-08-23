@@ -17706,7 +17706,8 @@ static bool isVariableAlreadyCapturedInScopeInfo(CapturingScopeInfo *CSI, VarDec
 static DeclContext *getParentOfCapturingContextOrNull(DeclContext *DC, VarDecl *Var,
                                  SourceLocation Loc,
                                  const bool Diagnose, Sema &S) {
-  bool FunctionDeclIsInlet = isa<FunctionDecl>(DC) && cast<FunctionDecl>(DC)->isInletSpecified();
+  //bool FunctionDeclIsInlet = isa<FunctionDecl>(DC) && cast<FunctionDecl>(DC)->isInletSpecified();
+  bool FunctionDeclIsInlet = false;
   if (isa<BlockDecl>(DC) || FunctionDeclIsInlet
       || isa<CapturedDecl>(DC) || isLambdaCallOperator(DC))
     return getLambdaAwareParentOfDeclContext(DC);
@@ -18319,7 +18320,9 @@ bool Sema::tryCaptureVariable(
           RSI, Var, ExprLoc, BuildAndDiagnose, CaptureType, DeclRefType, Nested,
           Kind, /*IsTopScope*/ I == N - 1, *this, Invalid);
       Nested = true;
-    } else if (InletScopeInfo *ISI = dyn_cast<InletScopeInfo>(CSI)) {
+      //} else if (InletScopeInfo *ISI = dyn_cast<InletScopeInfo>(CSI)) {
+    } else if (false) {
+      InletScopeInfo *ISI = dyn_cast<InletScopeInfo>(CSI);
       CaptureType = CaptureType.getNonReferenceType();
       Expr *Cpy = nullptr;
       ISI->addCapture(Var, /*isBlock=*/false, /*isByref=*/false, Nested, ExprLoc, ExprLoc, CaptureType, Cpy);
