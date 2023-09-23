@@ -15465,27 +15465,33 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
       tmparg = EmitScalarExpr(E->getArg(i));
       auto tmpargBA = dyn_cast<BlockAddress>(tmparg);
       assert(tmpargBA && "Blockaddress cannot be null");
-      tmpargBA->getBasicBlock()->dump();
+      //tmpargBA->getBasicBlock()->dump();
       indirectbb_vector.push_back(dyn_cast<BasicBlock>(tmpargBA->getBasicBlock()));
     }
     assert(dyn_cast<Constant>(bitcastI) && "FunctionType cannot be null");
 
     Function* fcn = nullptr;
-#if 0
-    auto ce = dyn_cast<ConstantExpr>(bitcastI);
-    assert(ce && "bitcastI not a constant expression");
+#if 1
+    auto ce = dyn_cast<Constant>(bitcastI);
+    //assert(ce && "bitcastI not a constant expression");
     // TODO: CNP fix this comment below
-    fcn = dyn_cast<Function>(ce->getOperand(0));
+    //ce->dump();
+    fcn = dyn_cast<Function>(dyn_cast<User>(ce)->getOperand(0));
     assert(fcn && "Function cannot be null");
 #endif
 
     auto br = inspectedbb->getTerminator();
     br->eraseFromParent();
     Builder.SetInsertPoint(inspectedbb);
-    auto val = Builder.CreateMultiRetCall(dyn_cast<Function>(fcn), defaultbb, indirectbb_vector, arg_vector);
+    Value* val = nullptr;
 
-    inspectedbb->dump();
-    defaultbb->dump();
+    // TODO: update the function name to __builtin_save_and_multiretcall
+    auto saveContext = CGM.getIntrinsic(Intrinsic::uli_save_context_nosp);
+    val = Builder.CreateMultiRetCall(dyn_cast<Function>(saveContext), defaultbb, indirectbb_vector, arg_vector);
+    //val = Builder.CreateMultiRetCall(dyn_cast<Function>(fcn), defaultbb, indirectbb_vector, arg_vector);
+
+    //inspectedbb->dump();
+    //defaultbb->dump();
 
     Builder.SetInsertPoint(defaultbb);
     fcn->addFnAttr(Attribute::NoInline);
