@@ -1449,6 +1449,8 @@ void CompilerInvocation::GenerateCodeGenArgs(
   else if(fforkd_enum==llvm::ForkDTargetType::EagerD)
     GenerateArg(Args, OPT_fforkd_EQ, "eager", SA);
 
+  GenerateArg(Args, OPT_fpfor_spawn_strategy, std::to_string(Opts.PForSpawnStrategy), SA);
+
   Optional<StringRef> DebugInfoVal;
   switch (Opts.DebugInfo) {
   case codegenoptions::DebugLineTablesOnly:
@@ -1844,69 +1846,6 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
 
   Opts.PrepareForLTO = false;
   Opts.PrepareForThinLTO = false;
-#if 0
-  Opts.CoverageMapping =
-      Args.hasFlag(OPT_fcoverage_mapping, OPT_fno_coverage_mapping, false);
-  Opts.DumpCoverageMapping = Args.hasArg(OPT_dump_coverage_mapping);
-  Opts.AsmVerbose = Args.hasArg(OPT_masm_verbose);
-  Opts.PreserveAsmComments = !Args.hasArg(OPT_fno_preserve_as_comments);
-  Opts.AssumeSaneOperatorNew = !Args.hasArg(OPT_fno_assume_sane_operator_new);
-  Opts.ObjCAutoRefCountExceptions = Args.hasArg(OPT_fobjc_arc_exceptions);
-  Opts.CXAAtExit = !Args.hasArg(OPT_fno_use_cxa_atexit);
-  Opts.CXXCtorDtorAliases = Args.hasArg(OPT_mconstructor_aliases);
-  Opts.CodeModel = getCodeModel(Args, Diags);
-  Opts.DebugPass = Args.getLastArgValue(OPT_mdebug_pass);
-  Opts.DisableFPElim =
-      (Args.hasArg(OPT_mdisable_fp_elim) || Args.hasArg(OPT_pg));
-  Opts.DisableFree = Args.hasArg(OPT_disable_free);
-  Opts.DiscardValueNames = Args.hasArg(OPT_discard_value_names);
-  Opts.DisableTailCalls = Args.hasArg(OPT_mdisable_tail_calls);
-  Opts.FloatABI = Args.getLastArgValue(OPT_mfloat_abi);
-  Opts.LessPreciseFPMAD = Args.hasArg(OPT_cl_mad_enable) ||
-                          Args.hasArg(OPT_cl_unsafe_math_optimizations) ||
-                          Args.hasArg(OPT_cl_fast_relaxed_math);
-  Opts.LimitFloatPrecision = Args.getLastArgValue(OPT_mlimit_float_precision);
-  Opts.NoInfsFPMath = (Args.hasArg(OPT_menable_no_infinities) ||
-                       Args.hasArg(OPT_cl_finite_math_only) ||
-                       Args.hasArg(OPT_cl_fast_relaxed_math));
-  Opts.NoNaNsFPMath = (Args.hasArg(OPT_menable_no_nans) ||
-                       Args.hasArg(OPT_cl_unsafe_math_optimizations) ||
-                       Args.hasArg(OPT_cl_finite_math_only) ||
-                       Args.hasArg(OPT_cl_fast_relaxed_math));
-  Opts.NoSignedZeros = (Args.hasArg(OPT_fno_signed_zeros) ||
-                        Args.hasArg(OPT_cl_no_signed_zeros) ||
-                        Args.hasArg(OPT_cl_unsafe_math_optimizations) ||
-                        Args.hasArg(OPT_cl_fast_relaxed_math));
-  Opts.Reassociate = Args.hasArg(OPT_mreassociate);
-  Opts.FlushDenorm = Args.hasArg(OPT_cl_denorms_are_zero);
-  Opts.CorrectlyRoundedDivSqrt =
-      Args.hasArg(OPT_cl_fp32_correctly_rounded_divide_sqrt);
-  Opts.Reciprocals = Args.getAllArgValues(OPT_mrecip_EQ);
-  Opts.ReciprocalMath = Args.hasArg(OPT_freciprocal_math);
-  Opts.NoTrappingMath = Args.hasArg(OPT_fno_trapping_math);
-  Opts.NoZeroInitializedInBSS = Args.hasArg(OPT_mno_zero_initialized_in_bss);
-  Opts.BackendOptions = Args.getAllArgValues(OPT_backend_option);
-  Opts.NumRegisterParameters = getLastArgIntValue(Args, OPT_mregparm, 0, Diags);
-  Opts.NoExecStack = Args.hasArg(OPT_mno_exec_stack);
-  Opts.FatalWarnings = Args.hasArg(OPT_massembler_fatal_warnings);
-  Opts.EnableSegmentedStacks = Args.hasArg(OPT_split_stacks);
-  Opts.RelaxAll = Args.hasArg(OPT_mrelax_all);
-  Opts.IncrementalLinkerCompatible =
-      Args.hasArg(OPT_mincremental_linker_compatible);
-  Opts.PIECopyRelocations =
-      Args.hasArg(OPT_mpie_copy_relocations);
-  Opts.NoPLT = Args.hasArg(OPT_fno_plt);
-  Opts.OmitLeafFramePointer = Args.hasArg(OPT_momit_leaf_frame_pointer);
-  Opts.SaveTempLabels = Args.hasArg(OPT_msave_temp_labels);
-  Opts.NoDwarfDirectoryAsm = Args.hasArg(OPT_fno_dwarf_directory_asm);
-  Opts.SoftFloat = Args.hasArg(OPT_msoft_float);
-  Opts.StrictEnums = Args.hasArg(OPT_fstrict_enums);
-  Opts.StrictReturn = !Args.hasArg(OPT_fno_strict_return);
-  Opts.StrictVTablePointers = Args.hasArg(OPT_fstrict_vtable_pointers);
-  Opts.UnsafeFPMath = Args.hasArg(OPT_menable_unsafe_fp_math) ||
-                      Args.hasArg(OPT_cl_unsafe_math_optimizations) ||
-                      Args.hasArg(OPT_cl_fast_relaxed_math);
-#endif
   Opts.ULIStackletOverflowCheckSize = getLastArgIntValue(Args, OPT_fuli_stacklet_overflow_size, 0);
   assert(Opts.ULIStackletOverflowCheckSize < 64);
   Opts.PForSpawnStrategy = getLastArgIntValue(Args, OPT_fpfor_spawn_strategy, 1);
@@ -1925,37 +1864,9 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
 
   }
   Opts.setForkDLowering(fforkd_enum);
-
   Opts.EnableULITransform = Args.hasArg(OPT_fenable_uli_transform);
   Opts.EnableULIRewrite = Args.hasArg(OPT_fenable_uli_rewrite);
   Opts.DisableULIPollInsertion = Args.hasArg(OPT_fdisable_uli_poll_insertion);
-#if 0
-  Opts.UnwindTables = Args.hasArg(OPT_munwind_tables);
-  Opts.RelocationModel = getRelocModel(Args, Diags);
-  Opts.ThreadModel = Args.getLastArgValue(OPT_mthread_model, "posix");
-  if (Opts.ThreadModel != "posix" && Opts.ThreadModel != "single")
-    Diags.Report(diag::err_drv_invalid_value)
-        << Args.getLastArg(OPT_mthread_model)->getAsString(Args)
-        << Opts.ThreadModel;
-  Opts.TrapFuncName = Args.getLastArgValue(OPT_ftrap_function_EQ);
-  Opts.UseInitArray = Args.hasArg(OPT_fuse_init_array);
-
-  Opts.FunctionSections = Args.hasFlag(OPT_ffunction_sections,
-                                       OPT_fno_function_sections, false);
-  Opts.DataSections = Args.hasFlag(OPT_fdata_sections,
-                                   OPT_fno_data_sections, false);
-  Opts.UniqueSectionNames = Args.hasFlag(OPT_funique_section_names,
-                                         OPT_fno_unique_section_names, true);
-
-  Opts.MergeFunctions = Args.hasArg(OPT_fmerge_functions);
-
-  Opts.NoUseJumpTables = Args.hasArg(OPT_fno_jump_tables);
-
-  Opts.ProfileSampleAccurate = Args.hasArg(OPT_fprofile_sample_accurate);
-
-  Opts.PrepareForLTO = Args.hasArg(OPT_flto, OPT_flto_EQ);
-  Opts.EmitSummaryIndex = false;
-#endif
 
   if (Arg *A = Args.getLastArg(OPT_flto_EQ)) {
     Opts.PrepareForLTO = true;

@@ -2985,7 +2985,7 @@ def fuli_fsim : Flag<["-"], "fuli-fsim">, Group<f_Group>,
 def fno_uli_fsim : Flag<["-"], "fno-uli-fsim">, Group<f_Group>,
   Flags<[CC1Option]>;
 
-def fpfor_spawn_strategy : Joined<["-"], "fpfor-spawn-strategy=">, Group<f_Group>,
+def fpfor_spawn_strategy : Joined<["-"], "fpfor-spawn-strategy=">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Spawn strategy for pfor (0=sequential, 1=dac (default), 2=hybrid)">;
 
 def fuli_stacklet_overflow_size : Joined<["-"], "fuli-stacklet-overflow-size=">,
