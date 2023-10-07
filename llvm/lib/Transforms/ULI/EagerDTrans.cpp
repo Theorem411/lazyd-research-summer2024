@@ -85,12 +85,6 @@ static FunctionCallee Get_sync_eagerd(Module& M) {
   return M.getOrInsertFunction("sync_eagerd", FunctionType::get(Type::getInt8Ty(Ctx), {PointerType::getInt8PtrTy(Ctx)->getPointerTo(), Type::getInt32Ty(Ctx), PointerType::getInt8PtrTy(Ctx), PointerType::getInt8PtrTy(Ctx)}, false));
 }
 
-//using suspend2scheduler_ty = void (int, int);
-static FunctionCallee Get_suspend2scheduler(Module& M) {
-  LLVMContext &Ctx = M.getContext();
-  return M.getOrInsertFunction("suspend2scheduler", FunctionType::get(Type::getVoidTy(Ctx), {Type::getInt32Ty(Ctx),Type::getInt32Ty(Ctx)}, false));
-}
-
 //using resume2scheduler_ty = void (void**, int);
 static FunctionCallee Get_resume2scheduler(Module& M) {
   LLVMContext &Ctx = M.getContext();
@@ -101,12 +95,6 @@ static FunctionCallee Get_resume2scheduler(Module& M) {
 static FunctionCallee Get_set_joincntr(Module& M) {
   LLVMContext &Ctx = M.getContext();
   return M.getOrInsertFunction("set_joincntr", FunctionType::get(Type::getVoidTy(Ctx), {PointerType::getInt8PtrTy(Ctx)->getPointerTo()}, false));
-}
-
-//using allocate_parallelctx_ty = void** ();
-static FunctionCallee Get_allocate_parallelctx(Module& M) {
-  LLVMContext &Ctx = M.getContext();
-  return M.getOrInsertFunction("allocate_parallelctx", FunctionType::get(PointerType::getInt8PtrTy(Ctx)->getPointerTo(), {Type::getVoidTy(Ctx)}, false));
 }
 
 //using allocate_parallelctx2_ty = void** (void**);
