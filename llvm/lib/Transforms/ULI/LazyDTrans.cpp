@@ -1269,7 +1269,7 @@ namespace {
     }
 #endif
 
-#define UI_REGION
+//#define UI_REGION
     if (HeaderBlock) {
       if(F->getFnAttribute("poll-at-loop").getValueAsString()=="true") {
 #ifdef UI_REGION
@@ -2919,7 +2919,7 @@ Value* LazyDTransPass::lowerGrainsizeCall(CallInst *GrainsizeCall) {
 void LazyDTransPass::convertTapirIrToBr(Function &F) {
   DenseMap<Instruction*, Instruction*> replaceInstMap;
   for(auto &BB : F) {
-    if(isa<DetachInst>(  BB.getTerminator() )) {
+    if(isa<DetachInst>(BB.getTerminator())) {
       DetachInst* detachInst = dyn_cast<DetachInst>(BB.getTerminator());
       BasicBlock* detachBB = detachInst->getDetached();
       BasicBlock* contBB = detachInst->getContinue();
@@ -4877,6 +4877,10 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   //-------------------------------------------------------------------------------------------------
   // Multiretcall pathdependent that is in fast path is converted as branch to default, while in slowpath is converted as branch to first indirect bb
   for(auto mrc: MultiRetCallPathSet) {
+    // TODO: CNP If not part of the parallel path, ignore
+    if(!VMapSlowPath[mrc])
+      continue;
+
     auto mrcSlowpath = dyn_cast<MultiRetCallInst>(VMapSlowPath[mrc]);
 
     BasicBlock* defaultDestFast = mrc->getDefaultDest();
@@ -5007,6 +5011,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
       }
     }
     assert(insertPointEnd && "Function has no return inst");
+    // Can cause performance improvement on classify - kddcup if turn off
     auto afterBB = insertPotentialJump(dyn_cast<Instruction>(insertPointEnd), bbList);
 
     // Fixme: Hack
