@@ -74,6 +74,8 @@ public:
       delete EndIterArg;
     if (GrainsizeArg)
       delete GrainsizeArg;
+    if (CurrIterArg)
+      delete CurrIterArg;
 
     DescendantTasks.clear();
     Inductions.clear();
@@ -239,6 +241,7 @@ public:
   Argument *StartIterArg = nullptr;
   Argument *EndIterArg = nullptr;
   Argument *GrainsizeArg = nullptr;
+  Argument *CurrIterArg = nullptr;
 };
 
 /// Transforms an induction descriptor into a direct computation of its value at

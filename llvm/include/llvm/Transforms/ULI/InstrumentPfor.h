@@ -39,9 +39,21 @@ namespace llvm {
 public:
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
   void instrumentLoop(Function &F, ScalarEvolution& SE, Loop* L);
+  bool runInitialization(Module &M);
   bool runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI);
 
 private:
+  StructType* RequestChannelTy = nullptr;
+  StructType* ResponseChannelTy = nullptr;
+  bool initialized;
+  enum RequestChannelFields
+  {
+    sendThreadId = 0,
+    padding_char,
+    potentialParallelTask,
+    inLoop,
+    padding
+  };
 };
 
 Pass *createInstrumentPforPass();

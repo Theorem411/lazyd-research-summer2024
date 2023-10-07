@@ -19,7 +19,7 @@ using namespace std;
 
 #define DEBUG_TYPE "instrumentpfor"
 
-namespace {  
+namespace {
   struct InstrumentPfor : public FunctionPass {
     /// Pass identification, replacement for type id.
     static char ID;
@@ -28,11 +28,16 @@ namespace {
     explicit InstrumentPfor() : FunctionPass(ID) {
     }
 
+    virtual bool doInitialization(Module &M) override {
+      return Impl.runInitialization(M);
+    }
+
     /// \return If we change anything in function \p F.
     virtual bool runOnFunction(Function &F) override {
       // Get required analysis.
       auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
       auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+      doInitialization(*F.getParent());
       return Impl.runImpl(F, SE, LI);
     }
 
@@ -52,8 +57,34 @@ namespace {
 
 namespace {
 
+  // Copied from CilkABI.cpp
+
+  /// Helper methods for storing to and loading from struct fields.
+  static Value *GEP(IRBuilder<> &B, Value *Base, int Field) {
+    // return B.CreateStructGEP(cast<PointerType>(Base->getType()),
+    //                          Base, field);
+    return B.CreateConstInBoundsGEP2_32(
+					Base->getType()->getScalarType()->getPointerElementType(), Base, 0,
+					Field);
+
+  }
+
+  static unsigned GetAlignment(const DataLayout &DL, StructType *STy, int field) {
+    return DL.getPrefTypeAlignment(STy->getElementType(field));
+  }
+
+  static void StoreSTyField(IRBuilder<> &B, const DataLayout &DL, StructType *STy,
+			    Value *Val, Value *Dst, int Field,
+			    bool isVolatile = false,
+			    AtomicOrdering Ordering = AtomicOrdering::NotAtomic) {
+    StoreInst *S = B.CreateAlignedStore(Val, GEP(B, Dst, Field),
+					Align(GetAlignment(DL, STy, Field)), isVolatile);
+    S->setOrdering(Ordering);
+
+  }
+
   // Copied from LoopInterchange.cpp
-  static PHINode *getInductionVariable(Loop *L, ScalarEvolution *SE) {    
+  static PHINode *getInductionVariable(Loop *L, ScalarEvolution *SE) {
     PHINode *InnerIndexVar = L->getCanonicalInductionVariable();
     if (InnerIndexVar)
       return InnerIndexVar;
@@ -65,7 +96,7 @@ namespace {
       outs() << "Phi: " << *PhiVar << "\n";
       if (!PhiTy->isIntegerTy() && !PhiTy->isFloatingPointTy() &&
           !PhiTy->isPointerTy()) {
-	outs() << "Type not interger, float, or pointer\n";
+	LLVM_DEBUG(dbgs() << "Type not interger, float, or pointer\n");
 	return nullptr;
       }
 
@@ -74,19 +105,15 @@ namespace {
       scevExpr->dump();
       const SCEVAddRecExpr *AddRec =  dyn_cast<SCEVAddRecExpr>(scevExpr);
       if (!AddRec || !AddRec->isAffine()) {
-	if(!AddRec)  {
-	  outs() << "AddRec == null\n";
-	  continue;
-	}
-	
-	if(!AddRec->isAffine()) 	 
-	  outs() << "AddRec not affine\n";
-
+	if(!AddRec)
+	  LLVM_DEBUG(dbgs() << "AddRec == null\n");
+	if(!AddRec->isAffine())
+	  LLVM_DEBUG(dbgs() << "AddRec not affine\n");
 	continue;
       }
       const SCEV *Step = AddRec->getStepRecurrence(*SE);
       if (!isa<SCEVConstant>(Step)) {
-	outs() << "Not constant\n";
+	LLVM_DEBUG(dbgs() << "SCEV Not a constant\n");
 	continue;
       }
       // Found the induction variable.
@@ -114,15 +141,14 @@ namespace {
     for (auto &BB : F) {
       for (auto it = BB.begin(); it != BB.end(); ++it) {
 	auto &instr = *it;
-	  
 	if(isa<DetachInst>(&instr)) {
 	  return true;
 	}
       }
     }
     return false;
-  }  
-  
+  }
+
 }
 
 void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* L) {
@@ -134,18 +160,21 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   BasicBlock *Preheader = L->getLoopPreheader();
   BasicBlock *Latch = L->getLoopLatch();
 
+  assert(Header && "Header does not exists");
+  //assert(Preheader && "Preheader does not exists");
+  assert(Latch && "Latch does not exists");
+
   const SCEV *Limit = SE.getExitCount(L, Latch);
-  outs() << "LS Loop limit: " << *Limit << "\n";
+  LLVM_DEBUG(dbgs() << "LS Loop limit: " << *Limit << "\n");
 
   PHINode *CanonicalIV = getInductionVariable(L, &SE);//Exp.getOrInsertCanonicalInductionVariable(L, CanonicalIVTy);
   assert(CanonicalIV && "Canonical Ind. variable cannot be nulled\n");
-
-  outs() << "Induction variable: " << *CanonicalIV <<"\n";
+  LLVM_DEBUG(dbgs() << "Induction variable: " << *CanonicalIV <<"\n");
 
   const SCEVAddRecExpr *PNSCEV = dyn_cast<const SCEVAddRecExpr>(SE.getSCEV(CanonicalIV));
   auto constStep = dyn_cast<SCEVConstant>(PNSCEV->getStepRecurrence(SE));
   assert(constStep && "Recurrence step must be constant");
-  outs() << "Step: " << *constStep << "\n";
+  LLVM_DEBUG(dbgs() << "Step: " << *constStep << "\n");
 
   IRBuilder<> B (Header->getFirstNonPHIOrDbgOrLifetime());
 
@@ -159,20 +188,16 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   }
 
   Function::arg_iterator args = F.arg_begin() + loc;
-  Value* argsCtx = &*args; 
-
+  Value* argsCtx = &*args;
   args = F.arg_begin();
-  Value* argsStart = &*args; 
-
+  Value* argsStart = &*args;
   GlobalVariable* guiOn = GetGlobalVariable("uiOn", Type::getInt8Ty(C), *M, true);
   Value* ONE = B.getInt8(1);
-  Value* ZERO = B.getInt8(0);  
-
+  Value* ZERO = B.getInt8(0);
   Function* ui_disable_region = Intrinsic::getDeclaration(M, Intrinsic::ui_disable_region);
   Function* ui_enable_region = Intrinsic::getDeclaration(M, Intrinsic::ui_enable_region);
 
-
-#define UI_REGION
+//#define UI_REGION
 #ifdef UI_REGION
   B.CreateCall(ui_disable_region);
 #endif
@@ -185,15 +210,10 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
 #define NO_UNWIND_POLLPFOR
 #ifdef NO_UNWIND_POLLPFOR
   auto nextIteration = B.CreateAdd(CanonicalIV, constStep->getValue());
-
   // If iv starts at zero, add the first argument (start variable)
-  if(PNSCEV->getStart()->isZero()) 
+  if(PNSCEV->getStart()->isZero())
     nextIteration = B.CreateAdd(nextIteration, argsStart);
-
-
-  B.CreateStore(nextIteration, argsCtx, true);
-
-
+  //B.CreateStore(nextIteration, argsCtx, true);
 #else
   Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll_pfor);
   B.CreateCall(pollFcn, {CanonicalIV ,constStep->getValue(), argsCtx});
@@ -206,10 +226,8 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
 
   B.CreateStore(nextIteration, argsCtx, true);
   //B.CreateStore(ONE, guiOn, true);
-
-  B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
+  //B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
   //B.CreateStore(ZERO, guiOn, true);
-
   //B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
   B.SetInsertPoint(Latch->getFirstNonPHIOrDbgOrLifetime());
 
@@ -217,13 +235,19 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   B.CreateStore(ONE, guiOn);
 #endif
 
-#if 1
+#if 0
   //B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
   //B.SetInsertPoint(Latch->getTerminator());
   GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(C), 32), *M, true);
   Value* L_ONE = B.getInt64(1);
   auto workExists = B.CreateConstInBoundsGEP2_64(IntegerType::getInt64Ty(C)->getPointerTo(), prequestcell, 0, 1 );
   B.CreateStore(L_ONE, workExists);
+#else
+  GlobalVariable* reqlocal = GetGlobalVariable("req_local", RequestChannelTy, *M, true);
+  StoreSTyField(B, DL, RequestChannelTy,
+		B.getInt8(1),
+		reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
+		AtomicOrdering::NotAtomic);
 #endif
 
 }
@@ -234,7 +258,11 @@ bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)
   const DataLayout &DL = M->getDataLayout();
   LLVMContext& C = M->getContext();
 
+#if 0
   GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(C), 32), *M, true);
+#else
+  GlobalVariable* reqlocal = GetGlobalVariable("req_local", RequestChannelTy, *M, true);
+#endif
   IRBuilder<> B(F.getContext());
   Value* L_ONE = B.getInt64(1);
   //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -243,16 +271,23 @@ bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)
   //if(bDetachExists || F.getFnAttribute("poll-at-loop").getValueAsString()=="true") {
   if(bDetachExists) {
     B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+
+#if 0
     auto workExists = B.CreateConstInBoundsGEP2_64(IntegerType::getInt64Ty(C)->getPointerTo(), prequestcell, 0, 1 );
     B.CreateStore(L_ONE, workExists);
-  } 
+#else
+    StoreSTyField(B, DL, RequestChannelTy,
+		  B.getInt8(1),
+		  reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
+		  AtomicOrdering::NotAtomic);
+#endif
+  }
 
   if(!(F.getFnAttribute("poll-at-loop").getValueAsString()=="true")) return false;
 
   outs() << "Analyzed function: " << F.getName() << "\n";
   for (Loop *L : LI) {
     SmallVector<Loop *, 8> VisitStack = {L};
-
     instrumentLoop(F, SE, L);
 #if 0
     while (!VisitStack.empty()) {
@@ -272,6 +307,43 @@ bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)
   return true;
 }
 
+bool InstrumentPforPass::runInitialization(Module &M) {
+  auto &C = M.getContext();
+  initialized = false;
+
+  // Create the structure for request and response channel
+  // Copied from CilkABI.cpp
+  Type *BoolTy = Type::getInt1Ty(C);
+  Type *VoidPtrTy = Type::getInt8PtrTy(C);
+  Type *Int64Ty = Type::getInt64Ty(C);
+  Type *Int32Ty = Type::getInt32Ty(C);
+  Type *Int16Ty = Type::getInt16Ty(C);
+  Type *Int8Ty  = Type::getInt8Ty(C);
+
+  // Get or create local definitions of Cilk RTS structure types.
+  RequestChannelTy = StructType::lookupOrCreate(C, "struct._request_channel");
+  ResponseChannelTy = StructType::lookupOrCreate(C, "struct._response_channel");
+
+  if (RequestChannelTy->isOpaque()) {
+    RequestChannelTy->setBody(
+			      Int32Ty,                     // senderThreadId
+			      ArrayType::get(Int8Ty, 2),   // padding_char
+			      Int8Ty,                      // potentialParallelTask
+			      Int8Ty,                      // inLoop
+			      ArrayType::get(Int64Ty, 31)  // padding
+			      );
+  }
+
+  if (ResponseChannelTy->isOpaque())
+    ResponseChannelTy->setBody(
+			       Int32Ty,
+			       Int8Ty,
+			       Int8Ty,
+			       ArrayType::get(Int8Ty, 250)
+			       );
+
+  return true;
+}
 
 
 PreservedAnalyses InstrumentPforPass::run(Function &F,
@@ -279,6 +351,8 @@ PreservedAnalyses InstrumentPforPass::run(Function &F,
   // Get required analysis.
   auto &SE = AM.getResult<ScalarEvolutionAnalysis>(F);
   auto &LI = AM.getResult<LoopAnalysis>(F);
+
+  runInitialization(*F.getParent());
 
   // Run on function.
   bool Changed = runImpl(F, SE, LI);
