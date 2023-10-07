@@ -67,6 +67,9 @@ STATISTIC(TapirLoopsFound,
 STATISTIC(LoopsConvertedToDAC,
           "Number of Tapir loops converted to divide-and-conquer iteration "
           "spawning");
+STATISTIC(LoopsConvertedToPRL,
+          "Number of Tapir loops converted to parallel-ready loop iteration "
+          "spawning");
 
 static const char TimerGroupName[] = DEBUG_TYPE;
 static const char TimerGroupDescription[] = "Loop spawning";
@@ -102,6 +105,29 @@ public:
 
 private:
   void implementDACIterSpawnOnHelper(
+      TapirLoopInfo &TL, TaskOutlineInfo &Out, ValueToValueMapTy &VMap);
+};
+
+/// The Parallel Ready Loop loop-outline processor transform an outlined Tapir loop to
+/// evaluate the iteration using parallel-ready loop (PRL)
+class PRLSpawning : public LoopOutlineProcessor {
+public:
+  PRLSpawning(Module &M) : LoopOutlineProcessor(M) {}
+  void postProcessOutline(TapirLoopInfo &TL, TaskOutlineInfo &Out,
+                          ValueToValueMapTy &VMap) override final {
+    LoopOutlineProcessor::postProcessOutline(TL, Out, VMap);
+    implementPRLIterSpawnOnHelper(TL, Out, VMap);
+    ++LoopsConvertedToPRL;
+
+    // Move Cilksan instrumentation.
+    moveCilksanInstrumentation(TL, Out, VMap);
+
+    // Add syncs to all exits of the outline.
+    addSyncToOutlineReturns(TL, Out, VMap);
+  }
+
+private:
+  void implementPRLIterSpawnOnHelper(
       TapirLoopInfo &TL, TaskOutlineInfo &Out, ValueToValueMapTy &VMap);
 };
 
@@ -392,6 +418,13 @@ static void emitMissedWarning(const Loop *L, const TapirLoopHints &LH,
               << "Tapir loop not transformed: "
               << "loop-spawning transformation disabled");
     break;
+  case TapirLoopHints::ST_HYBRID:
+      ORE->emit(DiagnosticInfoOptimizationFailure(
+						  DEBUG_TYPE, "SpawningDisabled",
+                                                  L->getStartLoc(), L->getHeader())
+                << "Tapir loop not transformed: "
+                << "Hybrid transformation disabled");
+      break;
   case TapirLoopHints::ST_END:
     ORE->emit(DiagnosticInfoOptimizationFailure(
                   DEBUG_TYPE, "FailedRequestedSpawning",
@@ -843,6 +876,360 @@ void DACSpawning::implementDACIterSpawnOnHelper(
   }
 }
 
+/// Implement the parallel loop control for a given outlined Tapir loop to
+/// process loop iterations in a parallel ready loop fashion.
+void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineInfo &Out, ValueToValueMapTy &VMap){
+  NamedRegionTimer NRT("implementPRLIterSpawnOnHelper",
+                       "Implement RPL spawning of loop iterations",
+                       TimerGroupName, TimerGroupDescription,
+                       TimePassesIsEnabled);
+  Task *T = TL.getTask();
+  Loop *L = TL.getLoop();
+
+  DebugLoc TLDebugLoc = cast<Instruction>(VMap[T->getDetach()])->getDebugLoc();
+  Value *SyncRegion = cast<Value>(VMap[T->getDetach()->getSyncRegion()]);
+
+  // CNP: Helper function
+  Function *Helper = Out.Outline;
+  BasicBlock *Preheader = cast<BasicBlock>(VMap[L->getLoopPreheader()]);
+  BasicBlock *Header = cast<BasicBlock>(VMap[L->getHeader()]);
+  Module *M = Helper->getParent();
+  const DataLayout &DL = M->getDataLayout();
+
+  Function* SeqLoopSpawnFcn = CloneFunction(Helper, VMap);
+  SeqLoopSpawnFcn->setName(SeqLoopSpawnFcn->getName() + "_helper_loop");
+
+  SeqLoopSpawnFcn->addFnAttr("poll-at-loop", "true");
+  SeqLoopSpawnFcn->addFnAttr("cilk-pfor-fcn", "true");
+  SeqLoopSpawnFcn->addFnAttr(Attribute::NoInline);
+
+  PHINode *PrimaryIV = cast<PHINode>(VMap[TL.getPrimaryInduction().first]);
+
+  // Remove the norecurse attribute from Helper.
+  if (Helper->doesNotRecurse())
+    Helper->removeFnAttr(Attribute::NoRecurse);
+
+  // Convert the cloned loop into the strip-mined loop body.
+  assert(Preheader->getParent() == Helper &&
+         "Preheader does not belong to helper function.");
+  assert(PrimaryIV->getParent()->getParent() == Helper &&
+         "PrimaryIV does not belong to header");
+
+  IRBuilder<> Builder(Helper->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+  // Get end and grainsize arguments
+  Argument *End, *Grainsize;
+  {
+    auto OutlineArgsIter = Helper->arg_begin();
+    if (Helper->hasParamAttribute(0, Attribute::StructRet))
+      ++OutlineArgsIter;
+    // End argument is second LC input.
+    End = &*++OutlineArgsIter;
+    // Grainsize argument is third LC input.
+    Grainsize = &*++OutlineArgsIter;
+  }
+
+  BasicBlock *DACHead = Preheader;
+  if (&(Helper->getEntryBlock()) == Preheader) {
+    // Split the entry block.  We'll want to create a backedge into
+    // the split block later.
+    DACHead = SplitBlock(Preheader, &Preheader->front());
+    // Move any syncregion_start's in DACHead into Preheader.
+    BasicBlock::iterator InsertPoint = Preheader->begin();
+    for (BasicBlock::iterator I = DACHead->begin(), E = DACHead->end();
+         I != E;) {
+      IntrinsicInst *II = dyn_cast<IntrinsicInst>(I++);
+      if (!II)
+        continue;
+      if (Intrinsic::syncregion_start != II->getIntrinsicID())
+        continue;
+
+      while (isa<IntrinsicInst>(I) &&
+             Intrinsic::syncregion_start ==
+                 cast<IntrinsicInst>(I)->getIntrinsicID())
+        ++I;
+
+      Preheader->getInstList().splice(InsertPoint, DACHead->getInstList(),
+                                      II->getIterator(), I);
+    }
+
+    if (!Preheader->getTerminator()->getDebugLoc())
+      Preheader->getTerminator()->setDebugLoc(
+          DACHead->getTerminator()->getDebugLoc());
+
+  }
+
+  Value *PrimaryIVInput = PrimaryIV->getIncomingValueForBlock(DACHead);
+  Value *PrimaryIVInc = PrimaryIV->getIncomingValueForBlock(
+      cast<BasicBlock>(VMap[L->getLoopLatch()]));
+
+  //---------------------------------------------------------------------------
+  // TODO: Comment below is wrong, need to update
+  // At this point, DACHead is the preheader to the loop and is guaranteed to
+  // not be the function entry:
+  //
+  /// Example: Suppose that Helper contains the following Tapir loop:
+  ///
+  /// Helper(iter_t start, iter_t end, iter_t grain, ...) {
+  ///   iter_t i = start;
+  ///   ... Other loop setup ...
+  ///   do {
+  ///     spawn { ... loop body ... };
+  ///   } while (i++ < end);
+  ///   sync;
+  /// }
+  ///
+  /// Then this method transforms Helper into the following form:
+  ///
+  /// Attribute:Inline
+  /// Helper_new(iter_t start, iter_t end, iter_t grain, ...) {
+  /// recur:
+  ///   spawn loopfcn(start, end, grain, ...) {
+  ///     iter_t i = start;
+  ///     ... Other loop setup ...
+  ///     do {
+  ///       ... Loop Body ...
+  ///     } while (i++ < end);
+  ///   }
+  ///   multiretcall default, rundac // Slow path goes to runloop, fast path goes to default
+  /// default:
+  ///   sync;
+  ///   return;
+  ///
+  /// rundac:
+  ///   call Helper(start, end, grain, ...);
+  ///   goto default;
+  /// }
+  ///
+  /// Helper(iter_t start, iter_t end, iter_t grain, ...) {
+  /// recur:
+  ///   iter_t itercount = end - start;
+  ///   if (itercount > grain) {
+  ///     // Invariant: itercount >= 2
+  ///     count_t miditer = start + itercount / 2;
+  ///     spawn Helper(start, miditer, grain, ...);
+  ///     start = miditer + 1;
+  ///     goto recur;
+  ///   }
+  ///
+  ///   iter_t i = start;
+  ///   ... Other loop setup ...
+  ///   do {
+  ///     ... Loop Body ...
+  ///   } while (i++ < end);
+  ///   sync;
+  /// }
+
+
+  BasicBlock *RecurHead, *RecurDet, *RecurCont;
+  Value *IterCount;
+  PHINode *PrimaryIVStart;
+  Value *Start;
+
+  // TODO: CNP Implement the PRL spawning here
+  BasicBlock *DetachedBB = BasicBlock::Create(Preheader->getParent()->getContext(), "detach.bb", Preheader->getParent());
+  BasicBlock *DACBB = BasicBlock::Create(Preheader->getParent()->getContext(), "dac.bb", Preheader->getParent());
+  BasicBlock *DACCallBB = BasicBlock::Create(Preheader->getParent()->getContext(), "dac.call.bb", Preheader->getParent());
+  BasicBlock *DACCallCheckBB = BasicBlock::Create(Preheader->getParent()->getContext(), "dac.callcheck.bb", Preheader->getParent());
+  BasicBlock *DACRetBB = BasicBlock::Create(Preheader->getParent()->getContext(), "dac.return.bb", Preheader->getParent());
+  BasicBlock *ContBB = BasicBlock::Create(Preheader->getParent()->getContext(), "cont.bb", Preheader->getParent());
+  BasicBlock *SyncBB = BasicBlock::Create(Preheader->getParent()->getContext(), "sync.bb", Preheader->getParent());
+  BasicBlock *RetBB = BasicBlock::Create(Preheader->getParent()->getContext(), "return.bb", Preheader->getParent());
+  BasicBlock *DetachedBBSlow = BasicBlock::Create(Preheader->getParent()->getContext(), "detach.bb", Preheader->getParent());
+  BasicBlock *ContBBSlow = BasicBlock::Create(Preheader->getParent()->getContext(), "cont.bb", Preheader->getParent());
+
+  for ( succ_iterator SI = succ_begin(Preheader); SI != succ_end(Preheader); SI++ ) {
+    auto succBB = *SI;
+    // Look for phi node in contBB, and remove any incoming value from BB(parent of detach inst)
+    for(auto &ii: *succBB) {
+      if(isa<PHINode>(&ii)){
+	// Removie incoming value from continue
+	SmallVector<BasicBlock*, 4> removeBBs;
+	PHINode* phiN = dyn_cast<PHINode>(&ii);
+	unsigned incomingPair = phiN->getNumIncomingValues();
+	for(unsigned i = 0; i<incomingPair; i++)  {
+	  BasicBlock* incomingBB = phiN->getIncomingBlock(i);
+	  if ( incomingBB == Preheader ) {
+	    removeBBs.push_back(Preheader);
+	  }
+	}
+	for(auto bb: removeBBs) {
+	  phiN->removeIncomingValue(bb);
+	}
+      }
+    }
+  }
+
+  auto DI2 = DetachInst::Create(DetachedBB, ContBB, SyncRegion);
+  ReplaceInstWithInst(Preheader->getTerminator(), DI2);
+
+  Builder.SetInsertPoint(Preheader->getTerminator());
+  AllocaInst* ivStorage = Builder.CreateAlloca(PrimaryIV->getType(), DL.getAllocaAddrSpace(), nullptr, "ivStorage");
+  ivStorage->setAlignment(Align(8));
+
+  Builder.SetInsertPoint(RetBB);
+  Builder.CreateRetVoid();
+
+  Builder.SetInsertPoint(SyncBB);
+  Builder.CreateSync(RetBB, SyncRegion);
+
+  Builder.SetInsertPoint(DetachedBB);
+  // Store before executing fast path
+  //Builder.CreateStore(ConstantInt::get(CanonicalIV->getType(), Helper->), ivStorage);
+  // Setup arguments for call.
+  SmallVector<Value *, 4> TopCallArgs;
+
+  // Handle an initial sret argument, if necessary.  Based on how
+  // the Helper function is created, any sret parameter will be the
+  // first parameter.
+  SetVector<Value*> RecurInputs;
+  Function::arg_iterator AI = Helper->arg_begin();
+  // Handle an initial sret argument, if necessary.  Based on how
+  // the Helper function is created, any sret parameter will be the
+  // first parameter.
+  if (Helper->hasParamAttribute(0, Attribute::StructRet))
+    RecurInputs.insert(&*AI++);
+  //assert(cast<Argument>(CanonicalIVInput) == &*AI &&
+  //	 "First non-sret argument does not match original input to canonical IV.");
+  //RecurInputs.insert(CanonicalIV);
+  //++AI;
+
+  auto startVar = &*AI++;
+  RecurInputs.insert(startVar);
+  //++AI;
+
+  assert(End == &*AI &&
+	 "Second non-sret argument does not match original input to the loop limit.");
+  RecurInputs.insert(End);
+  ++AI;
+
+  RecurInputs.insert(&*AI++);
+
+  RecurInputs.insert(ivStorage);
+  ++AI;
+
+  for (Function::arg_iterator AE = Helper->arg_end(); AI != AE; ++AI)
+    RecurInputs.insert(&*AI);
+
+  // Store before executing fast path
+  Builder.CreateStore(startVar, ivStorage);
+
+  CallInst *TopLoop = Builder.CreateCall(SeqLoopSpawnFcn, RecurInputs.getArrayRef());
+  TopLoop->setDebugLoc(Header->getTerminator()->getDebugLoc());
+  // Use a fast calling convention for the helper.
+  TopLoop->setCallingConv(CallingConv::Fast);
+  Builder.CreateReattach(ContBB, SyncRegion);
+
+  Builder.SetInsertPoint(ContBB);
+  auto donothingFcn = Intrinsic::getDeclaration(M, Intrinsic::donothing);
+  //MultiRetCallInst* mrc = MultiRetCallInst::Create(dyn_cast<Function>(donothingFcn), LoopSync->getParent(), {DACBB}, {});
+  //Builder.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), LoopSync->getParent(), {DACBB}, {});
+
+  //MultiRetCallInst* mrc = MultiRetCallInst::Create(dyn_cast<Function>(donothingFcn), SyncBB, {DACBB}, {});
+  Builder.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), SyncBB, {DACBB}, {});
+
+  Builder.SetInsertPoint(DACBB);
+  // Use the remaining itereation + step as the start of the iteration.
+  // Remaining storage should be located
+  // Add start iteration.
+  assert(ivStorage && "ivStorage cannot be null");
+  // CP: TODO: FIXME: get a step from SCEV
+  auto ivVal = Builder.CreateLoad(ivStorage->getAllocatedType(), ivStorage);
+  //const SCEVAddRecExpr *PNSCEV = dyn_cast<const SCEVAddRecExpr>(SE.getSCEV(CanonicalIV));
+  //auto constStep = dyn_cast<SCEVConstant>(PNSCEV->getStepRecurrence(SE));
+  //assert(constStep && "Recurrence step must be constant");
+
+  // Check if ivVal < End
+  //auto isLT = Builder.CreateICmpSLE(ivVal, End);
+  auto isLT = Builder.CreateICmpSLT(ivVal, End);
+  Builder.CreateCondBr(isLT, DACCallCheckBB, DACRetBB);
+  Builder.SetInsertPoint(DACCallCheckBB);
+
+  IterCount = Builder.CreateSub(End, ivVal, "itercount");
+  //IterCount = Builder.CreateSub(IterCount, ConstantInt::get(End->getType(), 1), "itercountmin1", false, false);
+  Value *MidIter, *MidIterPlusOne;
+  MidIter = Builder.CreateAdd(ivVal, Builder.CreateLShr(IterCount, 1, "halfcount"),
+			      "miditer", false, false);
+
+  MidIterPlusOne = Builder.CreateAdd(MidIter, ConstantInt::get(End->getType(), 1), "miditerplusone", false, false);
+
+  auto isLT3 = Builder.CreateICmpSLT(ivVal, MidIter);
+  Builder.CreateCondBr(isLT3, DACCallBB, ContBBSlow);
+
+  Builder.SetInsertPoint(DACCallBB);
+  SetVector<Value*> RecurInputsSlow1;
+  AI = Helper->arg_begin();
+  // Handle an initial sret argument, if necessary.  Based on how
+  // the Helper function is created, any sret parameter will be the
+  // first parameter.
+  if (Helper->hasParamAttribute(0, Attribute::StructRet))
+    RecurInputsSlow1.insert(&*AI++);
+  RecurInputsSlow1.insert(ivVal);
+  ++AI;
+  RecurInputsSlow1.insert(MidIter);
+  ++AI;
+  RecurInputsSlow1.insert(&*AI++);
+  RecurInputsSlow1.insert(ivStorage);
+  ++AI;
+  for (Function::arg_iterator AE = Helper->arg_end(); AI != AE; ++AI)
+    RecurInputsSlow1.insert(&*AI);
+
+  SetVector<Value*> RecurInputsSlow2;
+  AI = Helper->arg_begin();
+  // Handle an initial sret argument, if necessary.  Based on how
+  // the Helper function is created, any sret parameter will be the
+  // first parameter.
+  if (Helper->hasParamAttribute(0, Attribute::StructRet))
+    RecurInputsSlow2.insert(&*AI++);
+  //RecurInputsSlow2.insert(MidIterPlusOne);
+  RecurInputsSlow2.insert(MidIter);
+  ++AI;
+  RecurInputsSlow2.insert(End);
+  ++AI;
+  RecurInputsSlow2.insert(&*AI++);
+  RecurInputsSlow2.insert(ivStorage);
+  ++AI;
+  for (Function::arg_iterator AE = Helper->arg_end(); AI != AE; ++AI)
+    RecurInputsSlow2.insert(&*AI);
+
+  Builder.CreateDetach(DetachedBBSlow, ContBBSlow, SyncRegion);
+  Builder.SetInsertPoint(DetachedBBSlow);
+  //Builder.SetInsertPoint(ContBB->getTerminator());
+
+  CallInst *TopCall1 = Builder.CreateCall(Helper, RecurInputsSlow1.getArrayRef());
+  Builder.CreateReattach(ContBBSlow, SyncRegion);
+
+  Builder.SetInsertPoint(ContBBSlow);
+  BasicBlock *DACCallBBSlow = BasicBlock::Create(Preheader->getParent()->getContext(), "dac.call.bb.slow", Preheader->getParent());
+  BasicBlock *DACRetBBSlow = BasicBlock::Create(Preheader->getParent()->getContext(), "dac.return.bb.slow", Preheader->getParent());
+  //auto isLT2 = Builder.CreateICmpSLE(MidIterPlusOne, End);
+  auto isLT2 = Builder.CreateICmpSLT(MidIter, End);
+  Builder.CreateCondBr(isLT2, DACCallBBSlow, DACRetBBSlow);
+  Builder.SetInsertPoint(DACCallBBSlow);
+
+  CallInst *TopCall2 = Builder.CreateCall(Helper, RecurInputsSlow2.getArrayRef());
+  // Use a fast calling convention for the helper.
+  TopCall1->setCallingConv(CallingConv::Fast);
+  // TopCall->setCallingConv(Helper->getCallingConv());
+  TopCall1->setDebugLoc(Header->getTerminator()->getDebugLoc());
+
+  // Use a fast calling convention for the helper.
+  TopCall2->setCallingConv(CallingConv::Fast);
+  // TopCall->setCallingConv(Helper->getCallingConv());
+  TopCall2->setDebugLoc(Header->getTerminator()->getDebugLoc());
+
+  Helper->addFnAttr(Attribute::NoInline);
+  Builder.CreateBr(DACRetBBSlow);
+
+  Builder.SetInsertPoint(DACRetBBSlow);
+  Builder.CreateBr(DACRetBB);
+
+  Builder.SetInsertPoint(DACRetBB);
+  //Builder.CreateBr(LoopSync->getParent() );
+  //Builder.CreateBr(exitingblock);
+  Builder.CreateBr(SyncBB);
+  ///----------------------------------------------
+}
+
 /// Examine a given loop to determine if its a Tapir loop that can and should be
 /// processed.  Returns the Task that encodes the loop body if so, or nullptr if
 /// not.
@@ -853,7 +1240,6 @@ Task *LoopSpawningImpl::getTaskIfTapirLoop(const Loop *L) {
                        TimePassesIsEnabled);
 
   LLVM_DEBUG(dbgs() << "Analyzing for spawning: " << *L);
-
   TapirLoopHints Hints(L);
 
   // Loop must have a preheader.  LoopSimplify should guarantee that the loop
@@ -911,6 +1297,7 @@ LoopOutlineProcessor *LoopSpawningImpl::getOutlineProcessor(TapirLoopInfo *TL) {
 
   switch (Hints.getStrategy()) {
   case TapirLoopHints::ST_DAC: return new DACSpawning(M);
+  case TapirLoopHints::ST_HYBRID: return new PRLSpawning(M);
   default: return new DefaultLoopOutlineProcessor(M);
   }
 }
@@ -1095,13 +1482,39 @@ static void getLoopControlInputs(TapirLoopInfo *TL,
   assert(TripCount && "No trip count found for Tapir loop end argument.");
   TL->EndIterArg = new Argument(TripCount->getType(), "end");
   LCArgs.push_back(TL->EndIterArg);
-  LCInputs.push_back(TripCount);
 
+  TapirLoopHints Hints(TL->getLoop());
+  if(0 && Hints.getStrategy() == TapirLoopHints::ST_HYBRID) {
+    // Add an argument to store the iv storage
+    IRBuilder<> Builder(TL->getLoop()->getHeader()->getParent()->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+    Value* TripCountMinOne = Builder.CreateSub(TripCount, ConstantInt::get(TripCount->getType(), 1));
+    LCInputs.push_back(TripCountMinOne);
+  } else {
+    LCInputs.push_back(TripCount);
+  }
   // Add an argument for the grainsize.
   Value *GrainsizeVal = getGrainsizeVal(TL);
   TL->GrainsizeArg = new Argument(GrainsizeVal->getType(), "grainsize");
   LCArgs.push_back(TL->GrainsizeArg);
-  LCInputs.push_back(GrainsizeVal);
+
+  if(Hints.getStrategy() == TapirLoopHints::ST_HYBRID) {
+    // Add an argument to store the iv storage
+    LCInputs.push_back( ConstantInt::get(GrainsizeVal->getType(), 2));
+  } else {
+    LCInputs.push_back(GrainsizeVal);
+  }
+  if(Hints.getStrategy() == TapirLoopHints::ST_HYBRID) {
+    // Add an argument to store the iv storage
+    IRBuilder<> Builder(TL->getLoop()->getHeader()->getParent()->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+    const DataLayout &DL = TL->getLoop()->getHeader()->getParent()->getParent()->getDataLayout();
+    AllocaInst* CurrIterVal = Builder.CreateAlloca(PrimaryPhi->getType(), DL.getAllocaAddrSpace(), nullptr, "ivStorage");
+    CurrIterVal->setAlignment(Align(8));
+    TL->CurrIterArg = new Argument(CurrIterVal->getType(), "currIter");
+    //TL->CurrIterArg->addAttr(Attribute::getWithAlignment(TL->CurrIterArg->getContext(), llvm::Align(8)));
+    //LCArgs.push_back(TL->CurrIterArg);
+    LCArgs.push_back(CurrIterVal);
+    LCInputs.push_back(CurrIterVal);
+  }
 
   assert(TL->getInductionVars()->size() == 1 &&
          "Induction vars to process for arguments.");
@@ -1399,7 +1812,6 @@ Function *LoopSpawningImpl::createHelperForTapirLoop(
         IRBuilder<>(ExitPoint).CreateCall(StackRestore, SavedPtr);
     }
   }
-
   // Convert the cloned detach and reattaches into unconditional branches.
   {
   NamedRegionTimer NRT("serializeClonedLoop", "Serialize cloned Tapir loop",
@@ -1417,7 +1829,6 @@ Function *LoopSpawningImpl::createHelperForTapirLoop(
   ReplaceInstWithInst(ClonedDI, DetachRepl);
   VMap[DI] = DetachRepl;
   } // end timed region
-
   return Helper;
 }
 
@@ -1442,7 +1853,6 @@ TaskOutlineMapTy LoopSpawningImpl::outlineAllTapirLoops() {
         std::unique_ptr<LoopOutlineProcessor>(getOutlineProcessor(TL));
     }
   }
-
   TaskOutlineMapTy TaskToOutline;
   DenseMap<Loop *, ValueSet> LoopInputSets;
   DenseMap<Loop *, SmallVector<Value *, 3>> LoopCtlArgs;
@@ -1470,11 +1880,14 @@ TaskOutlineMapTy LoopSpawningImpl::outlineAllTapirLoops() {
       if (TapirLoopInfo *TL = getTapirLoop(SubT)) {
         // emitSCEVChecks(TL->getLoop(), TL->getBypass());
         Loop *L = TL->getLoop();
+	// CNP: Replace body of pfor with
         TaskToOutline[SubT].replaceReplCall(
             replaceLoopWithCallToOutline(TL, TaskToOutline[SubT], LoopInputs[L]));
       }
     }
+
     } // end timed region
+
 
     TapirLoopInfo *TL = getTapirLoop(T);
     if (!TL)
@@ -1527,24 +1940,28 @@ TaskOutlineMapTy LoopSpawningImpl::outlineAllTapirLoops() {
     LoopArgStarts[L] = ArgStart;
 
     ValueToValueMapTy VMap;
+    // TODO: CNP create the helper function for Parallel Ready Loop
     // Create the helper function.
     Function *Outline = createHelperForTapirLoop(
         TL, LoopArgs[L], OutlineProcessors[TL]->getIVArgIndex(F, LoopArgs[L]),
         OutlineProcessors[TL]->getLimitArgIndex(F, LoopArgs[L]),
         &OutlineProcessors[TL]->getDestinationModule(), VMap, InputMap);
+
+    // TODO: CNP Sync removed here
     TaskToOutline[T] = TaskOutlineInfo(
         Outline, T->getEntry(), cast<Instruction>(VMap[T->getDetach()]),
         dyn_cast_or_null<Instruction>(VMap[T->getTaskFrameUsed()]),
         LoopInputSets[L], LoopArgStarts[L],
         L->getLoopPreheader()->getTerminator(), TL->getExitBlock(),
         TL->getUnwindDest());
-
     // Do ABI-dependent processing of each outlined Tapir loop.
     {
     NamedRegionTimer NRT("postProcessOutline",
                          "Post-process Tapir-loop helper function",
                          TimerGroupName, TimerGroupDescription,
                          TimePassesIsEnabled);
+
+    // CNP: Implement of DAC vs PRL
     OutlineProcessors[TL]->postProcessOutline(*TL, TaskToOutline[T], VMap);
     } // end timed region
 
@@ -1581,7 +1998,6 @@ TaskOutlineMapTy LoopSpawningImpl::outlineAllTapirLoops() {
       }
     }
   }
-
   return TaskToOutline;
 }
 
@@ -1600,7 +2016,6 @@ bool LoopSpawningImpl::run() {
 
   // Perform any Target-dependent preprocessing of F.
   Target->preProcessFunction(F, TI, true);
-
   // Outline all Tapir loops.
   TaskOutlineMapTy TapirLoopOutlines = outlineAllTapirLoops();
 
@@ -1618,7 +2033,6 @@ bool LoopSpawningImpl::run() {
 
   // Perform any Target-dependent postprocessing of F.
   Target->postProcessFunction(F, true);
-
   LLVM_DEBUG({
     NamedRegionTimer NRT("verify", "Post-loop-spawning verification",
                          TimerGroupName, TimerGroupDescription,
@@ -1726,6 +2140,7 @@ struct LoopSpawningTI : public FunctionPass {
     bool Changed =
         LoopSpawningImpl(F, DT, LI, TI, SE, AC, TTI, Target, ORE).run();
     delete Target;
+
     return Changed;
   }
 

@@ -1388,16 +1388,21 @@ PassBuilder::buildTapirLoweringPipeline(OptimizationLevel Level,
     if (VerifyTapirLowering)
       MPM.addPass(VerifierPass());
   } else {
-    // ForkD lowering
+
 #if 0
-    // TODO: CNP Fix this
+    // TODO: CNP Is this needed?
+    MPM.addPass(TapirToTargetPass());
+    if (VerifyTapirLowering)
+      MPM.addPass(VerifierPass());
+#endif
+
+    // ForkD lowering
     // If loop spawn strategy is hybrid, instrument pfor
     if(PTO.ForkDLowering != llvm::ForkDTargetType::EagerD){
       FunctionPassManager FPM2;
       FPM2.addPass(InstrumentPforPass());
       MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM2)));
     }
-#endif
 
     FunctionPassManager FPM3;
     if ((PTO.ForkDLowering == llvm::ForkDTargetType::ULID || PTO.ForkDLowering == llvm::ForkDTargetType::SIGUSRD)) {
