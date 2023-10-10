@@ -93,7 +93,7 @@ namespace {
     for (BasicBlock::iterator I = L->getHeader()->begin(); isa<PHINode>(I); ++I) {
       PHINode *PhiVar = cast<PHINode>(I);
       Type *PhiTy = PhiVar->getType();
-      outs() << "Phi: " << *PhiVar << "\n";
+      LLVM_DEBUG(dbgs() << "Phi: " << *PhiVar << "\n");
       if (!PhiTy->isIntegerTy() && !PhiTy->isFloatingPointTy() &&
           !PhiTy->isPointerTy()) {
 	LLVM_DEBUG(dbgs() << "Type not interger, float, or pointer\n");
@@ -102,14 +102,17 @@ namespace {
 
       auto scevExpr = SE->getSCEV(PhiVar);
       assert(scevExpr);
-      scevExpr->dump();
+      //scevExpr->dump();
       const SCEVAddRecExpr *AddRec =  dyn_cast<SCEVAddRecExpr>(scevExpr);
       if (!AddRec || !AddRec->isAffine()) {
-	if(!AddRec)
+	if(!AddRec) {
 	  LLVM_DEBUG(dbgs() << "AddRec == null\n");
-	if(!AddRec->isAffine())
+	  continue;
+	}
+	if(!AddRec->isAffine()) {
 	  LLVM_DEBUG(dbgs() << "AddRec not affine\n");
-	continue;
+	  continue;
+	}
       }
       const SCEV *Step = AddRec->getStepRecurrence(*SE);
       if (!isa<SCEVConstant>(Step)) {
@@ -285,7 +288,7 @@ bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)
 
   if(!(F.getFnAttribute("poll-at-loop").getValueAsString()=="true")) return false;
 
-  outs() << "Analyzed function: " << F.getName() << "\n";
+  LLVM_DEBUG(dbgs() << "Analyzed function: " << F.getName() << "\n");
   for (Loop *L : LI) {
     SmallVector<Loop *, 8> VisitStack = {L};
     instrumentLoop(F, SE, L);
