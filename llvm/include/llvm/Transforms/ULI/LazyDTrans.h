@@ -46,6 +46,7 @@
 
 #include <iostream>
 
+// Can this cause performance improvemetn on classify kddcup?
 //#define OPTIMIZE_FP
 #define STICK_STACKXCGH_FUNC
 #define OPTIMIZE_UNWIND
@@ -190,7 +191,7 @@ namespace llvm {
                               SmallVector<SyncInst*, 8>& syncInsts,
                               SmallPtrSet<Instruction*, 8>& RequiredPhiNode);
 
-    void simplifyFcn(Function &F, FunctionAnalysisManager &AM);
+    void simplifyFcn(Function &F, FunctionAnalysisManager &AM, DominatorTree &DT);
 
     void replaceResultOfMultiRetCallWithRetpad(Function &F);
 

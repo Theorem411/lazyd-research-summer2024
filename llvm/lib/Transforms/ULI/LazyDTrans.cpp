@@ -22,8 +22,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/SSAUpdater.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
-
-//#include "llvm/Transforms/Utils/Local.h"
+#include "llvm/Transforms/Utils/Local.h"
 
 #include <iostream>
 
@@ -2607,9 +2606,11 @@ void LazyDTransPass::findRequiredPhiNodes(DenseMap<DetachInst *, SmallPtrSet<Bas
 
 #endif
 
-void LazyDTransPass::simplifyFcn(Function &F, FunctionAnalysisManager &AM) {
+void LazyDTransPass::simplifyFcn(Function &F, FunctionAnalysisManager &AM, DominatorTree &DT) {
   const SimplifyCFGOptions Options;
-#if 0
+#if 1
+  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
+
   auto *TTI = &AM.getResult<TargetIRAnalysis>(F);
   SmallVector<BasicBlock*, 8> bbInF;
   bbInF.clear();
@@ -2618,7 +2619,7 @@ void LazyDTransPass::simplifyFcn(Function &F, FunctionAnalysisManager &AM) {
   }
 
   for (auto pBB : bbInF) {
-    simplifyCFG(pBB, *TTI, Options);
+    simplifyCFG(pBB, *TTI, nullptr, Options);
   }
 #endif
   return;
@@ -2783,7 +2784,7 @@ void LazyDTransPass::postProcessCfg(Function &F, FunctionAnalysisManager &AM, Do
                     SmallPtrSet<BasicBlock*, 8>& GotstolenSet, DenseMap <BasicBlock*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocToGotstolenSet,
                     DenseMap <BasicBlock*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForGotStolen) {
   // Desirable to  verify the IR before running simplify
-  simplifyFcn(F, AM);
+  simplifyFcn(F, AM, DT);
 
   if(!EnableStoreLoadForkStorage) {
     assert(0 && "Pass not available");
@@ -2813,7 +2814,7 @@ void LazyDTransPass::postProcessCfg(Function &F, FunctionAnalysisManager &AM, Do
 #endif
 
     // Simplify CFG (in cholesky, these remove redundant phi node created by GVN)
-    simplifyFcn(F, AM);
+    simplifyFcn(F, AM, DT);
 
     // Update Dominator Tree
     DT.recalculate(F);
@@ -2845,7 +2846,7 @@ void LazyDTransPass::postProcessCfg(Function &F, FunctionAnalysisManager &AM, Do
       strInst->eraseFromParent();
     }
 
-    simplifyFcn(F, AM);
+    simplifyFcn(F, AM, DT);
 #endif
   } else {
 

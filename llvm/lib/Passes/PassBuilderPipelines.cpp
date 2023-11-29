@@ -121,6 +121,8 @@
 #include "llvm/Transforms/Tapir/SerializeSmallTasks.h"
 #include "llvm/Transforms/Tapir/TapirToTarget.h"
 #include "llvm/Transforms/Tapir/DRFScopedNoAliasAA.h"
+#include "llvm/Transforms/ULI/SendUli.h"
+#include "llvm/Transforms/ULI/ULIIntrinsicToExternCall.h"
 #include "llvm/Transforms/Utils/AddDiscriminators.h"
 #include "llvm/Transforms/Utils/AssumeBundleBuilder.h"
 #include "llvm/Transforms/Utils/CanonicalizeAliases.h"
@@ -885,6 +887,10 @@ PassBuilder::buildModuleSimplificationPipeline(OptimizationLevel Level,
   // Lower llvm.expect to metadata before attempting transforms.
   // Compare/branch metadata may alter the behavior of passes like SimplifyCFG.
   EarlyFPM.addPass(LowerExpectIntrinsicPass());
+  EarlyFPM.addPass(SendUliPass());
+  EarlyFPM.addPass(ULIIntrinsicToExternCallPass());
+  EarlyFPM.addPass(HandleUnwindPollPass());
+
   EarlyFPM.addPass(SimplifyCFGPass());
   EarlyFPM.addPass(SROAPass());
   EarlyFPM.addPass(EarlyCSEPass());
@@ -1225,7 +1231,11 @@ PassBuilder::buildModuleOptimizationPipeline(OptimizationLevel Level,
         createFunctionToLoopPassAdaptor(std::move(LPM1),
                                         /*UseMemorySSA=*/true,
                                         /*UseBlockFrequencyInfo=*/true));
+
+    //if(PTO.ForkDLowering == llvm::ForkDTargetType::None) {
+    // CNP: May need to see the effect of this optimization pass
     OptimizePM.addPass(LoopStripMinePass());
+    //}
     // Cleanup tasks after stripmining loops.
     OptimizePM.addPass(TaskSimplifyPass());
     // Cleanup after stripmining loops.
@@ -1356,6 +1366,7 @@ PassBuilder::buildTapirLoweringPipeline(OptimizationLevel Level,
   FPM.addPass(createFunctionToLoopPassAdaptor(std::move(LPM1),
                                               /*UseMemorySSA=*/true,
                                               /*UseBlockFrequencyInfo=*/true));
+
   FPM.addPass(SimplifyCFGPass(SimplifyCFGOptions().convertSwitchRangeToICmp(
       true))); // Merge & remove basic blocks.
   FPM.addPass(InstCombinePass());
