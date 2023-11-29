@@ -1349,7 +1349,7 @@ bool HandleUnwindPollPass::handleChangeRetAddr(BasicBlock &BB)  {
       myRA = B.CreateBitCast(myRA, IntegerType::getInt64Ty(C)->getPointerTo());
       Value* newAddr = B.CreateCast(Instruction::PtrToInt, call->getArgOperand(0), IntegerType::getInt64Ty(C));
       // Store new returnaddress to location of returnaddress
-      B.CreateStore(newAddr, myRA);
+      B.CreateStore(newAddr, myRA, 1);
     } else if(fn->getIntrinsicID() == Intrinsic::uli_save_returnaddress) {
       auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress, {VoidPtrTy});
       Value* myRA = B.CreateCall(addrOfRA);
@@ -1357,7 +1357,7 @@ bool HandleUnwindPollPass::handleChangeRetAddr(BasicBlock &BB)  {
       Value* raValue = B.CreateLoad(IntegerType::getInt64Ty(C), myRA);
       Value* storageLoc = B.CreateBitCast(call->getArgOperand(0), IntegerType::getInt64Ty(C)->getPointerTo());
       // Store return address to stack slot
-      B.CreateStore(raValue, storageLoc);
+      B.CreateStore(raValue, storageLoc, 1);
     }
 
     ii->eraseFromParent();
@@ -1409,7 +1409,19 @@ bool HandleUnwindPollPass::runImpl(Function &F) {
   bool changed = false;
 
   bool bDetachExists= detachExists(F);
-  assert(!bDetachExists && "Detach still exists");
+  //assert(!bDetachExists && "Detach still exists");
+
+  if(bDetachExists) {
+    for (auto &BB : F) {
+      // TODO: handleSaveRestoreCtx is not used, could be removed
+      changed |= handleSaveRestoreCtx(BB);
+      changed |= handleChangeRetAddr(BB);
+    }
+    return changed;
+  }
+
+
+
   auto unwindPathEntry = findUnwindPathEntry(F);
 
   if(unwindPathEntry && !initialized) {

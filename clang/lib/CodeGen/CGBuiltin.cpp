@@ -15416,7 +15416,7 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
 
     Value* NULL8 = ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
     auto donothingFcn = CGM.getIntrinsic(Intrinsic::donothing);
-    auto saveContext = CGM.getIntrinsic(Intrinsic::x86_uli_save_context);
+    auto saveContext = CGM.getIntrinsic(Intrinsic::uli_save_context);
 
     auto br = inspectedbb->getTerminator();
     br->eraseFromParent();
@@ -15429,10 +15429,10 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
     Builder.CreateCall(saveContext, {arg1, NULL8});
     auto mrc = Builder.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), defaultbb, returnbb, {});
     Builder.SetInsertPoint(defaultbb);
-    Builder.CreateStore(BlockAddress::get(inspectedbb, 1), EmitPointerWithAlignment(E->getArg(2)));
+    Builder.CreateStore(BlockAddress::get(inspectedbb, 1), EmitPointerWithAlignment(E->getArg(2)), 1);
 
     // Jump to the inlined handler
-    auto restoreContext = CGM.getIntrinsic(Intrinsic::x86_uli_restore_context);
+    auto restoreContext = CGM.getIntrinsic(Intrinsic::uli_restore_context);
     Builder.CreateCall(restoreContext, {arg0});
     Builder.CreateUnreachable();
     Builder.SetInsertPoint(returnbb);
@@ -15521,9 +15521,9 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
 
     Value* NULL8 = ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
     auto donothingFcn = CGM.getIntrinsic(Intrinsic::donothing);
-    auto saveContext = CGM.getIntrinsic(Intrinsic::x86_uli_save_context);
-    auto changeRetAddr = CGM.getIntrinsic(Intrinsic::x86_uli_change_returnaddress);
-    auto storeRetAddr = CGM.getIntrinsic(Intrinsic::x86_uli_save_returnaddress);
+    auto saveContext = CGM.getIntrinsic(Intrinsic::uli_save_context);
+    auto changeRetAddr = CGM.getIntrinsic(Intrinsic::uli_change_returnaddress);
+    auto storeRetAddr = CGM.getIntrinsic(Intrinsic::uli_save_returnaddress);
 
     auto br = inspectedbb->getTerminator();
     br->eraseFromParent();
@@ -15543,7 +15543,7 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
     auto mrc = Builder.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), defaultbb, returnbb, {});
     Builder.SetInsertPoint(defaultbb);
     // Store return.cont
-    Builder.CreateStore(BlockAddress::get(inspectedbb, 1), EmitPointerWithAlignment(E->getArg(3)));
+    Builder.CreateStore(BlockAddress::get(inspectedbb, 1), EmitPointerWithAlignment(E->getArg(3)), 1);
     // Change return address
     Builder.CreateCall(changeRetAddr, arg0);
     // Yield the code
