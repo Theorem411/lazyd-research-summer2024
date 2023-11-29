@@ -2880,9 +2880,6 @@ Instruction *InstCombinerImpl::visitAllocSite(Instruction &MI) {
       if (DVI->isAddressOfVariable() || DVI->getExpression()->startsWithDeref())
         DVI->eraseFromParent();
 
-    for (auto *DVI : DVIs)
-      eraseInstFromFunction(*DVI);
-
     return eraseInstFromFunction(MI);
   }
   return nullptr;
