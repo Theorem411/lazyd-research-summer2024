@@ -5971,6 +5971,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddLastArg(CmdArgs, options::OPT_fpfor_spawn_strategy);
 
+  //Args.AddLastArg(CmdArgs, options::OPT_fenable_uli_transform);
+
+  //Args.AddLastArg(CmdArgs, options::OPT_fenable_uli_rewrite);
+
   Args.AddLastArg(CmdArgs, options::OPT_muintr);
 
   // Forward flags for OpenMP. We don't do this if the current action is an

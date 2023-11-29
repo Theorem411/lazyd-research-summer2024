@@ -1451,6 +1451,12 @@ void CompilerInvocation::GenerateCodeGenArgs(
 
   GenerateArg(Args, OPT_fpfor_spawn_strategy, std::to_string(Opts.PForSpawnStrategy), SA);
 
+  if(Opts.EnableULITransform)
+    GenerateArg(Args, OPT_fenable_uli_transform, SA);
+
+  if(Opts.EnableULIRewrite)
+    GenerateArg(Args, OPT_fenable_uli_rewrite, SA);
+
   Optional<StringRef> DebugInfoVal;
   switch (Opts.DebugInfo) {
   case codegenoptions::DebugLineTablesOnly:
