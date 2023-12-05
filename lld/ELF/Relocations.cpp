@@ -837,6 +837,11 @@ static bool maybeReportUndefined(Undefined &sym, InputSectionBase &sec,
   if (sym.discardedSecIdx != 0 && (sec.name == ".got2" || sec.name == ".toc"))
     return false;
 
+  // TODO: Is the appropriate?
+  if (sec.name == ".pre_hash_table" || sec.name == ".pre_prologepilog_table" || sec.name == ".pre_bst_table") {
+    return false;
+  }
+
   bool isWarning =
       (config->unresolvedSymbols == UnresolvedPolicy::Warn && canBeExternal) ||
       config->noinhibitExec;
