@@ -1172,7 +1172,7 @@ auto MachineFunction::salvageCopySSA(MachineInstr &MI)
     // there is some code construct we don't recognise that deals with physregs
     // across blocks.
     assert(!State.first.isVirtual());
-    assert(&*InsertBB.getParent()->begin() == &InsertBB || InsertBB.isEHPad());
+    assert(&*InsertBB.getParent()->begin() == &InsertBB || InsertBB.isEHPad() || InsertBB.isMultiRetCallIndirectTarget());
   }
 
   // Create DBG_PHI for specified physreg.
