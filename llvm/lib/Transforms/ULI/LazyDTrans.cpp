@@ -1068,7 +1068,8 @@ namespace {
 
       for (Instruction &II : *ClonedBB) {
         // Remap the cloned instruction
-        RemapInstruction(&II, VMapSlowPath, RF_IgnoreMissingLocals, nullptr, nullptr);
+        auto remapFlag = RF_IgnoreMissingLocals | RF_ReuseAndMutateDistinctMDs;
+        RemapInstruction(&II, VMapSlowPath, F.getSubprogram() != nullptr? RF_None | remapFlag  : RF_NoModuleLevelChanges | remapFlag, nullptr, nullptr);
       }
     }
 
@@ -2773,7 +2774,8 @@ void LazyDTransPass::cloneBasicBlock(Function &F, SmallVector<BasicBlock*, 8>& b
       }
 
       // Remap the cloned instruction
-      RemapInstruction(&II, VMapSlowPath, F.getSubprogram() != nullptr? RF_None | RF_IgnoreMissingLocals | RF_ReuseAndMutateDistinctMDs : RF_NoModuleLevelChanges | RF_IgnoreMissingLocals | RF_ReuseAndMutateDistinctMDs, nullptr, nullptr);
+      auto remapFlag = RF_IgnoreMissingLocals | RF_ReuseAndMutateDistinctMDs;
+      RemapInstruction(&II, VMapSlowPath, F.getSubprogram() != nullptr? RF_None | remapFlag  : RF_NoModuleLevelChanges | remapFlag, nullptr, nullptr);
     }
   }
 

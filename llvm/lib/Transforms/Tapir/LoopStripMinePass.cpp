@@ -43,7 +43,7 @@ using namespace llvm;
 #define DEBUG_TYPE "loop-stripmine"
 
 cl::opt<bool> llvm::EnableTapirLoopStripmine(
-    "stripmine-loops", cl::init(true), cl::Hidden,
+   "stripmine-loops", cl::init(true), cl::Hidden,
     cl::desc("Run the Tapir Loop stripmining pass"));
 
 static cl::opt<bool> AllowParallelEpilog(
@@ -327,6 +327,9 @@ public:
     if (skipLoop(L))
       return false;
 
+    if(!EnableTapirLoopStripmine)
+      return false;
+
     Function &F = *L->getHeader()->getParent();
 
     auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
@@ -388,6 +391,9 @@ PreservedAnalyses LoopStripMinePass::run(Function &F,
   auto &AC = AM.getResult<AssumptionAnalysis>(F);
   auto &TI = AM.getResult<TaskAnalysis>(F);
   auto &ORE = AM.getResult<OptimizationRemarkEmitterAnalysis>(F);
+
+  if(!EnableTapirLoopStripmine)
+    return PreservedAnalyses::all();
 
   LoopAnalysisManager *LAM = nullptr;
   if (auto *LAMProxy = AM.getCachedResult<LoopAnalysisManagerFunctionProxy>(F))

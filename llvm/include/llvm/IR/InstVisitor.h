@@ -283,8 +283,6 @@ public:
       return static_cast<SubClass *>(this)->visitTerminator(I);
 
     DELEGATE(Instruction);
-    //assert(CS.isInvoke() || CS.isMultiRetCall());
-    //DELEGATE(TerminatorInst);
   }
 
   // If the user wants a 'default' case, they can choose to override this

@@ -2016,22 +2016,22 @@ def int_ptrauth_sign_generic : Intrinsic<[llvm_i64_ty],
 
 // TODO: CNP update this
 def int_uli_save_context : GCCBuiltin<"__builtin_uli_save_context">,
-       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], [IntrHasSideEffects]>;
 
 def int_uli_save_callee : GCCBuiltin<"__builtin_uli_save_callee">,
-       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], [IntrHasSideEffects]>;
 
 def int_uli_save_callee_nosp : GCCBuiltin<"__builtin_uli_save_callee_nosp">,
-       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], [IntrHasSideEffects]>;
 
 def int_uli_save_context_nosp : GCCBuiltin<"__builtin_uli_save_context_nosp">,
-       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], []>;
+       Intrinsic<[], [llvm_ptr_ty, llvm_ptr_ty], [IntrHasSideEffects]>;
 
 def int_uli_restore_context : GCCBuiltin<"__builtin_uli_restore_context">,
-      Intrinsic<[], [llvm_ptr_ty], []>;
+      Intrinsic<[], [llvm_ptr_ty], [IntrHasSideEffects]>;
 
 def int_uli_restore_callee : GCCBuiltin<"__builtin_uli_restore_callee">,
-       Intrinsic<[], [llvm_ptr_ty], []>;
+       Intrinsic<[], [llvm_ptr_ty], [IntrHasSideEffects]>;
 
 def int_uli_fromireg : GCCBuiltin<"__builtin_uli_fromireg">,
        Intrinsic<[llvm_i64_ty], [llvm_i32_ty], []>;

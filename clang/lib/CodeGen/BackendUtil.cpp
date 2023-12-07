@@ -619,13 +619,11 @@ addULISendAndRewritePasses(const PassManagerBuilder &Builder, PassManagerBase &P
   const CodeGenOptions &CodeGenOpts = BuilderWrapper.getCGOpts();
 
   if (CodeGenOpts.EnableULITransform) {
-    llvm::errs() << "ULI Transform\n";
     PM.add(createSendUliPass());
     PM.add(createHandleUliPass());
   }
 
   if (CodeGenOpts.EnableULIRewrite) {
-    llvm::errs() << "ULI Rewrite\n";
     //PassRegistry &Registry = *PassRegistry::getPassRegistry();
     //initializeAnalysis(Registry);
     PM.add(createULIIntrinsicToExternCallPass());
@@ -633,6 +631,7 @@ addULISendAndRewritePasses(const PassManagerBuilder &Builder, PassManagerBase &P
       PM.add(createULIPollingInsertionPass());
     }
   }
+
 }
 
 static TargetLibraryInfoImpl *createTLII(llvm::Triple &TargetTriple,
