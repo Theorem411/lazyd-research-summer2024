@@ -104,7 +104,7 @@ static cl::opt<int> WorkCtxLen2(
 
 // The type of polling used (ignored if DisableUnwindPoll = true)
 static cl::opt<std::string> UnwindPollingType(
-    "lazy-poll-lowering", cl::init("unwind-steal"), cl::NotHidden,
+    "lazy-poll-lowering", cl::init("unwind-ulifsim"), cl::NotHidden,
     cl::desc("The type of polling used :unwind-steal, unwind-suspend, unwind-only, unwind-ulifsim, nop. Ignored if DisableUnwindPoll is true (default = unwind-steal)"));
 
 // Use builtin to save restore context
