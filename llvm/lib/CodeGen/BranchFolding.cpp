@@ -926,20 +926,23 @@ bool BranchFolder::TryTailMergeBlocks(MachineBasicBlock *SuccBB,
     // into the other.
     if (SameTails.size() == 2 &&
         SameTails[0].getBlock()->isLayoutSuccessor(SameTails[1].getBlock()) &&
-        SameTails[1].tailIsWholeBlock() && !SameTails[1].getBlock()->isEHPad())
+        SameTails[1].tailIsWholeBlock() && !SameTails[1].getBlock()->isEHPad()
+	&& !SameTails[1].getBlock()->isMultiRetCallIndirectTarget() )
       commonTailIndex = 1;
     else if (SameTails.size() == 2 &&
              SameTails[1].getBlock()->isLayoutSuccessor(
                  SameTails[0].getBlock()) &&
              SameTails[0].tailIsWholeBlock() &&
-             !SameTails[0].getBlock()->isEHPad())
+             !SameTails[0].getBlock()->isEHPad()
+	     && !SameTails[0].getBlock()->isMultiRetCallIndirectTarget()
+	     )
       commonTailIndex = 0;
     else {
       // Otherwise just pick one, favoring the fall-through predecessor if
       // there is one.
       for (unsigned i = 0, e = SameTails.size(); i != e; ++i) {
         MachineBasicBlock *MBB = SameTails[i].getBlock();
-        if ((MBB == EntryBB || MBB->isEHPad()) &&
+        if ((MBB == EntryBB || MBB->isEHPad() || MBB->isMultiRetCallIndirectTarget()) &&
             SameTails[i].tailIsWholeBlock())
           continue;
         if (MBB == PredBB) {
@@ -1685,8 +1688,10 @@ ReoptimizeBlock:
     // Now we know that there was no fall-through into this block, check to
     // see if it has a fall-through into its successor.
     bool CurFallsThru = MBB->canFallThrough();
-
-    if (!MBB->isEHPad() && !MBB->isMultiRetCallIndirectTarget()) {
+    // CNP Hack: for now do not move multiretcall. Need to figure if multiretcall is moved, also moved the fallthrough for it (default target basic block)
+    // In SpanningTree benchmark (ST from PBBSv2), the sync.savectx (a BB terminated by multiretcall) is move to a location after : pfor.cond.cleanup.i124.slowPath.
+    // But somehow, the fallthrough of sync.savectx is not updated. Hence it fallthrough to a wrong basic block
+    if (!MBB->isEHPad() && !MBB->isMultiRetCallIndirectTarget() && !MBB->isMultiRetCall()) {
       // Check all the predecessors of this block.  If one of them has no fall
       // throughs, and analyzeBranch thinks it _could_ fallthrough to this
       // block, move this block right after it.

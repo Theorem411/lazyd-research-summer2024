@@ -3122,7 +3122,7 @@ static MachineBasicBlock *getFallThroughMBB(MachineBasicBlock *MBB,
   // fallthrough MBB and should return nullptr.
   MachineBasicBlock *FallthroughBB = nullptr;
   for (MachineBasicBlock *Succ : MBB->successors()) {
-    if (Succ->isEHPad() || (Succ == TBB && FallthroughBB))
+    if (Succ->isEHPad() || Succ->isMultiRetCallIndirectTarget() || (Succ == TBB && FallthroughBB))
       continue;
     // Return a nullptr if we found more than one fallthrough successor.
     if (FallthroughBB && FallthroughBB != TBB)
