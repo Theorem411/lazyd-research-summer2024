@@ -109,6 +109,10 @@ static cl::opt<unsigned> InlinerAttributeWindow(
              "attribute inference in inlined body"),
     cl::init(4));
 
+static cl::opt<bool> DoNotInlineForkJoininContinueBlock(
+        "noinline-tasks", cl::init(false), cl::Hidden,
+            cl::desc("Used in LazyD. Do not inline functions that contains task in the continue block"));
+
 namespace {
 
   /// A class for recording information about inlining a landing pad.
@@ -2201,6 +2205,44 @@ llvm::InlineResult llvm::InlineFunction(CallBase &CB, InlineFunctionInfo &IFI,
         continue;
 
       return InlineResult::failure("unsupported operand bundle");
+    }
+  }
+
+  // If using lazyd, do not inlined fucntion that contains detach in the continue block
+  if(DoNotInlineForkJoininContinueBlock) {
+    bool ContainsDetach=false;
+    for(auto &bb: *CalledFunc) {
+      if(isa<DetachInst>(bb.getTerminator()))
+	ContainsDetach=true;
+    }
+    if (ContainsDetach) {
+      BasicBlock *OrigBB = CB.getParent();
+      SmallVector<BasicBlock*, 4> bbList;
+      ValueMap<BasicBlock*, bool> haveVisited;
+      bool bInContinue = false;
+      BasicBlock* bb = nullptr;
+      bbList.push_back(OrigBB);
+      while(!bbList.empty()) {
+	// Visit basic block
+	bb = bbList.back();
+	bbList.pop_back();
+	// Basic block already visited, skip
+	if(haveVisited.lookup(bb)) continue;
+	// Mark bb as visited
+	haveVisited[bb] = true;
+	if(isa<SyncInst>(bb->getTerminator())){
+	  break;
+	} else if(isa<DetachInst>(bb->getTerminator()) || isa<ReattachInst>(bb->getTerminator())) {
+	  bInContinue=true;
+	  break;
+	}
+	for ( pred_iterator PI = pred_begin(bb); PI != pred_end(bb); PI++ ) {
+	  auto predBB = *PI;
+	  bbList.push_back(predBB);
+	}
+      }
+      if(bInContinue)
+	return InlineResult::failure("Tasks is inlined contain ");
     }
   }
 
