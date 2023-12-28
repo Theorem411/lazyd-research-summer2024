@@ -732,6 +732,40 @@ namespace {
     return resBB;
   }
 
+  void traverseContinue(BasicBlock* startBB, BasicBlock* endBB, SmallVector<BasicBlock*, 4>& bb2clones) {
+    SmallVector<BasicBlock*, 4> bbList;
+    ValueMap<BasicBlock*, bool> haveVisited;
+    BasicBlock* bb = nullptr;
+
+    bbList.push_back(startBB);
+    while(!bbList.empty()) {
+      // Visit basic block
+      bb = bbList.back();
+      bbList.pop_back();
+
+      // Basic block already visited, skip
+      if(haveVisited.lookup(bb)){
+        continue;
+      }
+
+      // Mark bb as visited
+      haveVisited[bb] = true;
+
+      bb2clones.push_back(bb);
+
+      // If we have not converted it into multiretcall
+      if( bb == endBB) {
+	continue;
+      }
+
+      for ( succ_iterator SI = succ_begin(bb); SI != succ_end(bb); SI++ ) {
+        auto succBB = *SI;
+        bbList.push_back(succBB);
+      }
+    }
+    return;
+  }
+
   // Get the actual detach basic block that contains the call
   BasicBlock* getActualDetached(BasicBlock* detachBB) {
     SmallVector<BasicBlock*, 4> bbList;
@@ -763,22 +797,91 @@ namespace {
       // Mark bb as visited
       haveVisited[bb] = true;
 
-#if 0
-      auto succBB = bb->getUniqueSuccessor();
-      assert(succBB && "Block within detach has multiple successor");
-      bbList.push_back(succBB);
-#else
       for ( succ_iterator SI = succ_begin(bb); SI != succ_end(bb); SI++ ) {
         auto succBB = *SI;
         bbList.push_back(succBB);
       }
-#endif
-
     }
 
     assert(resBB && "no function call contain in detach");
     return resBB;
   }
+
+  // Get the actual detach basic block that contains the call
+  std::pair<BasicBlock*, BasicBlock*> getActualContinue(BasicBlock* continueBB, Value* syncRegion, DominatorTree &DT) {
+    SmallVector<BasicBlock*, 4> bbList;
+    ValueMap<BasicBlock*, bool> haveVisited;
+    BasicBlock* bb = nullptr;
+    BasicBlock* resBB = nullptr;
+
+    SmallVector<DetachInst*, 4> diList;
+    SmallVector<SyncInst*, 4> siList;
+
+    bbList.push_back(continueBB);
+    while(!bbList.empty()) {
+      // Visit basic block
+      bb = bbList.back();
+      bbList.pop_back();
+
+      // Basic block already visited, skip
+      if(haveVisited.lookup(bb)){
+        continue;
+      }
+
+      // Mark bb as visited
+      haveVisited[bb] = true;
+
+      if(isa<DetachInst>(bb->getTerminator())){
+	auto di = dyn_cast<DetachInst>(bb->getTerminator());
+	if(di->getSyncRegion() != syncRegion)
+	  diList.push_back(di);
+
+      } else if( isa<SyncInst>(bb->getTerminator()) ) {
+	auto si = dyn_cast<SyncInst>(bb->getTerminator());
+	auto siSyncRegion = si->getSyncRegion();
+	if(siSyncRegion != syncRegion)
+	  siList.push_back(si);
+	else
+	  continue;
+      }
+
+
+      for ( succ_iterator SI = succ_begin(bb); SI != succ_end(bb); SI++ ) {
+        auto succBB = *SI;
+        bbList.push_back(succBB);
+      }
+    }
+
+    BasicBlock* commonB1 = nullptr;
+    // Find the common ancestor of all detach instruction not belonging to the sync region
+    if(diList.empty())
+      commonB1 = nullptr;
+    else if(diList.size() == 1)
+      commonB1 = diList.back()->getParent();
+    else {
+      commonB1 = diList.back()->getParent();
+      diList.pop_back();
+      for(auto di: diList) {
+	commonB1 = DT.findNearestCommonDominator(commonB1, di->getParent());
+      }
+    }
+
+    BasicBlock* commonB2 = nullptr;
+    // Find the common successor of all sync instruction not belonging to the sync region
+    if(siList.empty()) {
+      commonB2 = nullptr;
+    } else if(siList.size() == 1) {
+      commonB2 = siList.back()->getParent();
+    } else {
+      assert(false && "Not supporting multiple exit in the nested fork-join");
+    }
+
+    if(commonB1)
+      return std::make_pair(commonB1, commonB2);
+    else
+      return std::make_pair(nullptr, nullptr);
+  }
+
 
   // Return the set of basic block that is the predecessor of dstBB + dstBB itself
   void getAllPredecessor(BasicBlock* dstBB, SmallPtrSet<BasicBlock*, 8>& allPredBB) {
@@ -967,7 +1070,7 @@ namespace {
     return mrc;
   }
 
-  Function* convertBBtoFcn (Function& F, BasicBlock* detachBB, SmallVector<BasicBlock*, 4>& bb2clones, SmallPtrSet<Value*, 4>& fcnArgs) {
+  Function* convertBBtoFcn (Function& F, BasicBlock* mainBB, SmallVector<BasicBlock*, 4>& bb2clones, SmallPtrSet<Value*, 4>& fcnArgs) {
 
     Module* M = F.getParent();
     LLVMContext& C = M->getContext();
@@ -977,9 +1080,7 @@ namespace {
 
     ValueToValueMapTy VMapGotStolenI;
 
-    auto Name = detachBB->getName() + F.getName()  + "_W";
-    //auto Name = detachBB->getName() + "w";
-    //outs() << "Function name:" << Name << "\n";
+    auto Name = mainBB->getName() + F.getName()  + "_W";
     auto NameStr = Name.str().substr(0,255);
     auto Fn = M->getFunction(NameStr);
     if (Fn)
@@ -1142,6 +1243,136 @@ namespace {
     return Wrapper;
   }
 
+
+  void generateWrapperFuncForRecursiveSync(Function &F, DominatorTree &DT, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder, DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>& LVout,
+					   DenseMap<BasicBlock *, DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>>& LVin, SmallVector<SyncInst*, 8>& syncInsts) {
+    Module* M = F.getParent();
+    LLVMContext& C = M->getContext();
+    IRBuilder<> B(C);
+
+    SmallPtrSet<Value *, 2> srSet;
+    // Get the sync instruction
+    for(auto syncInst : syncInsts) {
+      // If there are multiple sync region, create a function wrapper for sync region contain within a
+      auto sr = syncInst->getSyncRegion();
+      srSet.insert(sr);
+    }
+
+    if(srSet.size() <= 1) {
+      return;
+    }
+    errs() << F.getName() << " has two sync region in one function. May cause error\n";
+    return;
+
+
+    SmallVector<DetachInst*, 4> bbOrder;
+    bbOrder.append(seqOrder.begin(), seqOrder.end());
+    bbOrder.append(loopOrder.begin(), loopOrder.end());
+
+
+    // not used below
+    for (auto detachInst: bbOrder) {
+      BasicBlock* pBB = detachInst->getParent();
+      assert(pBB);
+      BasicBlock* continueBB = detachInst->getContinue();
+      Value* syncRegion = detachInst->getSyncRegion();
+
+      auto bbPair = getActualContinue(continueBB, syncRegion, DT);
+
+      BasicBlock* startBB = bbPair.first;
+      BasicBlock* endBB = bbPair.second;
+
+      if(startBB) {
+	// Find the basicBlock needed to clone
+        SmallVector<BasicBlock*, 4> bb2clones;
+        SmallPtrSet<Value*, 4> setBb2clones;
+        SmallPtrSet<Value*, 4> fcnArgs;
+
+        // Clone the basic block one at a time
+        traverseContinue(startBB, endBB, bb2clones);
+	for(auto bb2clone: bb2clones) {
+          setBb2clones.insert(bb2clone);
+        }
+
+	SmallPtrSet<Value*, 4> liveInVars;
+	auto liveVariableInBB = LVin[startBB];
+	for (auto elem2 : liveVariableInBB) {
+	  BasicBlock * bbPred = elem2.first;
+	  // Get live variable in from actual parent
+	  auto liveInVarBbPred = LVin[startBB][bbPred];
+	  liveInVars.insert(liveInVarBbPred.begin(), liveInVarBbPred.end());
+	}
+
+	for (auto liveInVar : liveInVars) {
+          if(liveInVar->getType()->isTokenTy()) {
+	    LLVM_DEBUG(dbgs() << "Ignore token:" << *liveInVar << "\n");
+	    continue;
+	  }
+
+          for (auto &use : liveInVar->uses()) {
+            auto * user = dyn_cast<Instruction>(use.getUser());
+            if(setBb2clones.find(user->getParent()) != setBb2clones.end()) {
+              LLVM_DEBUG(dbgs() << *liveInVar << "\n");
+              fcnArgs.insert(liveInVar);
+            }
+          }
+        }
+
+        // Also take into account function arguments
+        for(auto it = F.arg_begin(); it != F.arg_end(); it++) {
+	  for (auto &use : it->uses()) {
+            auto * user = dyn_cast<Instruction>(use.getUser());
+            if(setBb2clones.find(user->getParent()) != setBb2clones.end()) {
+              LLVM_DEBUG(dbgs() << *it << "\n");
+              fcnArgs.insert(it);
+            }
+          }
+
+	  SmallVector<DbgVariableIntrinsic *> DbgUsers;
+	  findDbgUsers(DbgUsers, it);
+	  for (auto *DVI : DbgUsers) {
+	    if ( setBb2clones.find(DVI->getParent()) != setBb2clones.end() ) {
+	      fcnArgs.insert(it);
+	    }
+	  }
+        }
+
+        LLVM_DEBUG(dbgs() << "Basicblock to clone: " << "\n");
+        for(auto bb2clone: bb2clones) {
+          LLVM_DEBUG(dbgs() << "BB : " << bb2clone->getName() << "\n");
+	}
+
+        // Create the function
+        Function* wrapper = convertBBtoFcn(F, startBB, bb2clones, fcnArgs);
+        wrapper->addFnAttr(Attribute::NoInline);
+	wrapper->addFnAttr("no-frame-pointer-elim");
+
+        // Erase all instruction within that sync region
+	// Replace the detach with a call to the wrapper function
+	// Insert a branch to the join instruction
+
+	SmallVector<Instruction *, 4> inst2delete;
+        for(auto bb : bb2clones) {
+          for(auto &ii : *bb) {
+	    inst2delete.push_back(&ii);
+	  }
+        }
+
+        B.SetInsertPoint(startBB->getTerminator());
+        SmallVector<Value*, 4> fcnArgVectors(fcnArgs.begin(), fcnArgs.end());
+        B.CreateCall(wrapper, fcnArgVectors);
+	B.CreateBr(endBB);
+
+	for(auto it = inst2delete.rbegin(); it != inst2delete.rend(); it++){
+          (*it)->eraseFromParent();
+        }
+
+	// Try to do it one more time incase there is another fork
+	//goto redo;
+      }
+    }
+  }
+
   void generateWrapperFuncForDetached (Function &F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder,
                                        Value* locAlloc, Value* ownerAlloc,
                                        DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>& LVout,
@@ -1153,7 +1384,7 @@ namespace {
                                        DenseMap <BasicBlock*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocToGotstolenSet,
                                        DenseMap <DetachInst*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForDetach,
                                        DenseMap <BasicBlock*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForGotStolen) {
-    // Locate the instruct
+    // Locate the detach instruct
     Module* M = F.getParent();
     LLVMContext& C = M->getContext();
     IRBuilder<> B(C);
@@ -1191,9 +1422,6 @@ namespace {
 
       // If we fail to locate a spawn instruction, create a function wrapper.
       if(bFailToLocateSpawnFunction) {
-	//outs() << "Generate detach wrapper\n";
-        //detachInst->getParent()->dump();
-	//detachInst->getParent()->getParent()->dump();
 	LLVM_DEBUG(dbgs() << "Need to generate function for inst: " << *detachInst << "\n");
 
         // Find the basicBlock needed to clone
@@ -1251,29 +1479,17 @@ namespace {
 	      fcnArgs.insert(it);
 	    }
 	  }
-
         }
 
         LLVM_DEBUG(dbgs() << "Basicblock to clone: " << "\n");
         for(auto bb2clone: bb2clones) {
           LLVM_DEBUG(dbgs() << "BB : " << bb2clone->getName() << "\n");
-	  //outs() << "BB to dump\n";
-	  //bb2clone->dump();
 	}
 
 
         // Create the function
         Function* wrapper = convertBBtoFcn(F, detachBB , bb2clones, fcnArgs);
         wrapper->addFnAttr(Attribute::NoInline);
-	//outs() << "Dump wrapper\n";
-	//wrapper->dump();
-        //wrapper->addFnAttr(Attribute::OptimizeNone);
-        //wrapper->addFnAttr("no-frame-pointer-elim");
-        //auto Attrs = wrapper->getAttributes();
-        //StringRef ValueStr("true" );
-        //Attrs = Attrs.addAttribute(wrapper->getContext(), AttributeList::FunctionIndex,
-        //                           "no-frame-pointer-elim", ValueStr);
-        //wrapper->setAttributes(Attrs);
 	wrapper->addFnAttr("no-frame-pointer-elim");
         auto bbContainReattach = getActualDetached(detachBB);
 
@@ -2957,9 +3173,6 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     //B.CreateStore(ZERO, gUnwindStackCnt);
     Value *gunwind_ctx = B.CreateConstInBoundsGEP2_64(workcontext_ty, gUnwindContext, 0, 0 );
 
-    //auto restoreCallee = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_restore_callee);
-    //B.CreateCall(restoreCallee, {B.CreateBitCast(gPTmpContext, IntegerType::getInt8Ty(C)->getPointerTo())});
-
     auto restoreContext = Intrinsic::getDeclaration(M, Intrinsic::uli_restore_context);
     //restoreContext->addFnAttr(Attribute::Forkable);
     CallInst* result = B.CreateCall(restoreContext, {B.CreateBitCast(gunwind_ctx, IntegerType::getInt8Ty(C)->getPointerTo())});
@@ -2998,43 +3211,27 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
       Function *SetupRSPfromRBP = Intrinsic::getDeclaration(M, Intrinsic::setup_rsp_from_rbp);
       B.CreateCall(SetupRSPfromRBP);
     }
+
     // return 0; or anything empty
-    if(F.getReturnType()->isVoidTy())
+    if(F.getReturnType()->isVoidTy()) {
       B.CreateRetVoid();
-    else if (F.getReturnType()->isIntegerTy())
+    } else if (F.getReturnType()->isIntegerTy()) {
       B.CreateRet(ConstantInt::get(F.getReturnType(), 0, false));
-    else if (F.getReturnType()->isPointerTy())
+    } else if (F.getReturnType()->isPointerTy()) {
       B.CreateRet(ConstantPointerNull::get(dyn_cast<PointerType>(F.getReturnType())));
-    else if (F.getReturnType()->isFloatingPointTy())
+    } else if (F.getReturnType()->isFloatingPointTy()) {
       B.CreateRet(ConstantFP::get(F.getReturnType(), "0"));
-    else if (F.getReturnType()->isStructTy()) {
-      auto stType = dyn_cast<StructType>(F.getReturnType());
-      Value* returnST = B.CreateAlloca(stType, DL.getAllocaAddrSpace(), nullptr, "returnStType");
-      Value* returnLoadSt = B.CreateLoad(stType, returnST);
-#if 0
-      for(auto elem: stType->elements()){
-        if(isa<StructType>(elem)) {
-          assert(0 && "Recursive Struct return type not supported yet");
-        } else {
-          elem.dump();
-        }
-      }
-#endif
-      B.CreateRet(returnLoadSt);
+    } else if (F.getReturnType()->isStructTy()) {
+      B.CreateRet(PoisonValue::get(F.getReturnType()));
     } else if (F.getReturnType()->isArrayTy()) {
-      auto atType = dyn_cast<ArrayType>(F.getReturnType());
-      Value* returnAT = B.CreateAlloca(atType, DL.getAllocaAddrSpace(), nullptr, "returnAtType");
-      Value* returnLoadAt = B.CreateLoad(atType, returnAT);
-      B.CreateRet(returnLoadAt);
+      B.CreateRet(PoisonValue::get(F.getReturnType()));
     } else if (F.getReturnType()->isVectorTy()) {
-      auto vtType = dyn_cast<VectorType>(F.getReturnType());
-      Value* returnVT = B.CreateAlloca(vtType, DL.getAllocaAddrSpace(), nullptr, "returnVtType");
-      Value* returnLoadVt = B.CreateLoad(vtType, returnVT);
-      B.CreateRet(returnLoadVt);
+      B.CreateRet(PoisonValue::get(F.getReturnType()));
     } else {
       errs() << "Have not supported " << *F.getReturnType() << " yet\n";
       assert(0 && "Return type not supported yet");
     }
+
   }
   //====================================================================================================
 
@@ -3580,7 +3777,9 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
     //}
 
     FunctionCallee resume2scheduler = Get_resume2scheduler(*M);
-    B.CreateCall(resume2scheduler, {workCtx2, newsp});
+    auto ci = B.CreateCall(resume2scheduler, {workCtx2, newsp});
+    Function* fcn = ci->getCalledFunction();
+    fcn->addFnAttr(Attribute::NoReturn);
     B.CreateUnreachable();
     //B.CreateBr(syncSucc);
 
@@ -3754,7 +3953,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     ii->eraseFromParent();
   }
 
-
   // Check if a function is a forking / spawning function or not
   bool bHavePforHelper = false;
   bHaveDynamicAlloca = false;
@@ -3841,7 +4039,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   SmallPtrSet<Instruction*, 8> RequiredPhiNode;
   SmallPtrSet<Instruction*, 8> PhiNodeInserted;
 
-
   // Map fast path BB and inst to slow path BB and inst
   ValueToValueMapTy VMapSlowPath;
   // Reverse of VMapSlowPath
@@ -3859,7 +4056,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   SmallPtrSet<BasicBlock*, 8> GotstolenSet;
   // Store all the multiretcall that can be transformed into branch based on path
   SmallPtrSet<MultiRetCallInst*, 8> MultiRetCallPathSet;
-
 
   // Similar to ReachingAllocSet but for gotstolen handler
   // TODO: May need to remove both of this since no longer needed
@@ -4110,6 +4306,11 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     // If the detach inst has the function inlined, create a wrapper function for it.
     generateWrapperFuncForDetached(F, seqOrder, loopOrder, locAlloc, ownerAlloc, LVout, LVin, VMapSlowPath, VMapGotStolenPath,
                                    GotstolenSet, ReachingAllocSet, ReachingAllocToGotstolenSet, LatestStoreForDetach, LatestStoreForGotStolen);
+
+    //-------------------------------------------------------------------------------------------------
+    // If there is recursive sync, create a wrapper for each sync. Doest not work, to complicated, might as well create a new pass before this.
+    // TODO: Currently, not used. Need to be deleted along with any function that is only use by this function
+    //generateWrapperFuncForRecursiveSync(F, DT, seqOrder, loopOrder, LVout, LVin, syncInsts);
 
     //-------------------------------------------------------------------------------------------------
     // Find the live varaible required in each slow path-continuation to construct the phi nodes needed
