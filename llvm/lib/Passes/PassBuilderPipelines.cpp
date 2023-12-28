@@ -348,12 +348,7 @@ PassBuilder::buildO1FunctionSimplificationPipeline(OptimizationLevel Level,
   // attention to it.
   if (Phase != ThinOrFullLTOPhase::ThinLTOPreLink || !PGOOpt ||
       PGOOpt->Action != PGOOptions::SampleUse) {
-
-    int unrollOptLevel = Level.getSpeedupLevel();
-    if(PTO.ForkDLowering != llvm::ForkDTargetType::None)
-      unrollOptLevel = 2; // Set value to default unroll instead of aggressive unroll
-
-    LPM2.addPass(LoopFullUnrollPass(unrollOptLevel,
+    LPM2.addPass(LoopFullUnrollPass(Level.getSpeedupLevel(),
                                     /* OnlyWhenForced= */ !PTO.LoopUnrolling,
                                     PTO.ForgetAllSCEVInLoopUnroll));
   }
@@ -544,12 +539,7 @@ PassBuilder::buildFunctionSimplificationPipeline(OptimizationLevel Level,
   // attention to it.
   if (Phase != ThinOrFullLTOPhase::ThinLTOPreLink || !PGOOpt ||
       PGOOpt->Action != PGOOptions::SampleUse) {
-
-    int unrollOptLevel = Level.getSpeedupLevel();
-    if(PTO.ForkDLowering != llvm::ForkDTargetType::None)
-      unrollOptLevel = 2; // Set value to default unroll instead of aggressive unroll
-
-    LPM2.addPass(LoopFullUnrollPass(unrollOptLevel,
+    LPM2.addPass(LoopFullUnrollPass(Level.getSpeedupLevel(),
                                     /* OnlyWhenForced= */ !PTO.LoopUnrolling,
                                     PTO.ForgetAllSCEVInLoopUnroll));
   }
@@ -1044,16 +1034,11 @@ void PassBuilder::addVectorPasses(OptimizationLevel Level,
     // combiner for cleanup here so that the unrolling and LICM can be pipelined
     // across the loop nests.
     // We do UnrollAndJam in a separate LPM to ensure it happens before unroll
-
-    int unrollOptLevel = Level.getSpeedupLevel();
-    if(PTO.ForkDLowering != llvm::ForkDTargetType::None)
-      unrollOptLevel = 2; // Set value to default unroll instead of aggressive unroll
-
     if (EnableUnrollAndJam && PTO.LoopUnrolling)
       FPM.addPass(createFunctionToLoopPassAdaptor(
-          LoopUnrollAndJamPass(unrollOptLevel)));
+          LoopUnrollAndJamPass(Level.getSpeedupLevel())));
     FPM.addPass(LoopUnrollPass(LoopUnrollOptions(
-        unrollOptLevel, /*OnlyWhenForced=*/!PTO.LoopUnrolling,
+        Level.getSpeedupLevel(), /*OnlyWhenForced=*/!PTO.LoopUnrolling,
         PTO.ForgetAllSCEVInLoopUnroll)));
     FPM.addPass(WarnMissedTransformationsPass());
   }
@@ -1140,18 +1125,12 @@ void PassBuilder::addVectorPasses(OptimizationLevel Level,
     // combiner for cleanup here so that the unrolling and LICM can be pipelined
     // across the loop nests.
     // We do UnrollAndJam in a separate LPM to ensure it happens before unroll
-
-    int unrollOptLevel = Level.getSpeedupLevel();
-    if(PTO.ForkDLowering != llvm::ForkDTargetType::None)
-      unrollOptLevel = 2; // Set value to default unroll instead of aggressive unroll
-
-
     if (EnableUnrollAndJam && PTO.LoopUnrolling) {
       FPM.addPass(createFunctionToLoopPassAdaptor(
-          LoopUnrollAndJamPass(unrollOptLevel)));
+          LoopUnrollAndJamPass(Level.getSpeedupLevel())));
     }
     FPM.addPass(LoopUnrollPass(LoopUnrollOptions(
-        unrollOptLevel, /*OnlyWhenForced=*/!PTO.LoopUnrolling,
+        Level.getSpeedupLevel(), /*OnlyWhenForced=*/!PTO.LoopUnrolling,
         PTO.ForgetAllSCEVInLoopUnroll)));
     FPM.addPass(WarnMissedTransformationsPass());
     FPM.addPass(InstCombinePass());
@@ -1254,12 +1233,7 @@ PassBuilder::buildModuleOptimizationPipeline(OptimizationLevel Level,
         createFunctionToLoopPassAdaptor(std::move(LPM1),
                                         /*UseMemorySSA=*/true,
                                         /*UseBlockFrequencyInfo=*/true));
-
-    // TODO: Cause issue with SpanningTree in O2 and O3. Need to fix this
-    if(PTO.ForkDLowering == llvm::ForkDTargetType::None) {
-      // CNP: May need to see the effect of this optimization pass
-      OptimizePM.addPass(LoopStripMinePass());
-    }
+    OptimizePM.addPass(LoopStripMinePass());
     // Cleanup tasks after stripmining loops.
     OptimizePM.addPass(TaskSimplifyPass());
     // Cleanup after stripmining loops.
@@ -1449,13 +1423,9 @@ PassBuilder::buildTapirLoweringPipeline(OptimizationLevel Level,
     if((PTO.ForkDLowering == llvm::ForkDTargetType::LazyD || PTO.ForkDLowering == llvm::ForkDTargetType::ULID || PTO.ForkDLowering == llvm::ForkDTargetType::SIGUSRD)) {
       //assert(!tapirTarget && "Can only create lazyD / uliD when -ftapir=serial");
       FPM3.addPass(LazyDTransPass());
-      // Without GVN, the above pass failed
-      FPM3.addPass(GVNPass());
     } else if ((PTO.ForkDLowering == llvm::ForkDTargetType::EagerD)) {
       //assert(!tapirTarget && "Can only create eagerD when -ftapir=serial");
       FPM3.addPass(EagerDTransPass());
-      // Without GVN, the above pass failed
-      FPM3.addPass(GVNPass());
     }
 
     FPM3.addPass(HandleInletsPass());
@@ -1601,6 +1571,13 @@ PassBuilder::buildPerModuleDefaultPipeline(OptimizationLevel Level,
   else
     for (auto &C : TapirLoopEndEPCallbacks)
       C(MPM, Level);
+
+
+  //if(PTO.ForkDLowering != llvm::ForkDTargetType::EagerD){
+  //  FunctionPassManager FPM2;
+  //  FPM2.addPass(InstrumentPforPass());
+  //  MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM2)));
+  //}
 
   return MPM;
 }
@@ -1968,11 +1945,7 @@ PassBuilder::buildLTODefaultPipeline(OptimizationLevel Level,
   // FIXME: Add loop interchange.
 
   // Unroll small loops and perform peeling.
-  int unrollOptLevel = Level.getSpeedupLevel();
-  if(PTO.ForkDLowering != llvm::ForkDTargetType::None)
-    unrollOptLevel = 2; // Set value to default unroll instead of aggressive unroll
-
-  LPM.addPass(LoopFullUnrollPass(unrollOptLevel,
+  LPM.addPass(LoopFullUnrollPass(Level.getSpeedupLevel(),
                                  /* OnlyWhenForced= */ !PTO.LoopUnrolling,
                                  PTO.ForgetAllSCEVInLoopUnroll));
   // The loop passes in LPM (LoopFullUnrollPass) do not preserve MemorySSA.
