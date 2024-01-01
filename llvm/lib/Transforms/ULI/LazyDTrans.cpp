@@ -2629,7 +2629,10 @@ Value* LazyDTransPass::lowerGrainsizeCall(CallInst *GrainsizeCall) {
   IRBuilder<> Builder(GrainsizeCall);
 
   // Get 8 * workers
-  Value *Workers = Builder.CreateCall(UNWINDRTS_FUNC(get_nworkers, *M));
+  Type *Int32Ty = Type::getInt32Ty(M->getContext());
+  GlobalVariable* gCilkg_nproc = GetGlobalVariable("cilkg_nproc", Int32Ty, *M, false);
+  Value* Workers = Builder.CreateLoad(Int32Ty, gCilkg_nproc);
+
   Value *WorkersX8 = Builder.CreateIntCast(
                                            Builder.CreateMul(Workers, ConstantInt::get(Workers->getType(), 8)),
                                            Limit->getType(), false);
@@ -3998,6 +4001,22 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
   // Do not process function that have the nounwindpath attribute
   if(F.hasFnAttribute(Attribute::NoUnwindPath)) {
+    // Lower tapir grainsize if it has any
+    SmallVector<IntrinsicInst*, 4 > ii2delete;
+    for(auto &BB : F) {
+      for(auto &II : BB) {
+	if (IntrinsicInst *IntrinsicI = dyn_cast<IntrinsicInst>(&II)) {
+	  // lower grainsize
+	  if (Intrinsic::tapir_loop_grainsize == IntrinsicI->getIntrinsicID()){
+	    ii2delete.push_back(IntrinsicI);
+	    lowerGrainsizeCall(IntrinsicI);
+	  }
+	}
+      }
+    }
+    for(auto ii : ii2delete) {
+      ii->eraseFromParent();
+    }
     return false;
   }
 
@@ -4247,10 +4266,11 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 	  B.SetInsertPoint(L->getHeader()->getTerminator());
 #define USE_CHANNEL
 #ifdef USE_CHANNEL
-	StoreSTyField(B, DL, RequestChannelTy,
-		      B.getInt8(1),
-		      reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
-		      AtomicOrdering::NotAtomic);
+	if(!DisableUnwindPoll)
+	  StoreSTyField(B, DL, RequestChannelTy,
+			B.getInt8(1),
+			reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
+			AtomicOrdering::NotAtomic);
 #else
 	B.CreateStore(L_ONE, workExists);
 #endif
@@ -4271,7 +4291,8 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 	B.SetInsertPoint(pred->getTerminator());
 #define USE_CHANNEL
 #ifdef USE_CHANNEL
-	StoreSTyField(B, DL, RequestChannelTy,
+	if(!DisableUnwindPoll)
+	  StoreSTyField(B, DL, RequestChannelTy,
 		      B.getInt8(1),
 		      reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
 		      AtomicOrdering::NotAtomic);

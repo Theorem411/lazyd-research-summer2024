@@ -1901,13 +1901,9 @@ void CodeGenModule::getDefaultFunctionAttributes(StringRef Name,
     FuncAttrs.addAttribute(Var, Value);
   }
 
-  // Can cause performance improvement on Opencilk and nonserialelsion if false
   if(getLangOpts().ForkDLowering > llvm::ForkDTargetType::None) {
-    // Disable exceptions and always generate frame pointer when generating ForkD code
+    // Disable exceptions for now
     FuncAttrs.addAttribute(llvm::Attribute::NoUnwind);
-    // Overhead for sequential path
-    // Be conservative for now, Keep all frame pointers.
-    FuncAttrs.addAttribute("frame-pointer", "all");
   }
 
   if(getLangOpts().ForkDLowering == llvm::ForkDTargetType::EagerD) {
