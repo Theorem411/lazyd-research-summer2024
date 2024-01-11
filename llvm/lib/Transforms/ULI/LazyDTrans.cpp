@@ -698,11 +698,13 @@ namespace {
 
       // If we have not converted it into multiretcall
       if( isa<ReattachInst>(bb->getTerminator()) ) {
+        bb2clones.push_back(bb);
         resBB = bb;
-        //break;
+        continue;
       } else if (isa<MultiRetCallInst>(bb->getTerminator()) ) {
+        bb2clones.push_back(bb);
         resBB = bb;
-        //break;
+        continue;
       }
 
       // Basic block already visited, skip
@@ -714,8 +716,8 @@ namespace {
       haveVisited[bb] = true;
       bb2clones.push_back(bb);
 
-      if(resBB)
-	break;
+      //if(resBB)
+      //break;
 
       //auto succBB = detachBB->getUniqueSuccessor();
       //assert(succBB && "Block within detach has multiple successor");
@@ -730,40 +732,6 @@ namespace {
 
     assert(resBB && "no function call contain in detach");
     return resBB;
-  }
-
-  void traverseContinue(BasicBlock* startBB, BasicBlock* endBB, SmallVector<BasicBlock*, 4>& bb2clones) {
-    SmallVector<BasicBlock*, 4> bbList;
-    ValueMap<BasicBlock*, bool> haveVisited;
-    BasicBlock* bb = nullptr;
-
-    bbList.push_back(startBB);
-    while(!bbList.empty()) {
-      // Visit basic block
-      bb = bbList.back();
-      bbList.pop_back();
-
-      // Basic block already visited, skip
-      if(haveVisited.lookup(bb)){
-        continue;
-      }
-
-      // Mark bb as visited
-      haveVisited[bb] = true;
-
-      bb2clones.push_back(bb);
-
-      // If we have not converted it into multiretcall
-      if( bb == endBB) {
-	continue;
-      }
-
-      for ( succ_iterator SI = succ_begin(bb); SI != succ_end(bb); SI++ ) {
-        auto succBB = *SI;
-        bbList.push_back(succBB);
-      }
-    }
-    return;
   }
 
   // Get the actual detach basic block that contains the call
@@ -832,17 +800,17 @@ namespace {
       haveVisited[bb] = true;
 
       if(isa<DetachInst>(bb->getTerminator())){
-	auto di = dyn_cast<DetachInst>(bb->getTerminator());
-	if(di->getSyncRegion() != syncRegion)
-	  diList.push_back(di);
+        auto di = dyn_cast<DetachInst>(bb->getTerminator());
+        if(di->getSyncRegion() != syncRegion)
+          diList.push_back(di);
 
       } else if( isa<SyncInst>(bb->getTerminator()) ) {
-	auto si = dyn_cast<SyncInst>(bb->getTerminator());
-	auto siSyncRegion = si->getSyncRegion();
-	if(siSyncRegion != syncRegion)
-	  siList.push_back(si);
-	else
-	  continue;
+        auto si = dyn_cast<SyncInst>(bb->getTerminator());
+        auto siSyncRegion = si->getSyncRegion();
+        if(siSyncRegion != syncRegion)
+          siList.push_back(si);
+        else
+          continue;
       }
 
 
@@ -862,7 +830,7 @@ namespace {
       commonB1 = diList.back()->getParent();
       diList.pop_back();
       for(auto di: diList) {
-	commonB1 = DT.findNearestCommonDominator(commonB1, di->getParent());
+        commonB1 = DT.findNearestCommonDominator(commonB1, di->getParent());
       }
     }
 
@@ -1116,16 +1084,14 @@ namespace {
 #else
     for (DISubprogram *ISP : DIFinder.subprograms())
       if (ISP != SP)
-	VMapSlowPath.MD()[ISP].reset(ISP);
+        VMapSlowPath.MD()[ISP].reset(ISP);
 
     for (DICompileUnit *CU : DIFinder.compile_units())
       VMapSlowPath.MD()[CU].reset(CU);
 
     for (DIType *Type : DIFinder.types())
       VMapSlowPath.MD()[Type].reset(Type);
-#endif
 
-#if 0
     // Duplicate the metadata that is attached to the cloned function.
     // Subprograms/CUs/types that were already mapped to themselves won't be
     // duplicated.
@@ -1134,15 +1100,12 @@ namespace {
     for (auto MD : MDs) {
       auto remapFlag = RF_IgnoreMissingLocals | RF_ReuseAndMutateDistinctMDs;//RF_NullMapMissingGlobalValues| RF_ReuseAndMutateDistinctMDs;
       Wrapper->addMetadata(
-			   MD.first,
-			   *MapMetadata(MD.second, VMapSlowPath,
-					F.getSubprogram() != nullptr ? RF_None | remapFlag : RF_NoModuleLevelChanges | remapFlag,
-					nullptr, nullptr));
+                           MD.first,
+                           *MapMetadata(MD.second, VMapSlowPath,
+                                        F.getSubprogram() != nullptr ? RF_None | remapFlag : RF_NoModuleLevelChanges | remapFlag,
+                                        nullptr, nullptr));
     }
-
-
 #endif
-
     // Perform the actual cloning
     for (auto pBB : bb2clones){
       VMapSlowPath[pBB] = CloneBasicBlock(pBB, VMapSlowPath, ".wrapper", Wrapper, nullptr, &DIFinder);
@@ -1154,43 +1117,23 @@ namespace {
     for(auto fcnArg: fcnArgs) {
       Function::arg_iterator args = Wrapper->arg_begin()+argCnt;
       Argument* fcnArgIWrapper =  &*args;
-
       auto fcnArgI = dyn_cast<Value>(fcnArg);
-#if 0
-      SmallVector< Use*, 4 >  useNeed2Update;
-      // Get the instruction that uses fcnArgI (fcnArg)
-      for (auto &use : fcnArgI->uses()) {
-        // user is that instruction
-        auto * user = dyn_cast<Instruction>(use.getUser());
 
-        // If user is defined inside the wrapper(the cloned body), then it need to update its operands
-        if(user->getParent()->getParent() == Wrapper) {
-          useNeed2Update.push_back(&use);
-        }
-      }
-      // Update its operand to use the fcnArgument
-      for( auto U : useNeed2Update ){
-        U->set(fcnArgIWrapper);
-      }
-      argCnt++;
-#else
       // Replace live with argument
       fcnArgI->replaceUsesWithIf(fcnArgIWrapper, [&](Use &U) {
-	  auto *I = dyn_cast<Instruction>(U.getUser());
-	  // Replace if it's an instruction inside the wrapper.
-	  return !I || I->getParent()->getParent() == Wrapper;
-	});
-
+          auto *I = dyn_cast<Instruction>(U.getUser());
+          // Replace if it's an instruction inside the wrapper.
+          return !I || I->getParent()->getParent() == Wrapper;
+        });
 
       // Debug instruction need to be replaced
       SmallVector<DbgVariableIntrinsic *> DbgUsers;
       findDbgUsers(DbgUsers, fcnArgI);
       for (auto *DVI : DbgUsers) {
-	if (DVI->getParent()->getParent() == Wrapper)
-	  DVI->replaceVariableLocationOp(fcnArgI, fcnArgIWrapper);
+        if (DVI->getParent()->getParent() == Wrapper)
+          DVI->replaceVariableLocationOp(fcnArgI, fcnArgIWrapper);
       }
       argCnt++;
-#endif
     }
 
     // --------------------------------------------------------------
@@ -1206,7 +1149,7 @@ namespace {
 
       for (Instruction &II : *ClonedBB) {
         // Remap the cloned instruction
-	//auto remapFlag = RF_NullMapMissingGlobalValues| RF_ReuseAndMutateDistinctMDs;
+        //auto remapFlag = RF_NullMapMissingGlobalValues| RF_ReuseAndMutateDistinctMDs;
         auto remapFlag = RF_IgnoreMissingLocals | RF_ReuseAndMutateDistinctMDs;
         RemapInstruction(&II, VMapSlowPath, F.getSubprogram() != nullptr? RF_None | remapFlag  : RF_NoModuleLevelChanges | remapFlag, nullptr, nullptr);
       }
@@ -1217,17 +1160,17 @@ namespace {
     auto *OldModule = F.getParent();
     auto *NewModule = Wrapper->getParent();
     if (OldModule && NewModule && OldModule != NewModule &&
-	DIFinder.compile_unit_count()) {
+        DIFinder.compile_unit_count()) {
       //outs() << "Never going to be executed?\n";
       auto *NMD = NewModule->getOrInsertNamedMetadata("llvm.dbg.cu");
       // Avoid multiple insertions of the same DICompileUnit to NMD.
       SmallPtrSet<const void *, 8> Visited;
       for (auto *Operand : NMD->operands())
-	Visited.insert(Operand);
+        Visited.insert(Operand);
       for (auto *Unit : DIFinder.compile_units())
-	// VMap.MD()[Unit] == Unit
-	if (Visited.insert(Unit).second)
-	  NMD->addOperand(Unit);
+        // VMap.MD()[Unit] == Unit
+        if (Visited.insert(Unit).second)
+          NMD->addOperand(Unit);
     }
 
 
@@ -1244,134 +1187,6 @@ namespace {
   }
 
 
-  void generateWrapperFuncForRecursiveSync(Function &F, DominatorTree &DT, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder, DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>& LVout,
-					   DenseMap<BasicBlock *, DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>>& LVin, SmallVector<SyncInst*, 8>& syncInsts) {
-    Module* M = F.getParent();
-    LLVMContext& C = M->getContext();
-    IRBuilder<> B(C);
-
-    SmallPtrSet<Value *, 2> srSet;
-    // Get the sync instruction
-    for(auto syncInst : syncInsts) {
-      // If there are multiple sync region, create a function wrapper for sync region contain within a
-      auto sr = syncInst->getSyncRegion();
-      srSet.insert(sr);
-    }
-
-    if(srSet.size() <= 1) {
-      return;
-    }
-    errs() << F.getName() << " has two sync region in one function. May cause error\n";
-    return;
-
-
-    SmallVector<DetachInst*, 4> bbOrder;
-    bbOrder.append(seqOrder.begin(), seqOrder.end());
-    bbOrder.append(loopOrder.begin(), loopOrder.end());
-
-
-    // not used below
-    for (auto detachInst: bbOrder) {
-      BasicBlock* pBB = detachInst->getParent();
-      assert(pBB);
-      BasicBlock* continueBB = detachInst->getContinue();
-      Value* syncRegion = detachInst->getSyncRegion();
-
-      auto bbPair = getActualContinue(continueBB, syncRegion, DT);
-
-      BasicBlock* startBB = bbPair.first;
-      BasicBlock* endBB = bbPair.second;
-
-      if(startBB) {
-	// Find the basicBlock needed to clone
-        SmallVector<BasicBlock*, 4> bb2clones;
-        SmallPtrSet<Value*, 4> setBb2clones;
-        SmallPtrSet<Value*, 4> fcnArgs;
-
-        // Clone the basic block one at a time
-        traverseContinue(startBB, endBB, bb2clones);
-	for(auto bb2clone: bb2clones) {
-          setBb2clones.insert(bb2clone);
-        }
-
-	SmallPtrSet<Value*, 4> liveInVars;
-	auto liveVariableInBB = LVin[startBB];
-	for (auto elem2 : liveVariableInBB) {
-	  BasicBlock * bbPred = elem2.first;
-	  // Get live variable in from actual parent
-	  auto liveInVarBbPred = LVin[startBB][bbPred];
-	  liveInVars.insert(liveInVarBbPred.begin(), liveInVarBbPred.end());
-	}
-
-	for (auto liveInVar : liveInVars) {
-          if(liveInVar->getType()->isTokenTy()) {
-	    LLVM_DEBUG(dbgs() << "Ignore token:" << *liveInVar << "\n");
-	    continue;
-	  }
-
-          for (auto &use : liveInVar->uses()) {
-            auto * user = dyn_cast<Instruction>(use.getUser());
-            if(setBb2clones.find(user->getParent()) != setBb2clones.end()) {
-              LLVM_DEBUG(dbgs() << *liveInVar << "\n");
-              fcnArgs.insert(liveInVar);
-            }
-          }
-        }
-
-        // Also take into account function arguments
-        for(auto it = F.arg_begin(); it != F.arg_end(); it++) {
-	  for (auto &use : it->uses()) {
-            auto * user = dyn_cast<Instruction>(use.getUser());
-            if(setBb2clones.find(user->getParent()) != setBb2clones.end()) {
-              LLVM_DEBUG(dbgs() << *it << "\n");
-              fcnArgs.insert(it);
-            }
-          }
-
-	  SmallVector<DbgVariableIntrinsic *> DbgUsers;
-	  findDbgUsers(DbgUsers, it);
-	  for (auto *DVI : DbgUsers) {
-	    if ( setBb2clones.find(DVI->getParent()) != setBb2clones.end() ) {
-	      fcnArgs.insert(it);
-	    }
-	  }
-        }
-
-        LLVM_DEBUG(dbgs() << "Basicblock to clone: " << "\n");
-        for(auto bb2clone: bb2clones) {
-          LLVM_DEBUG(dbgs() << "BB : " << bb2clone->getName() << "\n");
-	}
-
-        // Create the function
-        Function* wrapper = convertBBtoFcn(F, startBB, bb2clones, fcnArgs);
-        wrapper->addFnAttr(Attribute::NoInline);
-	wrapper->addFnAttr("no-frame-pointer-elim");
-
-        // Erase all instruction within that sync region
-	// Replace the detach with a call to the wrapper function
-	// Insert a branch to the join instruction
-
-	SmallVector<Instruction *, 4> inst2delete;
-        for(auto bb : bb2clones) {
-          for(auto &ii : *bb) {
-	    inst2delete.push_back(&ii);
-	  }
-        }
-
-        B.SetInsertPoint(startBB->getTerminator());
-        SmallVector<Value*, 4> fcnArgVectors(fcnArgs.begin(), fcnArgs.end());
-        B.CreateCall(wrapper, fcnArgVectors);
-	B.CreateBr(endBB);
-
-	for(auto it = inst2delete.rbegin(); it != inst2delete.rend(); it++){
-          (*it)->eraseFromParent();
-        }
-
-	// Try to do it one more time incase there is another fork
-	//goto redo;
-      }
-    }
-  }
 
   void generateWrapperFuncForDetached (Function &F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder,
                                        Value* locAlloc, Value* ownerAlloc,
@@ -1422,7 +1237,7 @@ namespace {
 
       // If we fail to locate a spawn instruction, create a function wrapper.
       if(bFailToLocateSpawnFunction) {
-	LLVM_DEBUG(dbgs() << "Need to generate function for inst: " << *detachInst << "\n");
+        LLVM_DEBUG(dbgs() << "Need to generate function for inst: " << *detachInst << "\n");
 
         // Find the basicBlock needed to clone
         SmallVector<BasicBlock*, 4> bb2clones;
@@ -1449,9 +1264,9 @@ namespace {
 
         for (auto liveInVar : liveInVars) {
           if(liveInVar->getType()->isTokenTy()) {
-	    LLVM_DEBUG(dbgs() << "Ignore token:" << *liveInVar << "\n");
-	    continue;
-	  }
+            LLVM_DEBUG(dbgs() << "Ignore token:" << *liveInVar << "\n");
+            continue;
+          }
 
           for (auto &use : liveInVar->uses()) {
             auto * user = dyn_cast<Instruction>(use.getUser());
@@ -1464,7 +1279,7 @@ namespace {
 
         // Also take into account function arguments
         for(auto it = F.arg_begin(); it != F.arg_end(); it++) {
-	  for (auto &use : it->uses()) {
+          for (auto &use : it->uses()) {
             auto * user = dyn_cast<Instruction>(use.getUser());
             if(setBb2clones.find(user->getParent()) != setBb2clones.end()) {
               LLVM_DEBUG(dbgs() << *it << "\n");
@@ -1472,25 +1287,40 @@ namespace {
             }
           }
 
-	  SmallVector<DbgVariableIntrinsic *> DbgUsers;
-	  findDbgUsers(DbgUsers, it);
-	  for (auto *DVI : DbgUsers) {
-	    if ( setBb2clones.find(DVI->getParent()) != setBb2clones.end() ) {
-	      fcnArgs.insert(it);
-	    }
-	  }
+          SmallVector<DbgVariableIntrinsic *> DbgUsers;
+          findDbgUsers(DbgUsers, it);
+          for (auto *DVI : DbgUsers) {
+            if ( setBb2clones.find(DVI->getParent()) != setBb2clones.end() ) {
+              fcnArgs.insert(it);
+            }
+          }
         }
 
         LLVM_DEBUG(dbgs() << "Basicblock to clone: " << "\n");
         for(auto bb2clone: bb2clones) {
           LLVM_DEBUG(dbgs() << "BB : " << bb2clone->getName() << "\n");
-	}
 
+          // Find debug variable that uses variable that do not belong to live variable or inside wrapper
+          for(auto &ii: *bb2clone) {
+            if(isa<DbgInfoIntrinsic>(&ii)) {
+              auto dbgInst = dyn_cast<DbgVariableIntrinsic>(&ii);
+              auto dbgArg = dbgInst->getVariableLocationOp(0);
+              bool shouldInsertVal = isa<Argument>(dbgArg) && fcnArgs.find(dbgArg) == fcnArgs.end();
+              shouldInsertVal = shouldInsertVal || (isa<Instruction>(dbgArg) &&
+                                                    fcnArgs.find(dbgArg) == fcnArgs.end() &&
+                                                    setBb2clones.find(dyn_cast<Instruction>(dbgArg)->getParent()) ==  setBb2clones.end());
+
+              if(shouldInsertVal) {
+                fcnArgs.insert(dbgArg);
+              }
+            }
+          }
+        }
 
         // Create the function
         Function* wrapper = convertBBtoFcn(F, detachBB , bb2clones, fcnArgs);
         wrapper->addFnAttr(Attribute::NoInline);
-	wrapper->addFnAttr("no-frame-pointer-elim");
+        wrapper->addFnAttr("no-frame-pointer-elim");
         auto bbContainReattach = getActualDetached(detachBB);
 
         // Erase all instruction except reattach
@@ -1759,7 +1589,7 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
 #if 1
           B.SetInsertPoint(continueSlowPathBB->getFirstNonPHIOrDbgOrLifetime());
           //using AsmTypeCallee = void (void);
-	  Type* VoidTy = Type::getVoidTy(C);
+          Type* VoidTy = Type::getVoidTy(C);
           FunctionType *reloadCaller = FunctionType::get(VoidTy, {VoidTy}, false);
           Value *Asm = InlineAsm::get(reloadCaller, "", "~{rdi},~{rsi},~{r8},~{r9},~{r10},~{r11},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
           //???
@@ -1876,31 +1706,31 @@ void LazyDTransPass::updateSSA(SSAUpdater& SSAUpdate, Instruction* inst2replace)
       DenseMap <PHINode*, std::pair<Value*, BasicBlock*>> phiNode2Update;
       for( pred_iterator PI = pred_begin(currBB); PI != pred_end(currBB); PI++ ) {
         BasicBlock* pred = *PI;
-	unsigned incomingPair = UserPN->getNumIncomingValues();
-	bool foundPair = false;
-	for(unsigned i = 0; i<incomingPair; i++)  {
-	  auto bb = dyn_cast<BasicBlock>(UserPN->getIncomingBlock(i));
-	  if(bb == pred) {
-	    foundPair = true;
-	    break;
-	  }
-	}
-	if(!foundPair) {
-	  //outs() << "pred: " << pred->getName() << "does not have an incoming BB\n";
-	  Value* rematerialzeVal = nullptr;
-	  if(true)
-	    // Needed for cholesky
-	    rematerialzeVal = SSAUpdate.GetValueAtEndOfBlock(pred);
-	  else
-	    rematerialzeVal = SSAUpdate.GetValueInMiddleOfBlock(pred);
-	  //rematerialzeVal->dump();
-	  phiNode2Update[UserPN]  = std::pair<Value*, BasicBlock*>(rematerialzeVal, pred);
-	}
+        unsigned incomingPair = UserPN->getNumIncomingValues();
+        bool foundPair = false;
+        for(unsigned i = 0; i<incomingPair; i++)  {
+          auto bb = dyn_cast<BasicBlock>(UserPN->getIncomingBlock(i));
+          if(bb == pred) {
+            foundPair = true;
+            break;
+          }
+        }
+        if(!foundPair) {
+          //outs() << "pred: " << pred->getName() << "does not have an incoming BB\n";
+          Value* rematerialzeVal = nullptr;
+          if(true)
+            // Needed for cholesky
+            rematerialzeVal = SSAUpdate.GetValueAtEndOfBlock(pred);
+          else
+            rematerialzeVal = SSAUpdate.GetValueInMiddleOfBlock(pred);
+          //rematerialzeVal->dump();
+          phiNode2Update[UserPN]  = std::pair<Value*, BasicBlock*>(rematerialzeVal, pred);
+        }
       }
 
       for(auto elem: phiNode2Update) {
-	PHINode* phiNode = elem.first;
-	phiNode->addIncoming(elem.second.first, elem.second.second);
+        PHINode* phiNode = elem.first;
+        phiNode->addIncoming(elem.second.first, elem.second.second);
       }
     }
   }
@@ -2095,42 +1925,42 @@ void LazyDTransPass::updateSlowVariables_2(Function& F,
                 // Get all the incoming variable
                 unsigned incomingPair = phiInst->getNumIncomingValues();
 
-		// If phi node after sync already have incoming variable from slow path, then ignore.
-		// TODO: CNP why is this needed for usingt the new clang++
-		bool bCont = false;
-		for(unsigned i = 0; i<incomingPair; i++)  {
+                // If phi node after sync already have incoming variable from slow path, then ignore.
+                // TODO: CNP why is this needed for usingt the new clang++
+                bool bCont = false;
+                for(unsigned i = 0; i<incomingPair; i++)  {
                   BasicBlock* incomingBB = phiInst->getIncomingBlock(i);
                   Instruction* incomingInst = dyn_cast<Instruction>(phiInst->getIncomingValue(i));
-		  // If incoming BB already from pre.sync? But how?
-		  if(incomingBB  == syncBB2syncPred[continueBB])
-		    bCont = true;
-		}
-		if(bCont)
-		  continue;
+                  // If incoming BB already from pre.sync? But how?
+                  if(incomingBB  == syncBB2syncPred[continueBB])
+                    bCont = true;
+                }
+                if(bCont)
+                  continue;
 
 
                 for(unsigned i = 0; i<incomingPair; i++)  {
                   BasicBlock* incomingBB = phiInst->getIncomingBlock(i);
                   Instruction* incomingInst = dyn_cast<Instruction>(phiInst->getIncomingValue(i));
 
-		  // if incoming inst is not part of the paralell region
-		  if(incomingInst != liveVar)
-		    continue;
+                  // if incoming inst is not part of the paralell region
+                  if(incomingInst != liveVar)
+                    continue;
 
                   // If incoming inst is an argument
                   if(!incomingInst) {
                     SSAUpdate.AddAvailableValue(incomingBB, phiInst->getIncomingValue(i));
                     continue;
                   }
-		  // TODO: CNP
-		  // In LU
-		  // %cmp.i.slowPath148 = phi i1 [ %cmp.i.slowPath149, %pre.sync ], [ %cmp.i, %det.cont.i ], [ %cmp.i, %if.then.i ]
-		  // After changes
-		  //%cmp.i.slowPath148 = phi i1 [ %cmp.i.slowPath149, %pre.sync ], [ %cmp.i, %det.cont.i ], [ %cmp.i, %if.then.i ], [ %cmp.i159, %pre.sync ]
-		  // Where do cmp.i.slowPath149 comes from?
-		  // Which value in pre.sync should i use, cmp.i.slowpath149 or cmp.i159
-		  if(!VMapSlowPath[incomingInst])
-		    continue;
+                  // TODO: CNP
+                  // In LU
+                  // %cmp.i.slowPath148 = phi i1 [ %cmp.i.slowPath149, %pre.sync ], [ %cmp.i, %det.cont.i ], [ %cmp.i, %if.then.i ]
+                  // After changes
+                  //%cmp.i.slowPath148 = phi i1 [ %cmp.i.slowPath149, %pre.sync ], [ %cmp.i, %det.cont.i ], [ %cmp.i, %if.then.i ], [ %cmp.i159, %pre.sync ]
+                  // Where do cmp.i.slowPath149 comes from?
+                  // Which value in pre.sync should i use, cmp.i.slowpath149 or cmp.i159
+                  if(!VMapSlowPath[incomingInst])
+                    continue;
 
                   auto incomingInstSlow = dyn_cast<Instruction>(VMapSlowPath[incomingInst]);
                   if(!incomingInstSlow)
@@ -2141,7 +1971,7 @@ void LazyDTransPass::updateSlowVariables_2(Function& F,
                   // If incoming inst dominate parallel region,
                   // then add value where the source is from slow path to fast path
                   if(requiredPhiVarSet.find(incomingInst) == requiredPhiVarSet.end()) {
-		    //outs() << "Incoming inst dominate: "<< *incomingInst << "\n";
+                    //outs() << "Incoming inst dominate: "<< *incomingInst << "\n";
                     SSAUpdate.AddAvailableValue(syncBB2syncPred[continueBB], incomingInst);
                     continue;
                   }
@@ -2156,12 +1986,12 @@ void LazyDTransPass::updateSlowVariables_2(Function& F,
                   SSAUpdate.AddAvailableValue(incomingInstSlow->getParent(), incomingInstSlow);
                 }
                 // TODO: When to use which one?
-		Value* rematerialzeVal = nullptr;
-		if(true)
-		  // Needed for cholesky
-		  rematerialzeVal = SSAUpdate.GetValueAtEndOfBlock(syncBB2syncPred[continueBB]);
+                Value* rematerialzeVal = nullptr;
+                if(true)
+                  // Needed for cholesky
+                  rematerialzeVal = SSAUpdate.GetValueAtEndOfBlock(syncBB2syncPred[continueBB]);
                 else
-		  rematerialzeVal = SSAUpdate.GetValueInMiddleOfBlock(syncBB2syncPred[continueBB]);
+                  rematerialzeVal = SSAUpdate.GetValueInMiddleOfBlock(syncBB2syncPred[continueBB]);
 
                 phiNode2Update[phiInst]  = std::pair<Value*, BasicBlock*>(rematerialzeVal, syncBB2syncPred[continueBB]);
               }
@@ -3878,21 +3708,21 @@ bool LazyDTransPass::runInitialization(Module &M) {
 
   if (RequestChannelTy->isOpaque()) {
     RequestChannelTy->setBody(
-			      Int32Ty,                     // senderThreadId
-			      ArrayType::get(Int8Ty, 2),   // padding_char
-			      Int8Ty,                      // potentialParallelTask
-			      Int8Ty,                      // inLoop
-			      ArrayType::get(Int64Ty, 31)  // padding
-			      );
+                              Int32Ty,                     // senderThreadId
+                              ArrayType::get(Int8Ty, 2),   // padding_char
+                              Int8Ty,                      // potentialParallelTask
+                              Int8Ty,                      // inLoop
+                              ArrayType::get(Int64Ty, 31)  // padding
+                              );
   }
 
   if (ResponseChannelTy->isOpaque())
     ResponseChannelTy->setBody(
-			       Int32Ty,
-			       Int8Ty,
-			       Int8Ty,
-			       ArrayType::get(Int8Ty, 250)
-			       );
+                               Int32Ty,
+                               Int8Ty,
+                               Int8Ty,
+                               ArrayType::get(Int8Ty, 250)
+                               );
 
 
   if(fcn)
@@ -3945,9 +3775,9 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   for(auto &BB : F) {
     for(auto &I : BB) {
       if (IntrinsicInst *II = dyn_cast<IntrinsicInst>(&I)) {
-	if ( Intrinsic::taskframe_use == II->getIntrinsicID()) {
-	  taskframe2delete.push_back(II);
-	}
+        if ( Intrinsic::taskframe_use == II->getIntrinsicID()) {
+          taskframe2delete.push_back(II);
+        }
       }
     }
   }
@@ -4005,13 +3835,13 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     SmallVector<IntrinsicInst*, 4 > ii2delete;
     for(auto &BB : F) {
       for(auto &II : BB) {
-	if (IntrinsicInst *IntrinsicI = dyn_cast<IntrinsicInst>(&II)) {
-	  // lower grainsize
-	  if (Intrinsic::tapir_loop_grainsize == IntrinsicI->getIntrinsicID()){
-	    ii2delete.push_back(IntrinsicI);
-	    lowerGrainsizeCall(IntrinsicI);
-	  }
-	}
+        if (IntrinsicInst *IntrinsicI = dyn_cast<IntrinsicInst>(&II)) {
+          // lower grainsize
+          if (Intrinsic::tapir_loop_grainsize == IntrinsicI->getIntrinsicID()){
+            ii2delete.push_back(IntrinsicI);
+            lowerGrainsizeCall(IntrinsicI);
+          }
+        }
       }
     }
     for(auto ii : ii2delete) {
@@ -4107,14 +3937,14 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     //if(!EnableStoreLoadForkStorage) {
     for (auto pBB : bb2clones){
       if (DetachInst * DI = dyn_cast<DetachInst>(pBB->getTerminator())){
-	F.addFnAttr(Attribute::Stealable);
-	F.addFnAttr(Attribute::Forkable);
+        F.addFnAttr(Attribute::Stealable);
+        F.addFnAttr(Attribute::Forkable);
         BasicBlock * detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
         for( Instruction &II : *detachBlock ) {
           if( isa<CallInst>(&II) ) {
             dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);
             dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::ReturnsTwice);
-	    //dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Stealable);
+            //dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Stealable);
           }
         }
       }
@@ -4260,21 +4090,21 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     bool skipLoop = false;
     for (auto L : LI) {
       if(L->contains(DI)) {
-	if(L->getLoopPreheader())
-	  B.SetInsertPoint(L->getLoopPreheader()->getTerminator());
-	else
-	  B.SetInsertPoint(L->getHeader()->getTerminator());
+        if(L->getLoopPreheader())
+          B.SetInsertPoint(L->getLoopPreheader()->getTerminator());
+        else
+          B.SetInsertPoint(L->getHeader()->getTerminator());
 #define USE_CHANNEL
 #ifdef USE_CHANNEL
-	if(!DisableUnwindPoll)
-	  StoreSTyField(B, DL, RequestChannelTy,
-			B.getInt8(1),
-			reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
-			AtomicOrdering::NotAtomic);
+        if(!DisableUnwindPoll)
+          StoreSTyField(B, DL, RequestChannelTy,
+                        B.getInt8(1),
+                        reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
+                        AtomicOrdering::NotAtomic);
 #else
-	B.CreateStore(L_ONE, workExists);
+        B.CreateStore(L_ONE, workExists);
 #endif
-	skipLoop = true;
+        skipLoop = true;
       }
     }
 
@@ -4288,16 +4118,16 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
       BasicBlock* pred = *PI;
       // Check if predecessor in the reachingBB
       if(reachingBB.find(pred) == reachingBB.end()) {
-	B.SetInsertPoint(pred->getTerminator());
+        B.SetInsertPoint(pred->getTerminator());
 #define USE_CHANNEL
 #ifdef USE_CHANNEL
-	if(!DisableUnwindPoll)
-	  StoreSTyField(B, DL, RequestChannelTy,
-		      B.getInt8(1),
-		      reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
-		      AtomicOrdering::NotAtomic);
+        if(!DisableUnwindPoll)
+          StoreSTyField(B, DL, RequestChannelTy,
+                      B.getInt8(1),
+                      reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
+                      AtomicOrdering::NotAtomic);
 #else
-	B.CreateStore(L_ONE, workExists);
+        B.CreateStore(L_ONE, workExists);
 #endif
       }
     }
@@ -4449,22 +4279,22 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
       IRBuilder<> B(C);
       B.SetInsertPoint(syncBB2syncPred[syncSucc]->getFirstNonPHIOrDbgOrLifetime());
       for (auto potAllocaInst : reachingStore) {
-	LLVM_DEBUG(dbgs() << "PotAllocaInst: " << *potAllocaInst << "\n");
+        LLVM_DEBUG(dbgs() << "PotAllocaInst: " << *potAllocaInst << "\n");
 
-	AllocaInst* ai = dyn_cast<AllocaInst>(potAllocaInst);
-	if(ai && AllocaSet.find(ai) != AllocaSet.end()) {
-	  B.CreateLoad(ai->getAllocatedType(), ai, true);
-	} else {
-	  // If the definition uses one of the alloca variable
-	  unsigned nOp = potAllocaInst->getNumOperands();
-	  for (unsigned i = 0; i<nOp; i++) {
-	    auto opVal = potAllocaInst->getOperand(i);
-	    AllocaInst* ai2 = dyn_cast<AllocaInst>(opVal);
-	    if(ai2 && AllocaSet.find(ai2) != AllocaSet.end()) {
-	      B.CreateLoad(ai2->getAllocatedType(), ai2, true);
-	    }
-	  }
-	}
+        AllocaInst* ai = dyn_cast<AllocaInst>(potAllocaInst);
+        if(ai && AllocaSet.find(ai) != AllocaSet.end()) {
+          B.CreateLoad(ai->getAllocatedType(), ai, true);
+        } else {
+          // If the definition uses one of the alloca variable
+          unsigned nOp = potAllocaInst->getNumOperands();
+          for (unsigned i = 0; i<nOp; i++) {
+            auto opVal = potAllocaInst->getOperand(i);
+            AllocaInst* ai2 = dyn_cast<AllocaInst>(opVal);
+            if(ai2 && AllocaSet.find(ai2) != AllocaSet.end()) {
+              B.CreateLoad(ai2->getAllocatedType(), ai2, true);
+            }
+          }
+        }
       }
     }
   }

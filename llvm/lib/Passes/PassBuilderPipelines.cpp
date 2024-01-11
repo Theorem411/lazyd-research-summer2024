@@ -1397,14 +1397,6 @@ PassBuilder::buildTapirLoweringPipeline(OptimizationLevel Level,
     if (VerifyTapirLowering)
       MPM.addPass(VerifierPass());
   } else {
-
-#if 0
-    // TODO: CNP Is this needed?
-    MPM.addPass(TapirToTargetPass());
-    if (VerifyTapirLowering)
-      MPM.addPass(VerifierPass());
-#endif
-
     // ForkD lowering
     // If loop spawn strategy is hybrid, instrument pfor
     if(PTO.ForkDLowering != llvm::ForkDTargetType::EagerD){
