@@ -46,6 +46,7 @@
 #include "llvm/Transforms/Scalar/SimplifyCFG.h"
 #include "llvm/Transforms/Scalar/LoopDeletion.h"
 #include "llvm/Transforms/Tapir.h"
+#include "llvm/Transforms/Tapir/CilkRTSCilkFor.h"
 #include "llvm/Transforms/Tapir/LoweringUtils.h"
 #include "llvm/Transforms/Tapir/Outline.h"
 #include "llvm/Transforms/Tapir/TapirLoopInfo.h"
@@ -73,6 +74,11 @@ STATISTIC(LoopsConvertedToPRL,
 
 static const char TimerGroupName[] = DEBUG_TYPE;
 static const char TimerGroupDescription[] = "Loop spawning";
+
+cl::opt<bool> UseRuntimePFor(
+    "use-runtime-pfor", cl::init(false), cl::Hidden,
+    cl::desc("Insert a call into the Parallel Loop runtime to handle cilk_for loops"));
+
 
 /// The default loop-outline processor leaves the outlined Tapir loop as is.
 class DefaultLoopOutlineProcessor : public LoopOutlineProcessor {
@@ -1294,6 +1300,9 @@ LoopOutlineProcessor *LoopSpawningImpl::getOutlineProcessor(TapirLoopInfo *TL) {
   Module &M = *F.getParent();
   Loop *L = TL->getLoop();
   TapirLoopHints Hints(L);
+
+  if(UseRuntimePFor)
+    return new RuntimeCilkFor(M);
 
   switch (Hints.getStrategy()) {
   case TapirLoopHints::ST_DAC: return new DACSpawning(M);
