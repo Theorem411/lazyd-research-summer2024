@@ -60,6 +60,11 @@ static cl::opt<bool> RequireParallelEpilog(
     cl::desc("Require stripmined Tapir loops to execute their epilogs in "
              "parallel.  Intended for debugging."));
 
+static cl::opt<bool> DisableParallelEpilogIfInnerPfor(
+    "disable-parallelepilog-insidepfor", cl::Hidden, cl::init(false),
+    cl::desc("Use by LazyD. Disable Parallel Epilog if pfor is an inner pfor."));
+
+
 /// Create an analysis remark that explains why stripmining failed
 ///
 /// \p RemarkName is the identifier for the remark.  If \p I is passed it is an
@@ -274,6 +279,23 @@ static bool tryToStripMineLoop(
         (2 *
          TTI.getUserCost(DetachI, TargetTransformInfo::TCK_SizeAndLatency)) <=
             LoopCost));
+
+  // For lazyD, if parallel-loop is inside another parallel loop, don't do it.
+  // If L is a subloop of another parallel loop, set it to false for LazyD
+  if(DisableParallelEpilogIfInnerPfor) {
+    auto CurrL = L;
+
+    while(CurrL->getParentLoop()) {
+      auto ParL = CurrL->getParentLoop();
+      Instruction *TermI = ParL->getHeader()->getTerminator();
+
+      if(isa<DetachInst>(TermI)) {
+	ParallelEpilog=false;
+	break;
+      }
+      CurrL = ParL;
+    }
+  }
 
   // Some parallel runtimes, such as Cilk, require nested parallel tasks to be
   // synchronized.
