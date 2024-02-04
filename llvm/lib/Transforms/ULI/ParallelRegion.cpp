@@ -1,10 +1,13 @@
 #include "llvm/Transforms/Tapir/ParallelRegion.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/ADT/SCCIterator.h"
-// #include "llvm/IR/CallSite.h"
+#include "llvm/IR/AbstractCallSite.h"
+// #include "llvm/IR/CallSite.h" // deprecated
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/SmallSet.h"
 using namespace llvm;
 
 #define PR_NAME "parallel-region"
@@ -41,23 +44,38 @@ bool ParallelRegionImpl::isParallelRegion(CallGraphNode *CGN) {
 }
 
 bool ParallelRegionImpl::run() {
-    SmallVector<Function *> workList;
-    SmallSet<Function *> workSet;
+    SmallVector<Function *, 8> workList;
+    SmallSet<Function *, 8> workSet;
+    SmallVector<Function *, 8> definitelyDACOutlineFn;
 
     // init worklist;
     for (auto &CNP : CG) {
         CallGraphNode* CGNode = CNP.second.get();
         assert(CGNode && "encounter null call graph node");
+        Function *F = CGNode->getFunction();
         if (isParallelRegion(CGNode)) {
             ++NumParallelRegions;
-            workList.push_back(CGNode->getFunction());
+            workList.push_back(F);
+            workSet.insert(F);
         }
     }
-    // TODO: 
     // worklist algorithm through call graph, mark each callgraph node as DAC if it has a caller that's parallel region or DAC
     for (size_t i = 0; i < workList.size(); ++i) {
         Function *F = workList[i];
-        for ()
+        if (workSet.find(F) != workSet.end())
+            continue;
+        workSet.insert(F);
+
+        // iterate through call sites of F and add to worklist
+        for (const User *User : F->users()) {
+            auto *CB = dyn_cast<CallBase>(User);
+            if (!CB || CB->getCalledFunction() != F)
+                continue;
+            Function *Caller = CB->getCaller();
+            if (workSet.find(Caller) != workSet.end()) {
+                workList.push_back(Caller);
+            }
+        }   
     }
 
     return false;
