@@ -1,7 +1,12 @@
-#include "llvm/Transforms/Tapir/ParallelRegion.h"
+#include "llvm/Transforms/ULI/ParallelRegion.h"
 #include "llvm/Analysis/CallGraph.h"
+#include "llvm/Analysis/CallGraphSCCPass.h"
 #include "llvm/ADT/SCCIterator.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/IR/AbstractCallSite.h"
+#include "llvm/InitializePasses.h"
+// #include "llvm/PassSupport.h"
+#include "llvm/PassRegistry.h"
 // #include "llvm/IR/CallSite.h" // deprecated
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
@@ -11,7 +16,7 @@
 using namespace llvm;
 
 #define PR_NAME "parallel-region"
-#define DEBUG_TYPE "parallel-region-pass"
+#define DEBUG_TYPE PR_NAME
 
 // cl::opt<bool> UseRuntimePFor(
 //     "use-runtime-pfor", cl::init(false), cl::Hidden,
@@ -31,7 +36,7 @@ private:
 private:
     Module &M;
     CallGraph &CG;
-}
+};
 
 bool ParallelRegionImpl::isParallelRegion(CallGraphNode *CGN) {
     Function *F = CGN->getFunction();
@@ -44,38 +49,40 @@ bool ParallelRegionImpl::isParallelRegion(CallGraphNode *CGN) {
 }
 
 bool ParallelRegionImpl::run() {
-    SmallVector<Function *, 8> workList;
-    SmallSet<Function *, 8> workSet;
-    SmallVector<Function *, 8> definitelyDACOutlineFn;
+    SmallVector<CallGraphNode *, 8> workList;
+    SmallSet<CallGraphNode *, 8> workSet;
+    SmallVector<CallGraphNode *, 8> definitelyDACOutlineFn;
 
     // init worklist;
     for (auto &CNP : CG) {
         CallGraphNode* CGNode = CNP.second.get();
         assert(CGNode && "encounter null call graph node");
-        Function *F = CGNode->getFunction();
         if (isParallelRegion(CGNode)) {
+            workList.push_back(CGNode);
+            workSet.insert(CGNode);
+            // increment statistic
             ++NumParallelRegions;
-            workList.push_back(F);
-            workSet.insert(F);
         }
     }
     // worklist algorithm through call graph, mark each callgraph node as DAC if it has a caller that's parallel region or DAC
     for (size_t i = 0; i < workList.size(); ++i) {
-        Function *F = workList[i];
-        if (workSet.find(F) != workSet.end())
+        CallGraphNode *CGN = workList[i];
+        if (workSet.find(CGN) != workSet.end())
             continue;
-        workSet.insert(F);
+        workSet.insert(CGN);
+
 
         // iterate through call sites of F and add to worklist
-        for (const User *User : F->users()) {
-            auto *CB = dyn_cast<CallBase>(User);
-            if (!CB || CB->getCalledFunction() != F)
-                continue;
-            Function *Caller = CB->getCaller();
-            if (workSet.find(Caller) != workSet.end()) {
-                workList.push_back(Caller);
-            }
-        }   
+        // for (const User *User : F->users()) {
+        //     auto *CB = dyn_cast<CallBase>(User);
+        //     if (!CB || CB->getCalledFunction() != F)
+        //         continue;
+        //     const Function *Caller = CB->getCaller();
+        //     if (workSet.find(Caller) != workSet.end()) {
+        //         workList.push_back(Caller);
+        //     }
+
+        // }   
     }
 
     return false;
@@ -96,17 +103,21 @@ PreservedAnalyses ParallelRegionPass::run(Module& M, ModuleAnalysisManager& AM) 
 }
 
 namespace {
-struct ParallelRegion : ModulePass {
+struct ParallelRegion : public ModulePass {
     static char ID;
+
+    explicit ParallelRegion() : ModulePass(ID) {
+        initializeParallelRegionPass(*PassRegistry::getPassRegistry());
+    }
 
     bool runOnModule(Module& M) override {
         CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
 
-        return ParallelRegionImpl(M, CG).run()
+        return ParallelRegionImpl(M, CG).run();
     }
 
     void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired(CallGraphWrapperPass);
+    AU.addRequired<CallGraphWrapperPass>();
     AU.setPreservesAll();
     }
 };
@@ -119,7 +130,13 @@ char ParallelRegion::ID = 0;
 //      "Print external fn callsites passed constants");
 static const char pr_name[] = "Conduct CallGraph Analysis to determine outlining fashion of parallel-regions";
 INITIALIZE_PASS_BEGIN(ParallelRegion, PR_NAME, pr_name,
-                      false, true)
+                      false, false)
 INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
 INITIALIZE_PASS_END(ParallelRegion, PR_NAME, pr_name,
-                    false, true)
+                    false, false)
+
+namespace llvm {
+Pass *createParallelRegionPass() {
+    return new ParallelRegion();
+}
+}
