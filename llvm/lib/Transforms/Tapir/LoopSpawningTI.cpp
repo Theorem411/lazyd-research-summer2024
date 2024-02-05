@@ -142,7 +142,7 @@ public:
     Function* SeqLoopSpawnFcn = CloneFunction(Helper, VMap_SeqLoop);
     SeqLoopSpawnFcn->setName(SeqLoopSpawnFcn->getName() + "_helper_loop");
     // Implement the Parallel-Ready Loop attribute
-    //SeqLoopSpawnFcn->addFnAttr("poll-at-loop", "true");
+    //SeqLoopSpawnFcn->addFnAttr("poll-at-loop", "true"); // question: this?
     //SeqLoopSpawnFcn->addFnAttr("cilk-pfor-fcn", "true");
     SeqLoopSpawnFcn->addFnAttr(Attribute::NoInline);
 

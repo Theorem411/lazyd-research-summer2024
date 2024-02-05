@@ -5,11 +5,11 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/IR/AbstractCallSite.h"
 #include "llvm/InitializePasses.h"
+#include "llvm/Pass.h"
 // #include "llvm/PassSupport.h"
 #include "llvm/PassRegistry.h"
 // #include "llvm/IR/CallSite.h" // deprecated
 #include "llvm/IR/Module.h"
-#include "llvm/Pass.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SmallSet.h"
