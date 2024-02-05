@@ -53,11 +53,10 @@ bool ParallelRegionImpl::isParallelRegion(CallGraphNode *CGN) {
   Function *F = CGN->getFunction();
   assert(F && "encounter callgraph node with null function");
 
-  // TODO: for each callnode in the callgrpah,
-  // identify fn attr using
+  // TODO: for each callnode in the callgrpah, identify fn attr using
   // bool hasAttr =
   // OutlineFcn->getFnAttribute("your-custom-attribute").getValueAsString()=="true";
-  return false;
+  return F->getFnAttribute("parallel-region").getValueAsString() == "true";
 }
 
 bool ParallelRegionImpl::run() {
@@ -75,8 +74,20 @@ bool ParallelRegionImpl::run() {
     NumFn++;
     if (isParallelRegion(CGNode)) {
       // for (callee of CGNode) { put into worklist }
-      workList.push_back(CGNode);
-      workSet.insert(CGNode);
+      for (auto &CallRecord : *CGNode) {
+        if (!CallRecord.first.hasValue()) {
+            // in the case of callback function, there is no callsite
+            continue;
+        }
+        CallGraphNode *CalleeNode = CallRecord.second;
+        assert(CalleeNode && "encounter null second field in CallRecord!");
+
+        Function *Callee = CalleeNode->getFunction();
+        if (!Callee)
+            continue;
+        workList.push_back(CGNode);
+        workSet.insert(CGNode);
+      }
       // increment statistic
       ++NumParallelRegions;
     }
@@ -103,7 +114,7 @@ bool ParallelRegionImpl::run() {
 
     // iterate through callees of Call Node using CallNodeRecord
     for (auto &CallRecord : *CGN) {
-      if (!CallRecord.first.has_value()) {
+      if (!CallRecord.first.hasValue()) {
         // in the case of callback function, there is no callsite
         continue;
       }
@@ -141,7 +152,7 @@ struct ParallelRegion : public ModulePass {
   static char ID;
 
   explicit ParallelRegion() : ModulePass(ID) {
-    initializeParallelRegionPass(*PassRegistry::getPassRegistry());
+    // initializeParallelRegionPass(*PassRegistry::getPassRegistry());
   }
 
   bool runOnModule(Module &M) override {
@@ -159,14 +170,13 @@ struct ParallelRegion : public ModulePass {
 
 char ParallelRegion::ID = 0;
 
-// static RegisterPass<> X("print-externalfnconstants",
-//      "Print external fn callsites passed constants");
-static const char pr_name[] = "Conduct CallGraph Analysis to determine "
-                              "outlining fashion of parallel-regions";
-INITIALIZE_PASS_BEGIN(ParallelRegion, PR_NAME, pr_name, false, false)
-INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
-INITIALIZE_PASS_END(ParallelRegion, PR_NAME, pr_name, false, false)
+static RegisterPass<ParallelRegion> X(PR_NAME, "false", "false");
+// static const char pr_name[] = "Conduct CallGraph Analysis to determine "
+//                               "outlining fashion of parallel-regions";
+// INITIALIZE_PASS_BEGIN(ParallelRegion, PR_NAME, pr_name, false, false)
+// INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
+// INITIALIZE_PASS_END(ParallelRegion, PR_NAME, pr_name, false, false)
 
-namespace llvm {
-Pass *createParallelRegionPass() { return new ParallelRegion(); }
-} // namespace llvm
+// namespace llvm {
+// Pass *createParallelRegionPass() { return new ParallelRegion(); }
+// } // namespace llvm
