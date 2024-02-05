@@ -45,7 +45,7 @@ private:
   Module &M;
   CallGraph &CG;
 
-// record all callnodes that corresponds to definitely dac 
+  // record all callnodes that corresponds to definitely dac
   SmallSet<CallGraphNode *, 8> definitelyDACOutlineFn;
 };
 
@@ -62,9 +62,9 @@ bool ParallelRegionImpl::isParallelRegion(CallGraphNode *CGN) {
 
 bool ParallelRegionImpl::run() {
   /**
-   * 
-  */
-  // worklist algorithm 
+   *
+   */
+  // worklist algorithm
   SmallVector<CallGraphNode *, 8> workList;
   SmallSet<CallGraphNode *, 8> workSet;
 
@@ -74,6 +74,7 @@ bool ParallelRegionImpl::run() {
     // update statistic NumFn
     NumFn++;
     if (isParallelRegion(CGNode)) {
+      // for (callee of CGNode) { put into worklist }
       workList.push_back(CGNode);
       workSet.insert(CGNode);
       // increment statistic
@@ -82,6 +83,10 @@ bool ParallelRegionImpl::run() {
   }
   // worklist algorithm through call graph, mark each callgraph node as DAC if
   // it has a caller that's parallel region or DAC
+//   size_t i = 0; 
+//   while (i < workList.size()) {
+        // DEBUG: if workList.size() is constprop then not good
+//   }
   for (size_t i = 0; i < workList.size(); ++i) {
 
     CallGraphNode *CGN = workList[i];
@@ -106,10 +111,11 @@ bool ParallelRegionImpl::run() {
       assert(CalleeNode && "encounter null second field in CallRecord!");
 
       Function *Callee = CalleeNode->getFunction();
-      if (!Callee) 
+      if (!Callee)
         continue;
 
-      if (workSet.find(Callee) != workSet.end()) {
+      if (workSet.find(CalleeNode) != workSet.end()) {
+        
         workList.push_back(CalleeNode);
         workSet.insert(CalleeNode);
       }
