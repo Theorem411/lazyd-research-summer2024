@@ -64,14 +64,18 @@ bool ParallelRegionImpl::run() {
   SmallSet<CallGraphNode *, 8> workSet;
 
   // initialize worklist with callee nodes of Parallel-region nodes
-  for (auto &CGNode : CG) {
-    CallGraphNode *CGNode = CGNode.second.get();
+  outs() << "CG: \n";
+  CG.dump();
+  for (auto &it : CG) {
+    CallGraphNode *CGNode = it.second.get();
     assert(CGNode && "encounter null call graph node");
     
     // update total function counting 
     ++NumFn;
 
     if (isParallelRegion(CGNode)) {
+        // DEBUG
+      outs() << "Found parallel-region cgnode: " << CGNode->getFunction()->getName() << "\n";
       // increment parallel-region count
       parallelRegionOutlineFn.insert(CGNode);
       ++NumParallelRegions;
