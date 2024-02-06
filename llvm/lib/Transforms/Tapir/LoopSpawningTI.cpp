@@ -988,9 +988,9 @@ void DACSpawning::implementDACIterSpawnOnHelper(
   //outs() << "Helper\n";
   //Helper->dump();
 
-  // DEBUG: EXPERIMENT ADD FN_ATTR
-//   OutlineFcn->addFnAttr("your-custom-attribute", "true");
-    // !!!!
+  // DEBUG: EXPERIMENT ADD FN_ATTR: parallel-region
+  Helper->addFnAttr("parallel-region", "true");    
+
 }
 
 /// Implement the parallel loop control for a given outlined Tapir loop to
