@@ -2622,7 +2622,7 @@ LoopOutlineProcessor *LoopSpawningImpl::getOutlineProcessor(TapirLoopInfo *TL) {
 
   switch (Hints.getStrategy()) {
   case TapirLoopHints::ST_DAC:
-    return new EFDacSpawning(M); ////return new DACSpawning(M);
+    return new DACSpawning(M); ////return new EFDACSpawning(M);
   case TapirLoopHints::ST_HYBRID:
     return new PRLSpawning(M);
   default:
