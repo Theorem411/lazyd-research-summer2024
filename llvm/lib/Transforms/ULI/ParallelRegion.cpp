@@ -93,14 +93,19 @@ struct ParallelRegionReachable : public ModulePass {
         TaskInfo &TI = getAnalysis<TaskInfoWrapperPass>(*Caller).getTaskInfo();
 
         // for each callgraph node, traverse through each of its callsite
-        for (auto &CallRecord : *CGN) {
+        for (CallGraphNode::CallRecord &CallRecord : *CGN) {
             // in the case of callback function, there is no callsite
+            
             if (!CallRecord.first.hasValue()) {
                 // TODO: this function has its address taken? 
                 continue;
             }
             // if call node has explicit callsite
-            assert(CallRecord.second && "encounter null second field in CallRecord!");
+            if (!CallRecord.second) {
+                errs() << "encounter null second field in CallRecord!\n";
+                continue;
+            }
+            // assert(CallRecord.second && "encounter null second field in CallRecord!");
             Function *Callee = CallRecord.second->getFunction();
             assert(Callee && "CallRecord contains null callee node!");
             const CallBase *CallSite = dyn_cast<CallBase>(*CallRecord.first);
