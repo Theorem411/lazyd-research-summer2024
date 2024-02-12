@@ -24,20 +24,22 @@
 
 using namespace llvm;
 
-STATISTIC(NumFn, "Number of functions in module");
-STATISTIC(NumDefinitelyDAC,
+STATISTIC(NumFn,            "NumFn              Number of functions in module");
+STATISTIC(NumDefinitelyDAC, "NumDefinitelyDAC   "
           "Number of functions that are definitely called within a parallel "
           "region, and thus must adopt DAC as its outline strategy.");
-STATISTIC(NumDefinitelyEF,
+STATISTIC(NumDefinitelyEF,  "NumDefinitelyEF    "
           "Number of functions that are definitely called within a serial "
           "region, and thus can adopt EF as its outline strategy.");
-STATISTIC(NumBoth, "Number of functions that are witnessed to be called in "
+STATISTIC(NumBoth,          "NumBoth            "   
+                   "Number of functions that are witnessed to be called in "
                    "both parallel and serial region, and thus must use a "
                    "global counter to decide its outline stategy.");
 STATISTIC(
-    NumUntouched,
+    NumUntouched,           "NumUntouched       "
     "Number of functions untouched by the end of this call-graph analysis,"
     " usually root function in the callgraph.");
+STATISTIC(NumCallback,      "NumCallback        number of callback functions");
 
 // DEBUG: Note on how to check the function attribute defined in LoopSpawningTI
 //   Function *F = CGN->getFunction();
@@ -98,30 +100,43 @@ struct ParallelRegionReachable : public ModulePass {
             
             if (!CallRecord.first.hasValue()) {
                 // TODO: this function has its address taken? 
+                // call-edge type: reference edge
+                ++NumCallback;
+                if (CallRecord.second)
+                    Callbacks.insert(CallRecord.second);
                 continue;
             }
-            // if call node has explicit callsite
-            if (!CallRecord.second) {
-                errs() << "encounter null second field in CallRecord!\n";
-                continue;
-            }
+            // call-edge type: real call-edge
+            assert(CallRecord.second && "encounter null second field in CallRecord!"); 
+            // if (!CallRecord.second) {
+            //     errs() << "encounter null second field in CallRecord!\n";
+            //     continue;
+            // }
             // assert(CallRecord.second && "encounter null second field in CallRecord!");
             Function *Callee = CallRecord.second->getFunction();
-            assert(Callee && "CallRecord contains null callee node!");
+            if (!Callee) {
+                // DBEUG: qsort.c has a callrecord whose second field is null, but callsite is non-null!
+                outs() << "CallRecord contains null callee node! Callsite: ";
+                if (const CallBase *CallSite = dyn_cast<CallBase>(*CallRecord.first)) {
+                    CallSite->dump();
+                }
+                outs() << "\n";
+                continue;
+            }
+            // assert(Callee && "CallRecord contains null callee node!");
             const CallBase *CallSite = dyn_cast<CallBase>(*CallRecord.first);
             assert(CallSite &&
                     "CallRecord doesn't have CallBase callsite instruction!");
 
-            LLVM_DEBUG(dbgs() << "  examing callsite at ln: << " << getLine(CallSite));
+            outs() << "  examing callsite at \n"; // << getLine(CallSite) << ":";
             CallSite->dump();
-            LLVM_DEBUG(dbgs() << "\n");
+            outs() << "\n";
             
             // check if callsite is in a parallel-region
             const Task *T = TI[CallSite->getParent()];
             if (!T) {
                 if (!Caller) {
-                    errs() << "Callsite "
-                            << "null"
+                    errs() << "Callsite null"
                             << "->" << Callee->getName() << " has null task!\n";
                 } else {
                     errs() << "Callsite " << Caller->getName() << "->"
@@ -230,14 +245,14 @@ private:
       // update global satistic: NumFn
       ++NumFn;
 
-      LLVM_DEBUG(dbgs() << "Function " << F->getName()
+      (outs() << "Function " << F->getName()
                         << " state initialized!\n");
     }
-    LLVM_DEBUG(dbgs() << "\n\n");
+    (outs() << "\n\n");
   }
 
   void initializeWorkList(CallGraph& CG, SmallVector<CallGraphNode *, 8>& workList) {
-    LLVM_DEBUG(dbgs() << "calling initializeWorkList...\n");
+    outs() << "calling initializeWorkList...\n";
     for (auto &it : CG) {
       const Function *F = it.first;
       CallGraphNode *CGN = it.second.get();
@@ -246,29 +261,34 @@ private:
         continue;
       workList.push_back(CGN);
 
-      LLVM_DEBUG(dbgs() << "Function " << F->getName()
-                        << " pushed onto workList!\n");
+      outs() << "Function " << F->getName()
+                        << " pushed onto workList!\n";
     }
-    LLVM_DEBUG(dbgs() << "\n\n");
+    outs() << "\n\n";
   }
 
   void printStatistic() {
     for (auto it : GlobalFnStates) {
+        const Function *F = it.first;
         switch(it.second) {
         case ParallelRegionReachable::FnState::DefinitelyDAC: {
             ++NumDefinitelyDAC;
+            outs() << "Function " << F->getName() << " is definitelyDAC at the end!\n";
             break;
         }
         case ParallelRegionReachable::FnState::DefinitelyEF: {
             ++NumDefinitelyEF;
+            outs() << "Function " << F->getName() << " is definitelyEF at the end!\n";
             break;
         }
         case ParallelRegionReachable::FnState::Both: {
             ++NumBoth;
+            outs() << "Function " << F->getName() << " is Both at the end!\n";
             break;
         }
         case ParallelRegionReachable::FnState::Untouched: {
             ++NumUntouched;
+            outs() << "Function " << F->getName() << " is untouched at the end!\n";
             break;
         }
         }
@@ -277,10 +297,14 @@ private:
 
   // @debug
   unsigned getLine(const CallBase *cs) {
+    if (cs->getDebugLoc()) {
+        return 0;
+    }
     return cs->getDebugLoc().getLine();
   } 
 
 private: 
+  SmallSet<CallGraphNode *, 8> Callbacks;
   DenseMap<const Function *, FnState> GlobalFnStates;
 };
 } // namespace
