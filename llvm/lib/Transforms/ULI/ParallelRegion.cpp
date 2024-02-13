@@ -1,3 +1,5 @@
+// ============ ParallelRegion.cpp ================
+
 #include "llvm/Transforms/ULI/ParallelRegion.h"
 #include "llvm/Transforms/Utils/TapirUtils.h"
 #include "llvm/ADT/PostOrderIterator.h"
@@ -23,6 +25,9 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/JSON.h"
+#include "llvm/Support/CommandLine.h"
+
 
 #define PR_NAME "prr"
 #define DEBUG_TYPE PR_NAME
@@ -88,6 +93,14 @@ STATISTIC(NumPForUntouched,
           "NumPForUntouched    "
           "number of pfor that are still untouched by the dataflow analysis"
           ". DEBUG: this number should be 0!!!");
+
+cl::opt<std::string> TestName(
+    "test", 
+    cl::init("default"), 
+    cl::Hidden,
+    cl::desc("name of benchmark test case"));
+
+
 // DEBUG: Note on how to check the function attribute defined in LoopSpawningTI
 //   Function *F = CGN->getFunction();
 //   //   assert(F && "encounter callgraph node with null function");
@@ -381,9 +394,11 @@ struct ParallelRegionReachable : public ModulePass {
       bool Changed = Fn2LFP[Caller]->postProcess(CGN, GlobalFnStates, workList, Callbacks);
     }
 
-
     // set statistics
     printStatistic();
+    
+    // output json
+    outputStatistic();
     return false;
   }
 
@@ -447,7 +462,17 @@ private:
     }
   }
 
-  void printStatistic() {
+  void printStatistic();
+  
+  void outputStatistic();
+
+private:
+  SmallSet<CallGraphNode *, 8> Callbacks;
+  GlobalFnStatesTy GlobalFnStates;
+  DenseMap<const Function *, LocalFnStatePass *> Fn2LFP;
+};
+
+void ParallelRegionReachable::printStatistic() {
     // print && udpate statistics for functions 
     outs() << "\n>>> printing global fn states...\n";
     for (auto it : GlobalFnStates) {
@@ -487,7 +512,7 @@ private:
     outs() << "\n>>> printing local fn states for each function...\n";
     for (auto it : GlobalFnStates) {
         Function *F = it.first;
-        outs() << F->getName() << ": \n";
+        outs() << F->getName() << ": --------------------------------\n";
         
         for (auto &BB : *F) {
             errs() << BB.getName() << ": " << ppFnState(Fn2LFP[F]->getLocalFnState(&BB)) << "\n";
@@ -503,16 +528,13 @@ private:
       outs() << "\n" << F->getName() << ":\n";
       TaskInfo &TI = getAnalysis<TaskInfoWrapperPass>(*F).getTaskInfo();
       LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
-
-      ///DEBUG: 
       
-        const Task *TaskEntry = TI[&(F->getEntryBlock())]; 
-        if (!TaskEntry) {
-            outs() << " has no root task" << "!!!\n";
-        } 
-
-      ////////
-
+      for (Task *T : TI) {
+        if (T->getDetach()) {
+            T->dump();
+            outs() << "\n";
+        }
+      }
       // if F only have rootTask, no pfor, skip
       if (TI.isSerial()) 
         continue;
@@ -528,6 +550,7 @@ private:
           // L is a TapirLoop
           ++NumPFor;
           L->dump();
+          outs() << "\n";
           if (L == TopLevelLoop) {
             ++NumPForTopLevel;
             // top-level TapirLoop needs precaution about their FnState
@@ -569,11 +592,44 @@ private:
     }
   }
 
-private:
-  SmallSet<CallGraphNode *, 8> Callbacks;
-  GlobalFnStatesTy GlobalFnStates;
-  DenseMap<const Function *, LocalFnStatePass *> Fn2LFP;
-};
+
+
+void ParallelRegionReachable::outputStatistic() {
+    json::Object jsonObj;
+    jsonObj["NumFn"] = static_cast<uint64_t>(NumFn);
+    jsonObj["NumDefinitelyDAC"] = static_cast<uint64_t>(NumDefinitelyDAC);
+    jsonObj["NumDefinitelyEF"] = static_cast<uint64_t>(NumDefinitelyEF);
+    jsonObj["NumBoth"] = static_cast<uint64_t>(NumBoth);
+    jsonObj["NumUntouched"] = static_cast<uint64_t>(NumUntouched);
+    jsonObj["NumCallback"] = static_cast<uint64_t>(NumCallback);
+
+    jsonObj["NumPFor"] = static_cast<uint64_t>(NumPFor);
+    jsonObj["NumPForDefinitelyDAC"] = static_cast<uint64_t>(NumPForDefinitelyDAC);
+    jsonObj["NumPForDefinitelyEF"] = static_cast<uint64_t>(NumPForDefinitelyEF);
+    jsonObj["NumPForBoth"] = static_cast<uint64_t>(NumPForBoth);
+    jsonObj["NumPForUntouched"] = static_cast<uint64_t>(NumPForUntouched);
+
+    jsonObj["NumPForTopLevel"] = static_cast<uint64_t>(NumPForTopLevel);
+    jsonObj["NumPForTopLevelDefinitelyDAC"] = static_cast<uint64_t>(NumPForTopLevelDefinitelyDAC);
+    jsonObj["NumPForTopLevelDefinitelyEF"] = static_cast<uint64_t>(NumPForTopLevelDefinitelyEF);
+    jsonObj["NumPForTopLevelBoth"] = static_cast<uint64_t>(NumPForTopLevelBoth);
+
+    //
+    json::Value jsonVal = std::move(jsonObj);
+
+    // output to file
+    std::string FileName = TestName + ".json";
+    outs() << "\n------\nFileName: " << FileName << "\n";
+    std::error_code EC;
+    raw_fd_ostream file(FileName, EC);
+    if (EC) {
+        errs() << "Error opening file: " << EC.message() << "\n";
+        return;
+    }
+    file << formatv("{0:2}", jsonVal);
+}
+
+
 } // namespace
 
 char ParallelRegionReachable::ID = 0;
