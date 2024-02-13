@@ -226,18 +226,7 @@ struct LocalFnStatePass {
       // if BB is inside a parallel region, udpate with DefinitelyDAC
       // if BB is inside a serial region, update with DefinitelyEF
       FnState sOld = outLFS[BB];
-      const Task *T = TI[BB];
-
-      assert(T && "Callsite contains null task. There should be a root task!");
-      if (T->getDetach()) {
-        outs() << " =p=> ";
-        // callsite is in a parallel region
-        transferFnState(BB, FnState::DefinitelyDAC);
-      } else {
-        outs() << " =s=> ";
-        // callsite is in a serial region because no Task OR Task is serial
-        transferFnState(BB, FnState::DefinitelyEF);
-      }
+      transferFnState(BB, TI);
       FnState sNew = outLFS[BB];
 
       outs() << "in=" << ppFnState(inLFS[BB]) << ", out=" << ppFnState(outLFS[BB]) << "\n";
@@ -340,8 +329,47 @@ private:
     }
   }
 
-  void transferFnState(const BasicBlock *BB, FnState newState) {
-    outLFS[BB] = joinState(inLFS[BB], newState);
+  void transferFnState(const BasicBlock *BB, TaskInfo &TI) {
+    switch (inLFS[BB]) {
+        case FnState::Both: {
+            // if start of block can be reached by both parallel & serial region, bottom
+            outs() << " =/=> ";
+            outLFS[BB] = FnState::Both;
+            break;
+        } 
+        default: {
+            // inLFS[BB] = Untouched / EF / DAC
+            const Task *T = TI[BB];
+            assert(T && "transferFnState found invalid TI!");
+            if (T->getDetach()) {
+                // BB is in parallel region
+                unsigned TD = T->getTaskDepth();
+                if (TD > 1) {
+                    outs() << " =p=> ";
+                    outLFS[BB] = FnState::DefinitelyDAC;
+                } else {
+                    assert (TD == 1 && "non-root task has 0 task depth!");
+                    // if BB marks the exit of a depth-1 task, then stepping out
+                    // would mean the termination of parallel region
+                    if (T->isTaskExiting(BB)) {
+                        // BB is the task exit into a serial region
+                        outs() << " =s=> ";
+                        outLFS[BB] = FnState::DefinitelyEF;
+                    } else {
+                        // BB not task exit, still inside a parallel region
+                        outs() << " =p=> ";
+                        outLFS[BB] = FnState::DefinitelyDAC;
+                    }
+                }
+            } else {
+                // BB is in serial region
+                outs() << " =s=> ";
+                outLFS[BB] = FnState::DefinitelyEF;
+            }
+            break;
+        }
+    }
+    // outLFS[BB] = joinState(inLFS[BB], newState);
   }
 
 private:
