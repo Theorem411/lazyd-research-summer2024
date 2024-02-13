@@ -3,6 +3,7 @@
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/CallGraphSCCPass.h"
 #include "llvm/Analysis/TapirTaskInfo.h"
@@ -23,7 +24,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 
-#define PR_NAME "parallel-region-reachable"
+#define PR_NAME "prr"
 #define DEBUG_TYPE PR_NAME
 
 using namespace llvm;
@@ -61,18 +62,16 @@ STATISTIC(NumPForDefinitelyDAC,
           "NumPForDefinitelyDAC "
           "number of parallel-for that doesn't need counter-assisted outlining"
           " because it's definitely DAC");
-STATISTIC(NumPforTopLevelDefinitelyDAC,
-          "NumPforTopLevelDefinitelyDAC\n"
-          "                     "
+STATISTIC(NumPForTopLevelDefinitelyDAC,
+          "NumPForTopLevelDefinitelyDAC  "
           "number of top-level pfor that doesn't need counter-assisted outlining"
           " because it's definitely DAC");
 STATISTIC(NumPForDefinitelyEF, 
           "NumPForDefinitelyEF  "
           "number of parallel-for that doesn't need counter-assisted outlining"
           " because it's definitely EF");
-STATISTIC(NumPforTopLevelDefinitelyEF,
-          "NumPforTopLevelDefinitelyEF\n"
-          "                     "
+STATISTIC(NumPForTopLevelDefinitelyEF,
+          "NumPForTopLevelDefinitelyEF  "
           "number of top-level pfor that doesn't need counter-assisted outlining"
           " because it's definitely EF");
 STATISTIC(NumPForBoth, 
@@ -80,14 +79,13 @@ STATISTIC(NumPForBoth,
           "number of parallel-for that will need a global counter to choose "
           "outlining strategy because it can be reached by both parallel and "
           "and serial region control-flow path");
-STATISTIC(NumPforTopLevelBoth,
-          "NumPforTopLevelBoth\n"
-          "                     "
+STATISTIC(NumPForTopLevelBoth,
+          "NumPForTopLevelBoth  "
           "number of top-level pfor that will need a global counter to choose "
           "outlining strategy because it can be reached by both parallel and "
           "and serial region control-flow path");
-STATISTIC(NumPforUntouched, 
-          "NumPforUntouched    "
+STATISTIC(NumPForUntouched, 
+          "NumPForUntouched    "
           "number of pfor that are still untouched by the dataflow analysis"
           ". DEBUG: this number should be 0!!!");
 // DEBUG: Note on how to check the function attribute defined in LoopSpawningTI
@@ -110,6 +108,13 @@ STATISTIC(NumPforUntouched,
 // }
 
 namespace {
+// @debug
+unsigned getLine(const CallBase *cs) {
+    if (cs->getDebugLoc()) {
+        return 0;
+    }
+    return cs->getDebugLoc().getLine();
+}
 
 enum class FnState {
   // trivial state for initialization and for root functions
@@ -125,49 +130,69 @@ enum class FnState {
 };
 FnState joinState(FnState s1, FnState s2) {
   switch (s1) {
-  case ParallelRegionReachable::FnState::Both: {
+  case FnState::Both: {
     return s1;
   }
-  case ParallelRegionReachable::FnState::Untouched: {
+  case FnState::DefinitelyDAC: {
+    switch (s2) {
+    case FnState::DefinitelyDAC: {
+      return s2;
+    }
+    default: {
+      return FnState::Both;
+    }
+    }
+  }
+  case FnState::DefinitelyEF: {
+    switch (s2) {
+    case FnState::DefinitelyEF: {
+      return s2;
+    }
+    default: {
+      return FnState::Both;
+    }
+    }
+  }
+  default: {
     return s2;
   }
-  case ParallelRegionReachable::FnState::DefinitelyDAC: {
-    switch (s2) {
-    case ParallelRegionReachable::FnState::DefinitelyDAC: {
-      return s2;
-    }
-    default: {
-      return ParallelRegionReachable::FnState::Both;
-    }
-    }
-  }
-  case ParallelRegionReachable::FnState::DefinitelyEF: {
-    switch (s2) {
-    case ParallelRegionReachable::FnState::DefinitelyEF: {
-      return s2;
-    }
-    default: {
-      return ParallelRegionReachable::FnState::Both;
-    }
-    }
-  }
-  }
+  };
 }
 
-using GlobalFnStatesTy = DenseMap<const Function *, FnState>;
+StringRef ppFnState(FnState s) {
+    switch (s) {
+        case FnState::Both: {
+            return StringRef("both");
+        }
+        case FnState::DefinitelyDAC: {
+            return StringRef("defdac");
+        }
+        case FnState::DefinitelyEF: {
+            return StringRef("defef");
+        }
+        default: {
+            return StringRef("untouched");
+        }
+    }
+}
+
+using GlobalFnStatesTy = DenseMap<Function *, FnState>;
 using LocalFnStatesTy = DenseMap<const BasicBlock *, FnState>;
 struct LocalFnStatePass {
-  LocalFnStatePass(const Function *Caller, TaskInfo &TI)
-      : Caller(Caller), TI(TI) {}
+  LocalFnStatePass(Function *Caller)
+      : Caller(Caller) {}
   /**
    * LocalFnStatePass::run: 
    *   Perform forward dataflow analysis of global FnState inside a certain callnode
    *   called each time callnode's FnState changed
   */
-  bool run(FnState initFS) {
+  bool run(FnState initFS, TaskInfo &TI) {
+    outs() << "\nrun(" << Caller->getName() << ") with state " << ppFnState(initFS) << "...\n";
+    // refresh TaskInfo: DEBUG! You must get Caller's analysis result everytime, as the lifetime of a function pass is short
+
     // initialize all basic block FnState to Untouched & set entry block's
     // boundary condition
-    initializeLocalFnState(initFS);
+    initializeBoundaryCondition(initFS);
     // put all basic blocks in caller in reverse post-order into workList
     SmallVector<BasicBlock *, 8> workList;
     SmallSet<BasicBlock *, 8> workSet;
@@ -179,6 +204,8 @@ struct LocalFnStatePass {
       bool erased = workSet.erase(BB);
       assert(erased && "Found basicblock in workList but not in workSet!");
 
+      outs() << "    " << BB->getName() << ": in=" << ppFnState(inLFS[BB]) << ", out=" << ppFnState(outLFS[BB]);
+
       // update inLFS of BB from outLFS of predecessors of BB
       reduceInLFS(BB);
 
@@ -187,15 +214,20 @@ struct LocalFnStatePass {
       // if BB is inside a serial region, update with DefinitelyEF
       FnState sOld = outLFS[BB];
       const Task *T = TI[BB];
+
       assert(T && "Callsite contains null task. There should be a root task!");
-      if (T->isSerial()) {
-        // callsite is in a serial region
-        transferFnState(BB, FnState::DefinitelyEF);
-      } else {
+      if (T->getDetach()) {
+        outs() << " =p=> ";
         // callsite is in a parallel region
         transferFnState(BB, FnState::DefinitelyDAC);
+      } else {
+        outs() << " =s=> ";
+        // callsite is in a serial region because no Task OR Task is serial
+        transferFnState(BB, FnState::DefinitelyEF);
       }
       FnState sNew = outLFS[BB];
+
+      outs() << "in=" << ppFnState(inLFS[BB]) << ", out=" << ppFnState(outLFS[BB]) << "\n";
 
       // if local state changed, push successors back to the worklist
       if (sOld != sNew) {
@@ -214,13 +246,15 @@ struct LocalFnStatePass {
   }
 
   bool postProcess(CallGraphNode *CGN, GlobalFnStatesTy &GlobalFnStates,
-                   SmallVector<CallGraphNode *, 8> &globalWorkList) {
+                   SmallVector<CallGraphNode *, 8> &globalWorkList, 
+                   SmallSet<CallGraphNode *, 8> &Callbacks) {
+    outs() << "  postProcess(" << Caller->getName() << ")...\n";
+    bool Changed = false;
     // for each callee/callsite inside the callnode, update GlobalFnStates & globalWorkList
     for (CallGraphNode::CallRecord &CallRecord : *CGN) {
       if (!CallRecord.first.hasValue()) {
         // in the case of callback function, there is no callsite
         // call-edge type: reference edge
-        ++NumCallback;
         if (CallRecord.second)
           Callbacks.insert(CallRecord.second);
         continue;
@@ -233,33 +267,33 @@ struct LocalFnStatePass {
       // }
       Function *Callee = CallRecord.second->getFunction();
       if (!Callee) {
-        // DBEUG: qsort.c has a callrecord whose second field is null, but
-        // callsite is non-null!
-        outs() << "CallRecord contains null callee node! Callsite: ";
-        if (const CallBase *CallSite = dyn_cast<CallBase>(*CallRecord.first)) {
-          CallSite->dump();
-        }
-        outs() << "\n";
+        // outs() << "CallRecord contains null callee node! Callsite: ";
+        // if (const CallBase *CallSite = dyn_cast<CallBase>(*CallRecord.first)) {
+        //   CallSite->dump();
+        // }
         continue;
       }
-      // assert(Callee && "CallRecord contains null callee node!");
       const CallBase *CallSite = dyn_cast<CallBase>(*CallRecord.first);
       assert(CallSite &&
              "CallRecord doesn't have CallBase callsite instruction!");
 
-      outs() << "  examing callsite at \n"; // << getLine(CallSite) << ":";
+      outs() << "    examing callsite at " << CallSite->getParent()->getName() << ":";
       CallSite->dump();
       outs() << "\n";
 
       // update state of callee node based on local pass results
       FnState sOld = GlobalFnStates[Callee];
       FnState sNew = joinState(sOld, outLFS[CallSite->getParent()]);
+      GlobalFnStates[Callee] = sNew;
 
       // push Callee back on to worklist because of state change
       if (sOld != sNew) {
+        outs() << "  <!> state change " << ppFnState(sOld) << "-->" << ppFnState(sNew) << "\n";
         globalWorkList.push_back(CallRecord.second);
+        Changed = true;
       }
     }
+    return Changed;
   }
   
   FnState getLocalFnState(BasicBlock *BB) {
@@ -268,28 +302,26 @@ struct LocalFnStatePass {
   }
 
 private:
-  void initializeLocalFnState(FnState initFS) {
-    outs() << "initialize boundary conditions of inLFS & outLFS\n";
-    for (auto &BB : Caller) {
+  void initializeBoundaryCondition(FnState initFS) {
+    outs() << "  initializeBoundaryCondition...\n";
+    for (auto &BB : *Caller) {
       inLFS[&BB] = FnState::Untouched;
       outLFS[&BB] = FnState::Untouched;
     }
     const BasicBlock *Entry = &Caller->getEntryBlock();
     inLFS[Entry] = initFS;
-    outs() << "\n\n";
   }
 
   void initializeLocalWorkList(SmallVector<BasicBlock *, 8> &workList,
                                SmallSet<BasicBlock *, 8> &workSet) {
-    outs() << "calling initializeWorkList inside " << F->getName() << "...\n";
+    outs() << "  initializeLocalWorkList(" << Caller->getName() << ")...\n";
     ReversePostOrderTraversal<Function *> RPO(Caller);
     for (auto I = RPO.begin(), E = RPO.end(); I != E; ++I) {
       workList.push_back(*I);
       workSet.insert(*I);
     }
-    outs() << "\n\n";
   }
-  void reduceInLFS(const BasicBlock *BB) {
+  void reduceInLFS(BasicBlock *BB) {
     for (BasicBlock *Pred : predecessors(BB)) {
         inLFS[BB] = joinState(inLFS[BB], outLFS[Pred]);
     }
@@ -301,7 +333,6 @@ private:
 
 private:
   Function *Caller;
-  TaskInfo &TI;
   // result state should be readable after the dataflow analysis is run
   LocalFnStatesTy inLFS;
   LocalFnStatesTy outLFS;
@@ -316,7 +347,7 @@ struct ParallelRegionReachable : public ModulePass {
 
   bool runOnModule(llvm::Module &M) override {
     CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-    outs() << "callgraph analysis succceed!\n";
+    // outs() << "callgraph analysis succceed!\n";
     // initialize GlobalFnStates to all Untouched
     initializeGlobalFnStates(CG);
 
@@ -337,15 +368,19 @@ struct ParallelRegionReachable : public ModulePass {
         continue;
       }
 
-      outs() << "pop CallNode " << Caller->getName() << "...\n";
+      //   outs() << "pop CallNode " << Caller->getName() << "...\n";
 
       // rerun LocalFnStatePass to perform CFG dataflow analysis using new entry
       // condition
-      Fn2LFP[Caller]->run(GlobalFnState[Caller]);
+      if (Fn2LFP.find(Caller) == Fn2LFP.end())
+        continue;
+      TaskInfo &TI = getAnalysis<TaskInfoWrapperPass>(*Caller).getTaskInfo();
+      Fn2LFP[Caller]->run(GlobalFnStates[Caller], TI);
 
       // for each callgraph node, traverse through each of its callsite
-      bool Changed = Fn2LFP[Caller]->postProcess(CGN, GlobalFnStates, workList);
+      bool Changed = Fn2LFP[Caller]->postProcess(CGN, GlobalFnStates, workList, Callbacks);
     }
+
 
     // set statistics
     printStatistic();
@@ -365,42 +400,41 @@ private:
     outs() << "calling initializeGlobalFnStates...\n";
 
     for (auto &it : CG) {
-      const Function *F = it.first;
+      Function *F = it.second->getFunction();
       if (!F)
         continue;
-      GlobalFnStates[F] = ParallelRegionReachable::FnState::Untouched;
+      GlobalFnStates[F] = FnState::Untouched;
       // update global satistic: NumFn
       ++NumFn;
 
-      (outs() << "Function " << F->getName() << " state initialized!\n");
+    //   (outs() << "Function " << F->getName() << " state initialized!\n");
     }
-    (outs() << "\n\n");
   }
 
   void initializeLocalFnStates(CallGraph &CG) {
+    outs() << "initializeLocalFnStates...\n";
     for (auto &it : CG) {
-      const Function *Caller = it.first;
       CallGraphNode *CGN = it.second.get();
       assert(CGN && "encounter null call graph node");
+      Function *Caller = CGN->getFunction();
       if (!Caller)
         continue;
       if (Caller->isDeclaration()) {
         continue;
       }
-      outs() << "Function " << Caller->getName()
-             << " registered by localFnStatePass!\n";
-      // run Local
-      TaskInfo &TI = getAnalysis<TaskInfoWrapperPass>(*Caller).getTaskInfo();
-      TaskInfoMap[Caller] = &TI;
-      LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*Caller).getLoopInfo();
-      LoopInfoMap[Caller] = &LI;
-      Fn2LFP[Caller] = new LocalFnStatePass(Caller, TI);
+    //   outs() << "Function " << Caller->getName()
+    //          << " registered by localFnStatePass!\n";
+
+      // get analysis results of Function Passes
+      assert(Caller && "encounter null caller in initializeLocalFnStates!");
+      
+      Fn2LFP[Caller] = new LocalFnStatePass(Caller);
     }
   }
 
   void initializeWorkList(CallGraph &CG,
                           SmallVector<CallGraphNode *, 8> &workList) {
-    outs() << "calling initializeWorkList...\n";
+    outs() << "initializeWorkList...\n";
     for (auto &it : CG) {
       const Function *F = it.first;
       CallGraphNode *CGN = it.second.get();
@@ -409,82 +443,113 @@ private:
         continue;
       workList.push_back(CGN);
 
-      outs() << "Function " << F->getName() << " pushed onto workList!\n";
+    //   outs() << "Function " << F->getName() << " pushed onto workList!\n";
     }
-    outs() << "\n\n";
   }
 
   void printStatistic() {
-    // udpate statistics for functions 
+    // print && udpate statistics for functions 
+    outs() << "\n>>> printing global fn states...\n";
+    for (auto it : GlobalFnStates) {
+        Function *F = it.first;
+        outs() << F->getName() << ": " << ppFnState(it.second) << "\n";
+    }
+
     for (auto it : GlobalFnStates) {
       const Function *F = it.first;
       switch (it.second) {
-      case ParallelRegionReachable::FnState::DefinitelyDAC: {
+      case FnState::DefinitelyDAC: {
         ++NumDefinitelyDAC;
-        outs() << "Function " << F->getName()
-               << " is definitelyDAC at the end!\n";
+        // outs() << "Function " << F->getName()
+        //        << " is definitelyDAC at the end!\n";
         break;
       }
-      case ParallelRegionReachable::FnState::DefinitelyEF: {
+      case FnState::DefinitelyEF: {
         ++NumDefinitelyEF;
-        outs() << "Function " << F->getName()
-               << " is definitelyEF at the end!\n";
+        // outs() << "Function " << F->getName()
+        //        << " is definitelyEF at the end!\n";
         break;
       }
-      case ParallelRegionReachable::FnState::Both: {
+      case FnState::Both: {
         ++NumBoth;
-        outs() << "Function " << F->getName() << " is Both at the end!\n";
+        // outs() << "Function " << F->getName() << " is Both at the end!\n";
         break;
       }
-      case ParallelRegionReachable::FnState::Untouched: {
+      case FnState::Untouched: {
         ++NumUntouched;
-        outs() << "Function " << F->getName() << " is untouched at the end!\n";
+        // outs() << "Function " << F->getName() << " is untouched at the end!\n";
         break;
       }
       }
+    }
+
+    // print states inside all functions
+    outs() << "\n>>> printing local fn states for each function...\n";
+    for (auto it : GlobalFnStates) {
+        Function *F = it.first;
+        outs() << F->getName() << ": \n";
+        
+        for (auto &BB : *F) {
+            errs() << BB.getName() << ": " << ppFnState(Fn2LFP[F]->getLocalFnState(&BB)) << "\n";
+        }
+        outs() << "\n";
     }
 
     // update statistics for TapirLoops / pfors
     for (auto it : GlobalFnStates) {
-      const Function *F = it.first;
-      TaskInfo *TI = TaskInfoMap[F]; 
-      assert(TI && "Found null TI form TaskInfoMap!");
-      if (TI->isSerial()) 
-        // not parallel-region, not pfor
+      Function *F = it.first;
+      if (Fn2LFP.find(F) == Fn2LFP.end())
         continue;
+      outs() << "\n" << F->getName() << ":\n";
+      TaskInfo &TI = getAnalysis<TaskInfoWrapperPass>(*F).getTaskInfo();
+      LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
 
-      LoopInfo *LI = LoopInfoMap[F];
-      for (Loop *TopLevelLoop : *LI) {
+      ///DEBUG: 
+      
+        const Task *TaskEntry = TI[&(F->getEntryBlock())]; 
+        if (!TaskEntry) {
+            outs() << " has no root task" << "!!!\n";
+        } 
+
+      ////////
+
+      // if F only have rootTask, no pfor, skip
+      if (TI.isSerial()) 
+        continue;
+    
+      for (Loop *TopLevelLoop : LI) {
         for (Loop *L : post_order(TopLevelLoop)) {
-          Task *T = getTaskIfTapirLoop(L, TI);
+          Task *T = getTaskIfTapirLoop(L, &TI);
           if (!T) {
             // L not a TapirLoop
             continue;
           }
+
           // L is a TapirLoop
           ++NumPFor;
+          L->dump();
           if (L == TopLevelLoop) {
             ++NumPForTopLevel;
             // top-level TapirLoop needs precaution about their FnState
-            FnState LoopLFS = Fn2LP[F]->getLocalFnState(L->getHeader());
+            FnState LoopLFS = Fn2LFP[F]->getLocalFnState(L->getHeader());
             switch (LoopLFS) {
                 case FnState::DefinitelyDAC: {
                     ++NumPForDefinitelyDAC;
-                    ++NumPforTopLevelDefinitelyDAC;
+                    ++NumPForTopLevelDefinitelyDAC;
                     break;
                 } 
                 case FnState::DefinitelyEF: {
                     ++NumPForDefinitelyEF;
-                    ++NumPforTopLevelDefinitelyEF;
+                    ++NumPForTopLevelDefinitelyEF;
                     break;
                 } 
                 case FnState::Both: {
                     ++NumPForBoth;
-                    ++NumPforTopLevelBoth;
+                    ++NumPForTopLevelBoth;
                     break;
                 } 
                 case FnState::Untouched: {
-                    ++NumPforUntouched;
+                    ++NumPForUntouched;
                     break;
                 } 
             }
@@ -496,34 +561,18 @@ private:
         }
       }
     }
-  }
 
-//   FnState getState(Function *F) {
-//     assert(GlobalFnStates.find(F) != GlobalFnStates.end() &&
-//            "GlobalFnStates doesn't contain function when getState is called!");
-//     return GlobalFnStates[F];
-//   }
-
-//   void updateState(Function *F, FnState stateNew) {
-//     assert(GlobalFnStates.find(F) != GlobalFnStates.end() &&
-//            "F is not registered in GlobalFnStates!");
-//     FnState stateOld = GlobalFnStates[F];
-//     GlobalFnStates[F] = joinState(stateOld, stateNew);
-//   }
-  // @debug
-  unsigned getLine(const CallBase *cs) {
-    if (cs->getDebugLoc()) {
-      return 0;
+    // update statistic for NumCallBacks
+    for (auto CB : Callbacks) {
+        outs() << CB->getFunction()->getName() << " is a callback function!\n";
+        ++NumCallback;
     }
-    return cs->getDebugLoc().getLine();
   }
 
 private:
   SmallSet<CallGraphNode *, 8> Callbacks;
   GlobalFnStatesTy GlobalFnStates;
   DenseMap<const Function *, LocalFnStatePass *> Fn2LFP;
-  DenseMap<const Function *, TaskInfo *> TaskInfoMap;
-  DenseMap<const Function *, LoopInfo *> LoopInfoMap;
 };
 } // namespace
 
