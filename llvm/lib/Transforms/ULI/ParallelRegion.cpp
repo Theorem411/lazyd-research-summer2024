@@ -625,38 +625,43 @@ void ParallelRegionReachable::printStatistic(CallGraph &CG) {
     //     LLVM_DEBUG(dbgs() << CB->getFunction()->getName() << " is a callback function!\n";
     //     ++NumCallback;
     // }
-
     for (auto it : GlobalFnStates) {
       const Function *F = it.first;
       assert(F && "printStatistic encounter callnode with null function!");
 
       for (auto I = inst_begin(F), E = inst_end(F); I != E; ++I) {
         if (auto *CI = dyn_cast<CallBase>(&*I)) {
-            if (CI->isIndirectCall()) {
-                LLVM_DEBUG(dbgs() << "Found IndirectCall: ");
-                CI->dump();
-                LLVM_DEBUG(dbgs() << "\n");
-                ++NumIndirectCall;
-            }
-        }
+            /// DEBUG: 
+            LLVM_DEBUG(dbgs() << "In " << F->getName() << ": \n");
+            CI->dump();
+            LLVM_DEBUG(dbgs() << "\n");
+            /////////
 
-        for (auto &U : I->operands()) {
-            if (auto ACS = AbstractCallSite(&U)) {
-                if (ACS.isIndirectCall()) {
-                    LLVM_DEBUG(dbgs() << "ACS: Found indirect call: ");
-                    ACS.getInstruction()->dump();
-                    LLVM_DEBUG(dbgs() << "\n");
-                } else if (ACS.isCallbackCall()) {
-                    SmallVector<const Use *, 4> CallbackUses;
-                    AbstractCallSite::getCallbackUses(*(ACS.getInstruction()), CallbackUses);
-                    LLVM_DEBUG(dbgs() << "ACS: Found callback call: ");
-                    ACS.getInstruction()->dump();
-                    for (const Use *CBU : CallbackUses) {
-                        LLVM_DEBUG(dbgs() << "used by --> ");
-                        CBU->get()->dump(); 
+            SmallVector<const Use *, 4> CallbackUses;
+            AbstractCallSite::getCallbackUses(*CI, CallbackUses);
+            for (const Use *CBU : CallbackUses) {
+                LLVM_DEBUG(dbgs() << "  ACS: Found callback call: ");
+                CBU->get()->dump(); 
+                LLVM_DEBUG(dbgs() << "\n");
+            }
+            
+            for (auto &U : CI->operands()) {
+                if (auto ACS = AbstractCallSite(&U)) {
+                    if (ACS.isIndirectCall()) {
+                        LLVM_DEBUG(dbgs() << "  ACS: Found indirect call: ");
+                        U.get()->dump();
+                        LLVM_DEBUG(dbgs() << "\n");
+                        ++NumIndirectCall;
+                    } else if (ACS.isCallbackCall()) {
+                        LLVM_DEBUG(dbgs() << "  ACS: Found callback call: ");
+                        U.get()->dump();
                         LLVM_DEBUG(dbgs() << "\n");
                     }
-                    LLVM_DEBUG(dbgs() << "\n");
+                    // else if (ACS.isDirectCall()) {
+                    //     LLVM_DEBUG(dbgs() << "  ACS: Found direct call: ");
+                    //     U.get()->dump();
+                    //     LLVM_DEBUG(dbgs() << "\n");
+                    // }
                 }
             }
         }
