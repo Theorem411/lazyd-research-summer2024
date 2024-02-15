@@ -12,12 +12,12 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/LoopIterator.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/IR/AbstractCallSite.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
 #include "llvm/PassInfo.h"
 #include "llvm/PassRegistry.h"
-// #include "llvm/IR/AbstractCallSite.h"
-// #include "llvm/IR/CallSite.h" // deprecated
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Attributes.h"
@@ -57,6 +57,9 @@ STATISTIC(NumUntouched,
 STATISTIC(NumCallback, 
           "NumCallback          "
           "number of callback functions");
+STATISTIC(NumIndirectCall, 
+          "NumIndirectCall      "
+          "number of indirect callsites");
 STATISTIC(NumPFor, 
           "NumPFor              "
           "number of parallel-for loops");
@@ -199,8 +202,96 @@ struct LocalFnStatePass {
    *   Perform forward dataflow analysis of global FnState inside a certain callnode
    *   called each time callnode's FnState changed
   */
-  bool run(FnState initFS, TaskInfo &TI) {
-    outs() << "\nrun(" << Caller->getName() << ") with state " << ppFnState(initFS) << "...\n";
+  bool run(FnState initFS, TaskInfo &TI);
+
+  bool postProcess(CallGraphNode *CGN, GlobalFnStatesTy &GlobalFnStates,
+                   SmallVector<CallGraphNode *, 8> &globalWorkList, 
+                   SmallSet<CallGraphNode *, 8> &Callbacks);
+  
+  FnState getLocalFnState(BasicBlock *BB) {
+    // called after run()
+    return outLFS[BB];
+  }
+
+private:
+  void initializeBoundaryCondition(FnState initFS) {
+    LLVM_DEBUG(dbgs() << "  initializeBoundaryCondition...\n");
+    for (auto &BB : *Caller) {
+      inLFS[&BB] = FnState::Untouched;
+      outLFS[&BB] = FnState::Untouched;
+    }
+    const BasicBlock *Entry = &Caller->getEntryBlock();
+    inLFS[Entry] = initFS;
+  }
+
+  void initializeLocalWorkList(SmallVector<BasicBlock *, 8> &workList,
+                               SmallSet<BasicBlock *, 8> &workSet) {
+    LLVM_DEBUG(dbgs() << "  initializeLocalWorkList(" << Caller->getName() << ")...\n");
+    ReversePostOrderTraversal<Function *> RPO(Caller);
+    for (auto I = RPO.begin(), E = RPO.end(); I != E; ++I) {
+      workList.push_back(*I);
+      workSet.insert(*I);
+    }
+  }
+
+  void reduceInLFS(BasicBlock *BB) {
+    for (BasicBlock *Pred : predecessors(BB)) {
+        inLFS[BB] = joinState(inLFS[BB], outLFS[Pred]);
+    }
+  }
+
+  void transferFnState(const BasicBlock *BB, TaskInfo &TI) {
+    switch (inLFS[BB]) {
+        case FnState::Both: {
+            // if start of block can be reached by both parallel & serial region, bottom
+            LLVM_DEBUG(dbgs() << " =/=> ");
+            outLFS[BB] = FnState::Both;
+            break;
+        } 
+        default: {
+            // inLFS[BB] = Untouched / EF / DAC
+            const Task *T = TI[BB];
+            assert(T && "transferFnState found invalid TI!");
+            if (T->getDetach()) {
+                // BB is in parallel region
+                unsigned TD = T->getTaskDepth();
+                if (TD > 1) {
+                    LLVM_DEBUG(dbgs() << " =p=> ");
+                    outLFS[BB] = FnState::DefinitelyDAC;
+                } else {
+                    assert (TD == 1 && "non-root task has 0 task depth!");
+                    // if BB marks the exit of a depth-1 task, then stepping out
+                    // would mean the termination of parallel region
+                    if (T->isTaskExiting(BB)) {
+                        // BB is the task exit into a serial region
+                        LLVM_DEBUG(dbgs() << " =s=> ");
+                        outLFS[BB] = FnState::DefinitelyEF;
+                    } else {
+                        // BB not task exit, still inside a parallel region
+                        LLVM_DEBUG(dbgs() << " =p=> ");
+                        outLFS[BB] = FnState::DefinitelyDAC;
+                    }
+                }
+            } else {
+                // BB is in serial region
+                LLVM_DEBUG(dbgs() << " =s=> ");
+                outLFS[BB] = FnState::DefinitelyEF;
+            }
+            break;
+        }
+    }
+    // outLFS[BB] = joinState(inLFS[BB], newState);
+  }
+
+private:
+  Function *Caller;
+  // result state should be readable after the dataflow analysis is run
+  LocalFnStatesTy inLFS;
+  LocalFnStatesTy outLFS;
+};
+
+bool LocalFnStatePass::run(FnState initFS, TaskInfo &TI) {
+    LLVM_DEBUG(dbgs() << "\nrun(" << Caller->getName() << ") with state " << ppFnState(initFS) << "...\n");
     // refresh TaskInfo: DEBUG! You must get Caller's analysis result everytime, as the lifetime of a function pass is short
 
     // initialize all basic block FnState to Untouched & set entry block's
@@ -217,7 +308,7 @@ struct LocalFnStatePass {
       bool erased = workSet.erase(BB);
       assert(erased && "Found basicblock in workList but not in workSet!");
 
-      outs() << "    " << BB->getName() << ": in=" << ppFnState(inLFS[BB]) << ", out=" << ppFnState(outLFS[BB]);
+      LLVM_DEBUG(dbgs() << "    " << BB->getName() << ": in=" << ppFnState(inLFS[BB]) << ", out=" << ppFnState(outLFS[BB]));
 
       // update inLFS of BB from outLFS of predecessors of BB
       reduceInLFS(BB);
@@ -229,7 +320,7 @@ struct LocalFnStatePass {
       transferFnState(BB, TI);
       FnState sNew = outLFS[BB];
 
-      outs() << "in=" << ppFnState(inLFS[BB]) << ", out=" << ppFnState(outLFS[BB]) << "\n";
+      LLVM_DEBUG(dbgs() << "in=" << ppFnState(inLFS[BB]) << ", out=" << ppFnState(outLFS[BB]) << "\n");
 
       // if local state changed, push successors back to the worklist
       if (sOld != sNew) {
@@ -245,31 +336,30 @@ struct LocalFnStatePass {
     }
 
     return false;
-  }
+}
 
-  bool postProcess(CallGraphNode *CGN, GlobalFnStatesTy &GlobalFnStates,
+bool LocalFnStatePass::postProcess(CallGraphNode *CGN, GlobalFnStatesTy &GlobalFnStates,
                    SmallVector<CallGraphNode *, 8> &globalWorkList, 
                    SmallSet<CallGraphNode *, 8> &Callbacks) {
-    outs() << "  postProcess(" << Caller->getName() << ")...\n";
+    LLVM_DEBUG(dbgs() << "  postProcess(" << Caller->getName() << ")...\n");
     bool Changed = false;
     // for each callee/callsite inside the callnode, update GlobalFnStates & globalWorkList
     for (CallGraphNode::CallRecord &CallRecord : *CGN) {
       if (!CallRecord.first.hasValue()) {
         // in the case of callback function, there is no callsite
         // call-edge type: reference edge
+        LLVM_DEBUG(dbgs() << "!!!!!! FOUND RARE CALLBACK CASE !!!!!!!!!\n");
         if (CallRecord.second)
           Callbacks.insert(CallRecord.second);
         continue;
       }
+
       // call-edge type: real call-edge
       assert(CallRecord.second && "encounter null second field in CallRecord!");
-      // if (!CallRecord.second) {
-      //     errs() << "encounter null second field in CallRecord!\n";
-      //     continue;
-      // }
+      
       Function *Callee = CallRecord.second->getFunction();
       if (!Callee) {
-        // outs() << "CallRecord contains null callee node! Callsite: ";
+        // LLVM_DEBUG(dbgs() << "CallRecord contains null callee node! Callsite: ");
         // if (const CallBase *CallSite = dyn_cast<CallBase>(*CallRecord.first)) {
         //   CallSite->dump();
         // }
@@ -279,9 +369,9 @@ struct LocalFnStatePass {
       assert(CallSite &&
              "CallRecord doesn't have CallBase callsite instruction!");
 
-      outs() << "    examing callsite at " << CallSite->getParent()->getName() << ":";
+      LLVM_DEBUG(dbgs() << "    examing callsite at " << CallSite->getParent()->getName() << ":");
       CallSite->dump();
-      outs() << "\n";
+      LLVM_DEBUG(dbgs() << "\n");
 
       // update state of callee node based on local pass results
       FnState sOld = GlobalFnStates[Callee];
@@ -290,94 +380,13 @@ struct LocalFnStatePass {
 
       // push Callee back on to worklist because of state change
       if (sOld != sNew) {
-        outs() << "  <!> state change " << ppFnState(sOld) << "-->" << ppFnState(sNew) << "\n";
+        LLVM_DEBUG(dbgs() << "  <!> state change " << ppFnState(sOld) << "-->" << ppFnState(sNew) << "\n");
         globalWorkList.push_back(CallRecord.second);
         Changed = true;
       }
     }
     return Changed;
-  }
-  
-  FnState getLocalFnState(BasicBlock *BB) {
-    // called after run()
-    return outLFS[BB];
-  }
-
-private:
-  void initializeBoundaryCondition(FnState initFS) {
-    outs() << "  initializeBoundaryCondition...\n";
-    for (auto &BB : *Caller) {
-      inLFS[&BB] = FnState::Untouched;
-      outLFS[&BB] = FnState::Untouched;
-    }
-    const BasicBlock *Entry = &Caller->getEntryBlock();
-    inLFS[Entry] = initFS;
-  }
-
-  void initializeLocalWorkList(SmallVector<BasicBlock *, 8> &workList,
-                               SmallSet<BasicBlock *, 8> &workSet) {
-    outs() << "  initializeLocalWorkList(" << Caller->getName() << ")...\n";
-    ReversePostOrderTraversal<Function *> RPO(Caller);
-    for (auto I = RPO.begin(), E = RPO.end(); I != E; ++I) {
-      workList.push_back(*I);
-      workSet.insert(*I);
-    }
-  }
-  void reduceInLFS(BasicBlock *BB) {
-    for (BasicBlock *Pred : predecessors(BB)) {
-        inLFS[BB] = joinState(inLFS[BB], outLFS[Pred]);
-    }
-  }
-
-  void transferFnState(const BasicBlock *BB, TaskInfo &TI) {
-    switch (inLFS[BB]) {
-        case FnState::Both: {
-            // if start of block can be reached by both parallel & serial region, bottom
-            outs() << " =/=> ";
-            outLFS[BB] = FnState::Both;
-            break;
-        } 
-        default: {
-            // inLFS[BB] = Untouched / EF / DAC
-            const Task *T = TI[BB];
-            assert(T && "transferFnState found invalid TI!");
-            if (T->getDetach()) {
-                // BB is in parallel region
-                unsigned TD = T->getTaskDepth();
-                if (TD > 1) {
-                    outs() << " =p=> ";
-                    outLFS[BB] = FnState::DefinitelyDAC;
-                } else {
-                    assert (TD == 1 && "non-root task has 0 task depth!");
-                    // if BB marks the exit of a depth-1 task, then stepping out
-                    // would mean the termination of parallel region
-                    if (T->isTaskExiting(BB)) {
-                        // BB is the task exit into a serial region
-                        outs() << " =s=> ";
-                        outLFS[BB] = FnState::DefinitelyEF;
-                    } else {
-                        // BB not task exit, still inside a parallel region
-                        outs() << " =p=> ";
-                        outLFS[BB] = FnState::DefinitelyDAC;
-                    }
-                }
-            } else {
-                // BB is in serial region
-                outs() << " =s=> ";
-                outLFS[BB] = FnState::DefinitelyEF;
-            }
-            break;
-        }
-    }
-    // outLFS[BB] = joinState(inLFS[BB], newState);
-  }
-
-private:
-  Function *Caller;
-  // result state should be readable after the dataflow analysis is run
-  LocalFnStatesTy inLFS;
-  LocalFnStatesTy outLFS;
-};
+}
 
 struct ParallelRegionReachable : public ModulePass {
   static char ID;
@@ -386,49 +395,7 @@ struct ParallelRegionReachable : public ModulePass {
     // initializeParallelRegionReachablePass(*PassRegistry::getPassRegistry());
   }
 
-  bool runOnModule(llvm::Module &M) override {
-    CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-    // outs() << "callgraph analysis succceed!\n";
-    // initialize GlobalFnStates to all Untouched
-    initializeGlobalFnStates(CG);
-
-    // initialize LocalFnState,
-    initializeLocalFnStates(CG);
-    // initialize worklist
-    SmallVector<CallGraphNode *, 8> workList;
-    initializeWorkList(CG, workList);
-
-    // while callnode worklist non-empty
-    for (size_t i = 0; i < workList.size(); ++i) {
-      CallGraphNode *CGN = workList[i];
-      assert(CGN && "worklist shouldn't have null callnode!");
-
-      Function *Caller = CGN->getFunction();
-      assert(Caller && "CallNode has null function!");
-      if (Caller->isDeclaration()) {
-        continue;
-      }
-
-      //   outs() << "pop CallNode " << Caller->getName() << "...\n";
-
-      // rerun LocalFnStatePass to perform CFG dataflow analysis using new entry
-      // condition
-      if (Fn2LFP.find(Caller) == Fn2LFP.end())
-        continue;
-      TaskInfo &TI = getAnalysis<TaskInfoWrapperPass>(*Caller).getTaskInfo();
-      Fn2LFP[Caller]->run(GlobalFnStates[Caller], TI);
-
-      // for each callgraph node, traverse through each of its callsite
-      bool Changed = Fn2LFP[Caller]->postProcess(CGN, GlobalFnStates, workList, Callbacks);
-    }
-
-    // set statistics
-    printStatistic();
-    
-    // output json
-    outputStatistic();
-    return false;
-  }
+  bool runOnModule(llvm::Module &M) override;
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     // AU.addRequired<DominatorTreeWrapperPassF>();
@@ -440,44 +407,41 @@ struct ParallelRegionReachable : public ModulePass {
 
 private:
   void initializeGlobalFnStates(CallGraph &CG) {
-    outs() << "calling initializeGlobalFnStates...\n";
+    LLVM_DEBUG(dbgs() << "calling initializeGlobalFnStates...\n");
 
     for (auto &it : CG) {
       Function *F = it.second->getFunction();
-      if (!F)
+      if (!F) 
         continue;
+      //   assert(F && "initializeGlobalFnStates encounters callnode with null function!");
       GlobalFnStates[F] = FnState::Untouched;
       // update global satistic: NumFn
       ++NumFn;
-
-    //   (outs() << "Function " << F->getName() << " state initialized!\n");
     }
   }
 
   void initializeLocalFnStates(CallGraph &CG) {
-    outs() << "initializeLocalFnStates...\n";
+    LLVM_DEBUG(dbgs() << "initializeLocalFnStates...\n");
     for (auto &it : CG) {
       CallGraphNode *CGN = it.second.get();
       assert(CGN && "encounter null call graph node");
       Function *Caller = CGN->getFunction();
+    //   assert(Caller && "initializeLocalFnStates encounters callnode with null function!");
       if (!Caller)
         continue;
       if (Caller->isDeclaration()) {
         continue;
       }
-    //   outs() << "Function " << Caller->getName()
-    //          << " registered by localFnStatePass!\n";
 
-      // get analysis results of Function Passes
+      // initialize LocalFnStatePass for Caller function
       assert(Caller && "encounter null caller in initializeLocalFnStates!");
-      
       Fn2LFP[Caller] = new LocalFnStatePass(Caller);
     }
   }
 
   void initializeWorkList(CallGraph &CG,
                           SmallVector<CallGraphNode *, 8> &workList) {
-    outs() << "initializeWorkList...\n";
+    LLVM_DEBUG(dbgs() << "initializeWorkList...\n");
     for (auto &it : CG) {
       const Function *F = it.first;
       CallGraphNode *CGN = it.second.get();
@@ -486,11 +450,11 @@ private:
         continue;
       workList.push_back(CGN);
 
-    //   outs() << "Function " << F->getName() << " pushed onto workList!\n";
+    //   LLVM_DEBUG(dbgs() << "Function " << F->getName() << " pushed onto workList!\n");
     }
   }
 
-  void printStatistic();
+  void printStatistic(CallGraph &CG);
   
   void outputStatistic();
 
@@ -498,54 +462,96 @@ private:
   SmallSet<CallGraphNode *, 8> Callbacks;
   GlobalFnStatesTy GlobalFnStates;
   DenseMap<const Function *, LocalFnStatePass *> Fn2LFP;
+
+  DenseMap<const Function *, AbstractCallSite::CallbackInfo *> Fn2CBI;
 };
 
-void ParallelRegionReachable::printStatistic() {
+bool ParallelRegionReachable::runOnModule(llvm::Module &M) {    
+    CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
+    // initialize GlobalFnStates to all Untouched
+    initializeGlobalFnStates(CG);
+
+    // initialize LocalFnState,
+    initializeLocalFnStates(CG);
+    // initialize worklist
+    SmallVector<CallGraphNode *, 8> workList;
+    initializeWorkList(CG, workList);
+
+    // while callnode worklist non-empty
+    for (size_t i = 0; i < workList.size(); ++i) {
+        CallGraphNode *CGN = workList[i];
+        assert(CGN && "worklist shouldn't have null callnode!");
+
+        Function *Caller = CGN->getFunction();
+        assert(Caller && "CallNode has null function!");
+        if (Caller->isDeclaration()) {
+            continue;
+        }
+        // rerun LocalFnStatePass to perform CFG dataflow analysis using new entry
+        // condition
+        if (Fn2LFP.find(Caller) == Fn2LFP.end())
+            continue;
+        TaskInfo &TI = getAnalysis<TaskInfoWrapperPass>(*Caller).getTaskInfo();
+        Fn2LFP[Caller]->run(GlobalFnStates[Caller], TI);
+
+        // for each callgraph node, traverse through each of its callsite
+        bool Changed = Fn2LFP[Caller]->postProcess(CGN, GlobalFnStates, workList, Callbacks);
+    }
+
+    // set statistics
+    printStatistic(CG);
+
+    // output json
+    outputStatistic();
+    return false;
+}
+
+void ParallelRegionReachable::printStatistic(CallGraph &CG) {
     // print && udpate statistics for functions 
-    outs() << "\n>>> printing global fn states...\n";
+    LLVM_DEBUG(dbgs() << "\n>>> printing global fn states...\n");
     for (auto it : GlobalFnStates) {
         Function *F = it.first;
-        outs() << F->getName() << ": " << ppFnState(it.second) << "\n";
+        LLVM_DEBUG(dbgs() << F->getName() << ": " << ppFnState(it.second) << "\n");
     }
 
     for (auto it : GlobalFnStates) {
-      const Function *F = it.first;
+      //   const Function *F = it.first;
       switch (it.second) {
       case FnState::DefinitelyDAC: {
         ++NumDefinitelyDAC;
-        // outs() << "Function " << F->getName()
-        //        << " is definitelyDAC at the end!\n";
+        // LLVM_DEBUG(dbgs() << "Function " << F->getName()
+        //        << " is definitelyDAC at the end!\n");
         break;
       }
       case FnState::DefinitelyEF: {
         ++NumDefinitelyEF;
-        // outs() << "Function " << F->getName()
+        // LLVM_DEBUG(dbgs() << "Function " << F->getName()
         //        << " is definitelyEF at the end!\n";
         break;
       }
       case FnState::Both: {
         ++NumBoth;
-        // outs() << "Function " << F->getName() << " is Both at the end!\n";
+        // LLVM_DEBUG(dbgs() << "Function " << F->getName() << " is Both at the end!\n";
         break;
       }
       case FnState::Untouched: {
         ++NumUntouched;
-        // outs() << "Function " << F->getName() << " is untouched at the end!\n";
+        // LLVM_DEBUG(dbgs() << "Function " << F->getName() << " is untouched at the end!\n");
         break;
       }
       }
     }
 
     // print states inside all functions
-    outs() << "\n>>> printing local fn states for each function...\n";
+    LLVM_DEBUG(dbgs() << "\n>>> printing local fn states for each function...\n");
     for (auto it : GlobalFnStates) {
         Function *F = it.first;
-        outs() << F->getName() << ": --------------------------------\n";
+        LLVM_DEBUG(dbgs() << F->getName() << ": --------------------------------\n");
         
         for (auto &BB : *F) {
             errs() << BB.getName() << ": " << ppFnState(Fn2LFP[F]->getLocalFnState(&BB)) << "\n";
         }
-        outs() << "\n";
+        LLVM_DEBUG(dbgs() << "\n");
     }
 
     // update statistics for TapirLoops / pfors
@@ -553,14 +559,14 @@ void ParallelRegionReachable::printStatistic() {
       Function *F = it.first;
       if (Fn2LFP.find(F) == Fn2LFP.end())
         continue;
-      outs() << "\n" << F->getName() << ":\n";
+      LLVM_DEBUG(dbgs() << "\n" << F->getName() << ":\n");
       TaskInfo &TI = getAnalysis<TaskInfoWrapperPass>(*F).getTaskInfo();
       LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
       
       for (Task *T : TI) {
         if (T->getDetach()) {
             T->dump();
-            outs() << "\n";
+            LLVM_DEBUG(dbgs() << "\n");
         }
       }
       // if F only have rootTask, no pfor, skip
@@ -578,7 +584,7 @@ void ParallelRegionReachable::printStatistic() {
           // L is a TapirLoop
           ++NumPFor;
           L->dump();
-          outs() << "\n";
+          LLVM_DEBUG(dbgs() << "\n");
           if (L == TopLevelLoop) {
             ++NumPForTopLevel;
             // top-level TapirLoop needs precaution about their FnState
@@ -614,13 +620,49 @@ void ParallelRegionReachable::printStatistic() {
     }
 
     // update statistic for NumCallBacks
-    for (auto CB : Callbacks) {
-        outs() << CB->getFunction()->getName() << " is a callback function!\n";
-        ++NumCallback;
+    LLVM_DEBUG(dbgs() << "\n>>> printing indirect callsites & callbase uses....\n");
+    // for (auto CB : Callbacks) {
+    //     LLVM_DEBUG(dbgs() << CB->getFunction()->getName() << " is a callback function!\n";
+    //     ++NumCallback;
+    // }
+
+    for (auto it : GlobalFnStates) {
+      const Function *F = it.first;
+      assert(F && "printStatistic encounter callnode with null function!");
+
+      for (auto I = inst_begin(F), E = inst_end(F); I != E; ++I) {
+        if (auto *CI = dyn_cast<CallBase>(&*I)) {
+            if (CI->isIndirectCall()) {
+                LLVM_DEBUG(dbgs() << "Found IndirectCall: ");
+                CI->dump();
+                LLVM_DEBUG(dbgs() << "\n");
+                ++NumIndirectCall;
+            }
+        }
+
+        for (auto &U : I->operands()) {
+            if (auto ACS = AbstractCallSite(&U)) {
+                if (ACS.isIndirectCall()) {
+                    LLVM_DEBUG(dbgs() << "ACS: Found indirect call: ");
+                    ACS.getInstruction()->dump();
+                    LLVM_DEBUG(dbgs() << "\n");
+                } else if (ACS.isCallbackCall()) {
+                    SmallVector<const Use *, 4> CallbackUses;
+                    AbstractCallSite::getCallbackUses(*(ACS.getInstruction()), CallbackUses);
+                    LLVM_DEBUG(dbgs() << "ACS: Found callback call: ");
+                    ACS.getInstruction()->dump();
+                    for (const Use *CBU : CallbackUses) {
+                        LLVM_DEBUG(dbgs() << "used by --> ");
+                        CBU->get()->dump(); 
+                        LLVM_DEBUG(dbgs() << "\n");
+                    }
+                    LLVM_DEBUG(dbgs() << "\n");
+                }
+            }
+        }
+      }
     }
-  }
-
-
+}
 
 void ParallelRegionReachable::outputStatistic() {
     json::Object jsonObj;
@@ -647,7 +689,7 @@ void ParallelRegionReachable::outputStatistic() {
 
     // output to file
     std::string FileName = TestName + ".json";
-    outs() << "\n------\nFileName: " << FileName << "\n";
+    LLVM_DEBUG(dbgs() << "\n------\nFileName: " << FileName << "\n");
     std::error_code EC;
     raw_fd_ostream file(FileName, EC);
     if (EC) {
