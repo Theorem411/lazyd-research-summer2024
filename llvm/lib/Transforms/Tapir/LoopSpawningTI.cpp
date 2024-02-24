@@ -2619,7 +2619,7 @@ LoopOutlineProcessor *LoopSpawningImpl::getOutlineProcessor(TapirLoopInfo *TL) {
 
   if (UseRuntimePFor)
     return new RuntimeCilkFor(M);
-
+  // Add loop attribute e.g. DefinitelyDAC, and switch on loop attribute to choose outline strategy
   switch (Hints.getStrategy()) {
   case TapirLoopHints::ST_DAC:
     return new DACSpawning(M); ////return new EFDACSpawning(M);

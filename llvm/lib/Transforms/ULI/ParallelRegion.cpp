@@ -6,6 +6,8 @@
 #include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/CallGraphSCCPass.h"
 #include "llvm/Analysis/TapirTaskInfo.h"
@@ -13,17 +15,17 @@
 #include "llvm/Analysis/LoopIterator.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/AbstractCallSite.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Attributes.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/DebugLoc.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Module.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
 #include "llvm/PassInfo.h"
 #include "llvm/PassRegistry.h"
-#include "llvm/ADT/SmallSet.h"
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/IR/Attributes.h"
-#include "llvm/IR/DebugLoc.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/CommandLine.h"
@@ -60,6 +62,9 @@ STATISTIC(NumCallback,
 STATISTIC(NumIndirectCall, 
           "NumIndirectCall      "
           "number of indirect callsites");
+STATISTIC(NumFnArg, 
+          "NumFnArg            "
+          "Number of callbase that's suspicious of callback pattern");
 STATISTIC(NumPFor, 
           "NumPFor              "
           "number of parallel-for loops");
@@ -113,15 +118,16 @@ cl::opt<std::string> TestName(
 
 // PreservedAnalyses ParallelRegionPass::run(Module &M,
 //                                           ModuleAnalysisManager &AM) {
-// // auto &FAM =
+// auto &FAM =
 // AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
-// //   DominatorTree &DT = AM.getResult<DominatorTreeAnalysis>(M);
 //   CallGraph &CG = AM.getResult<CallGraphAnalysis>(M);
 //   bool Changed = ParallelRegionImpl(M, CG, TI).run();
 //   if (Changed)
 //     return PreservedAnalyses::none();
 //   return PreservedAnalyses::all();
 // }
+
+static void* initializeParallelRegionReachablePass(PassRegistry &Registry);
 
 namespace {
 // @debug
@@ -392,7 +398,11 @@ struct ParallelRegionReachable : public ModulePass {
   static char ID;
 
   explicit ParallelRegionReachable() : ModulePass(ID) {
-    // initializeParallelRegionReachablePass(*PassRegistry::getPassRegistry());
+    initializeParallelRegionReachablePass(*PassRegistry::getPassRegistry());
+  }
+
+  ~ParallelRegionReachable() {
+    toJSON();
   }
 
   bool runOnModule(llvm::Module &M) override;
@@ -402,7 +412,7 @@ struct ParallelRegionReachable : public ModulePass {
     AU.addRequired<CallGraphWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
     AU.addRequired<TaskInfoWrapperPass>();
-    AU.setPreservesAll();
+    // AU.setPreservesAll(); // updated loop metadata
   }
 
 private:
@@ -455,8 +465,10 @@ private:
   }
 
   void printStatistic(CallGraph &CG);
+
+  bool markLoopMetaData();
   
-  void outputStatistic();
+  void toJSON() const;
 
 private:
   SmallSet<CallGraphNode *, 8> Callbacks;
@@ -501,9 +513,10 @@ bool ParallelRegionReachable::runOnModule(llvm::Module &M) {
     // set statistics
     printStatistic(CG);
 
-    // output json
-    outputStatistic();
-    return false;
+    // change loop metadata
+    return markLoopMetaData();
+
+
 }
 
 void ParallelRegionReachable::printStatistic(CallGraph &CG) {
@@ -618,50 +631,70 @@ void ParallelRegionReachable::printStatistic(CallGraph &CG) {
         }
       }
     }
-
+ 
     // update statistic for NumCallBacks
     LLVM_DEBUG(dbgs() << "\n>>> printing indirect callsites & callbase uses....\n");
-    // for (auto CB : Callbacks) {
-    //     LLVM_DEBUG(dbgs() << CB->getFunction()->getName() << " is a callback function!\n";
-    //     ++NumCallback;
-    // }
+    for (auto CB : Callbacks) {
+        LLVM_DEBUG(dbgs() << CB->getFunction()->getName() << " is a callback function!\n");
+        ++NumCallback;
+    }
+
     for (auto it : GlobalFnStates) {
       const Function *F = it.first;
       assert(F && "printStatistic encounter callnode with null function!");
 
+      LLVM_DEBUG(dbgs() << "\nPrinting broker function instructions encountered in " << F->getName() << "...\n");
       for (auto I = inst_begin(F), E = inst_end(F); I != E; ++I) {
-        if (auto *CI = dyn_cast<CallBase>(&*I)) {
+        if (const CallBase *CI = dyn_cast<CallBase>(&*I)) {
             /// DEBUG: 
-            LLVM_DEBUG(dbgs() << "In " << F->getName() << ": \n");
-            CI->dump();
-            LLVM_DEBUG(dbgs() << "\n");
+            // LLVM_DEBUG(dbgs() << "\nIn " << F->getName() << ": \n");
+            // CI->dump();
+            // LLVM_DEBUG(dbgs() << "\n");
             /////////
 
-            SmallVector<const Use *, 4> CallbackUses;
-            AbstractCallSite::getCallbackUses(*CI, CallbackUses);
-            for (const Use *CBU : CallbackUses) {
-                LLVM_DEBUG(dbgs() << "  ACS: Found callback call: ");
-                CBU->get()->dump(); 
-                LLVM_DEBUG(dbgs() << "\n");
-            }
+            // SmallVector<const Use *, 4> CallbackUses;
+            // AbstractCallSite::getCallbackUses(*CI, CallbackUses);
+            // for (const Use *CBU : CallbackUses) {
+            //     LLVM_DEBUG(dbgs() << "  ACS: Found callback call: ");
+            //     CBU->get()->dump(); 
+            //     LLVM_DEBUG(dbgs() << "\n");
+            // }
             
-            for (auto &U : CI->operands()) {
-                if (auto ACS = AbstractCallSite(&U)) {
-                    if (ACS.isIndirectCall()) {
-                        LLVM_DEBUG(dbgs() << "  ACS: Found indirect call: ");
-                        U.get()->dump();
+            // for (auto &U : CI->operands()) {
+            //     LLVM_DEBUG(dbgs() << "[U] ");
+            //     U.get()->dump();
+            //     // LLVM_DEBUG(dbgs()<< ": \n");
+            //     if (auto ACS = AbstractCallSite(&U)) {
+            //         if (ACS.isIndirectCall()) {
+            //             LLVM_DEBUG(dbgs() << "  ACS: Found indirect call: ");
+            //             U.get()->dump();
+            //             LLVM_DEBUG(dbgs() << "\n");
+            //             ++NumIndirectCall;
+            //         } else if (ACS.isCallbackCall()) {
+            //             LLVM_DEBUG(dbgs() << "  ACS: Found callback call: ");
+            //             U.get()->dump();
+            //             LLVM_DEBUG(dbgs() << "\n");
+            //         }
+            //         // else if (ACS.isDirectCall()) {
+            //         //     LLVM_DEBUG(dbgs() << "  ACS: Found direct call: ");
+            //         //     U.get()->dump();
+            //         //     LLVM_DEBUG(dbgs() << "\n");
+            //         // }
+            //     }
+            // }
+
+            Function *Broker = CI->getCalledFunction();
+            if (!Broker)
+                continue;
+            for (unsigned i = 0; i < CI->arg_size(); ++i) {
+                Value *arg = CI->getArgOperand(i);
+                assert(arg && "Callbase has null argument");
+                if (PointerType *ptrTy = dyn_cast<PointerType>(arg->getType())) {
+                    if (ptrTy->getElementType()->isFunctionTy()) {
+                        CI->dump();
                         LLVM_DEBUG(dbgs() << "\n");
-                        ++NumIndirectCall;
-                    } else if (ACS.isCallbackCall()) {
-                        LLVM_DEBUG(dbgs() << "  ACS: Found callback call: ");
-                        U.get()->dump();
-                        LLVM_DEBUG(dbgs() << "\n");
+                        ++NumFnArg;
                     }
-                    // else if (ACS.isDirectCall()) {
-                    //     LLVM_DEBUG(dbgs() << "  ACS: Found direct call: ");
-                    //     U.get()->dump();
-                    //     LLVM_DEBUG(dbgs() << "\n");
-                    // }
                 }
             }
         }
@@ -669,7 +702,76 @@ void ParallelRegionReachable::printStatistic(CallGraph &CG) {
     }
 }
 
-void ParallelRegionReachable::outputStatistic() {
+bool ParallelRegionReachable::markLoopMetaData() {
+    bool Changed = false;
+
+    // update metadata for all tapir loop
+    for (auto it : GlobalFnStates) {
+      Function *F = it.first;
+      if (Fn2LFP.find(F) == Fn2LFP.end())
+        continue;
+      LLVM_DEBUG(dbgs() << "\n" << F->getName() << ":\n");
+
+      // refresh function pass analysis results
+      TaskInfo &TI = getAnalysis<TaskInfoWrapperPass>(*F).getTaskInfo();
+      LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
+
+      // get context
+      Module *M = F->getParent();
+      LLVMContext &Context = M->getContext();
+      
+      // if F only have rootTask, no pfor, skip
+      if (TI.isSerial()) 
+        continue;
+    
+      for (Loop *TopLevelLoop : LI) {
+        for (Loop *L : post_order(TopLevelLoop)) {
+          if (!getTaskIfTapirLoop(L, &TI)) {
+            // L not a TapirLoop
+            continue;
+          }
+          // create loop metadata depending on analysis result
+          MDNode *NewLoopID = nullptr;
+
+          if (L == TopLevelLoop) {
+            // top-level TapirLoop needs precaution about their FnState
+            FnState LoopLFS = Fn2LFP[F]->getLocalFnState(L->getHeader());
+            switch (LoopLFS) {
+                case FnState::DefinitelyDAC: {
+                    NewLoopID = MDNode::get(Context, MDString::get(Context, "llvm.loop.prr.dac"));
+                    break;
+                } 
+                case FnState::DefinitelyEF: {
+                    NewLoopID = MDNode::get(Context, MDString::get(Context, "llvm.loop.prr.ef"));
+                    break;
+                } 
+                case FnState::Both: {
+                    NewLoopID = MDNode::get(Context, MDString::get(Context, "llvm.loop.prr.both"));
+                    break;
+                } 
+            }
+          } else {
+            // inner TapirLoops are by default definitelyDAC
+            NewLoopID = MDNode::get(Context, MDString::get(Context, "llvm.loop.prr.dac"));
+          }
+
+          if (NewLoopID) {
+            MDNode *LoopID = L->getLoopID();
+            MDNode *MDN = llvm::makePostTransformationMetadata(
+                    Context, LoopID, {"llvm.loop.prr."}, {NewLoopID});
+            L->setLoopID(MDN);
+            
+            // update Change
+            Changed = true;
+          }
+        }
+      }
+    }
+
+    return Changed;
+}
+
+void ParallelRegionReachable::toJSON() const {
     json::Object jsonObj;
     jsonObj["NumFn"] = static_cast<uint64_t>(NumFn);
     jsonObj["NumDefinitelyDAC"] = static_cast<uint64_t>(NumDefinitelyDAC);
@@ -677,6 +779,7 @@ void ParallelRegionReachable::outputStatistic() {
     jsonObj["NumBoth"] = static_cast<uint64_t>(NumBoth);
     jsonObj["NumUntouched"] = static_cast<uint64_t>(NumUntouched);
     jsonObj["NumCallback"] = static_cast<uint64_t>(NumCallback);
+    jsonObj["NumFnArg"] = static_cast<uint64_t>(NumFnArg);
 
     jsonObj["NumPFor"] = static_cast<uint64_t>(NumPFor);
     jsonObj["NumPForDefinitelyDAC"] = static_cast<uint64_t>(NumPForDefinitelyDAC);
@@ -708,40 +811,38 @@ void ParallelRegionReachable::outputStatistic() {
 } // namespace
 
 char ParallelRegionReachable::ID = 0;
-static RegisterPass<ParallelRegionReachable>
-    X(PR_NAME,
-      "Conduct CallGraph Analysis to determine "
-      "outlining fashion of parallel-regions",
-      false, true);
+// static RegisterPass<ParallelRegionReachable>
+// //     X(PR_NAME,
+//       "Conduct CallGraph Analysis to determine "
+//       "outlining fashion of parallel-regions",
+//       false, true);
 
 static const char pr_name[] =
     "Conduct CallGraph Analysis to determine "
     "outlining fashion of functions called inside parallel-regions";
-// static void* initializeParallelRegionPassOnce(PassRegistry &Registry) {
-//     initializeTaskInfoWrapperPassPass(Registry);
-//     initializeCallGraphWrapperPassPass(Registry);
-//     PassInfo *PI = new PassInfo(
-//                     pr_name, PR_NAME, &ParallelRegionReachable::ID,
-//                     PassInfo::NormalCtor_t(callDefaultCtor<ParallelRegion>),
-//                     false, false);
-//     Registry.registerPass(*PI, true);
-//     return PI;
-// }
-// static llvm::once_flag InitializeParallelRegionPassFlag;
-// void initializeParallelRegionPass(PassRegistry &Registry) {
-//     llvm::call_once(InitializeParallelRegionPassFlag,
-//                     initializeParallelRegionPassOnce, std::ref(Registry));
-// }
+static void* initializeParallelRegionReachablePassOnce(PassRegistry &Registry) {
+    initializeTaskInfoWrapperPassPass(Registry);
+    initializeCallGraphWrapperPassPass(Registry);
+    PassInfo *PI = new PassInfo(
+                    pr_name, PR_NAME, &ParallelRegionReachable::ID,
+                    PassInfo::NormalCtor_t(callDefaultCtor<ParallelRegionReachable>),
+                    false, false);
+    Registry.registerPass(*PI, true);
+    return PI;
+}
+static llvm::once_flag InitializeParallelRegionReachablePassFlag;
+void initializeParallelRegionReachablePassOnce(PassRegistry &Registry) {
+    llvm::call_once(InitializeParallelRegionReachablePassFlag,
+                    initializeParallelRegionReachablePassOnce, std::ref(Registry));
+}
 
-/// DEBUG: change ParallelRegion to a different name; there's likely a name
-/// conflict in llvm
 
 // INITIALIZE_PASS(ParallelRegionReachable, PR_NAME, pr_name, false, false)
-// INITIALIZE_PASS_BEGIN(ParallelRegionReachable, PR_NAME, pr_name, false,
-// false) INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
+// INITIALIZE_PASS_BEGIN(ParallelRegionReachable, PR_NAME, pr_name, false, false) 
+// INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
 // INITIALIZE_PASS_DEPENDENCY(TaskInfoWrapperPass)
 // INITIALIZE_PASS_END(ParallelRegionReachable, PR_NAME, pr_name, false, false)
 
 namespace llvm {
-Pass *createParallelRegionPass() { return new ParallelRegionReachable(); }
+Pass *createParallelRegionReachablePass() { return new ParallelRegionReachable(); }
 } // namespace llvm

@@ -18,12 +18,12 @@
 #include "llvm/IR/PassManager.h"
 
 namespace llvm {
-    struct ParallelRegionPass : public PassInfoMixin<ParallelRegionPass> {
+    struct ParallelRegionReachablePass : public PassInfoMixin<ParallelRegionReachablePass> {
         PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
     };
 
     // /// \return An instance of created pass for legacy pass manager.
-    // Pass *createParallelRegionPass();
+    // Pass *createParallelRegionReachablePass();
 }
 
 #endif // LLVM_TRANFORMS_PARALLEL_REGION_PASS_H
