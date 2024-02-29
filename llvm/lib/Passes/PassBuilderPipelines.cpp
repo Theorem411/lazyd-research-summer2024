@@ -1400,7 +1400,12 @@ PassBuilder::buildTapirLoweringPipeline(OptimizationLevel Level,
     // ForkD lowering
     // If loop spawn strategy is hybrid, instrument pfor
     if(PTO.ForkDLowering != llvm::ForkDTargetType::EagerD){
+      LoopPassManager LPM;
+      LPM.addPass(LoopSimplifyCFGPass());
       FunctionPassManager FPM2;
+      FPM2.addPass(createFunctionToLoopPassAdaptor(std::move(LPM),
+                                              /*UseMemorySSA=*/true,
+                                              /*UseBlockFrequencyInfo=*/true));
       FPM2.addPass(InstrumentPforPass());
       MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM2)));
     }
