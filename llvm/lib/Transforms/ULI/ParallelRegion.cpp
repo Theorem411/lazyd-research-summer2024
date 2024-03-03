@@ -30,11 +30,10 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/CommandLine.h"
 
+using namespace llvm;
 
 #define PR_NAME "prr"
 #define DEBUG_TYPE PR_NAME
-
-using namespace llvm;
 
 STATISTIC(NumFn, 
           "NumFn                "
@@ -62,8 +61,8 @@ STATISTIC(NumCallback,
 STATISTIC(NumIndirectCall, 
           "NumIndirectCall      "
           "number of indirect callsites");
-STATISTIC(NumFnArg, 
-          "NumFnArg            "
+STATISTIC(NumFuncPtrAsArg, 
+          "NumFuncPtrAsArg      "
           "Number of callbase that's suspicious of callback pattern");
 STATISTIC(NumPFor, 
           "NumPFor              "
@@ -116,18 +115,15 @@ cl::opt<std::string> TestName(
 //   return F && F->getFnAttribute("parallel-region").getValueAsString() ==
 //   "true";
 
-// PreservedAnalyses ParallelRegionPass::run(Module &M,
-//                                           ModuleAnalysisManager &AM) {
-// auto &FAM =
-// AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
-//   CallGraph &CG = AM.getResult<CallGraphAnalysis>(M);
-//   bool Changed = ParallelRegionImpl(M, CG, TI).run();
-//   if (Changed)
-//     return PreservedAnalyses::none();
-//   return PreservedAnalyses::all();
-// }
-
-static void* initializeParallelRegionReachablePass(PassRegistry &Registry);
+PreservedAnalyses ParallelRegionReachablePass::run(Module &M,
+                                          ModuleAnalysisManager &MAM) {
+    auto &FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+    CallGraph &CG = MAM.getResult<CallGraphAnalysis>(M);
+    // bool Changed = ParallelRegionImpl(M, CG).run();
+    // if (Changed)
+    //     return PreservedAnalyses::none();
+    return PreservedAnalyses::all();
+}
 
 namespace {
 // @debug
@@ -221,7 +217,7 @@ struct LocalFnStatePass {
 
 private:
   void initializeBoundaryCondition(FnState initFS) {
-    LLVM_DEBUG(dbgs() << "  initializeBoundaryCondition...\n");
+    // LLVM_DEBUG(dbgs() << "  initializeBoundaryCondition...\n");
     for (auto &BB : *Caller) {
       inLFS[&BB] = FnState::Untouched;
       outLFS[&BB] = FnState::Untouched;
@@ -232,7 +228,7 @@ private:
 
   void initializeLocalWorkList(SmallVector<BasicBlock *, 8> &workList,
                                SmallSet<BasicBlock *, 8> &workSet) {
-    LLVM_DEBUG(dbgs() << "  initializeLocalWorkList(" << Caller->getName() << ")...\n");
+    // LLVM_DEBUG(dbgs() << "  initializeLocalWorkList(" << Caller->getName() << ")...\n");
     ReversePostOrderTraversal<Function *> RPO(Caller);
     for (auto I = RPO.begin(), E = RPO.end(); I != E; ++I) {
       workList.push_back(*I);
@@ -250,7 +246,7 @@ private:
     switch (inLFS[BB]) {
         case FnState::Both: {
             // if start of block can be reached by both parallel & serial region, bottom
-            LLVM_DEBUG(dbgs() << " =/=> ");
+            // LLVM_DEBUG(dbgs() << " =/=> ");
             outLFS[BB] = FnState::Both;
             break;
         } 
@@ -258,11 +254,11 @@ private:
             // inLFS[BB] = Untouched / EF / DAC
             const Task *T = TI[BB];
             assert(T && "transferFnState found invalid TI!");
+            
             if (T->getDetach()) {
                 // BB is in parallel region
                 unsigned TD = T->getTaskDepth();
                 if (TD > 1) {
-                    LLVM_DEBUG(dbgs() << " =p=> ");
                     outLFS[BB] = FnState::DefinitelyDAC;
                 } else {
                     assert (TD == 1 && "non-root task has 0 task depth!");
@@ -270,18 +266,19 @@ private:
                     // would mean the termination of parallel region
                     if (T->isTaskExiting(BB)) {
                         // BB is the task exit into a serial region
-                        LLVM_DEBUG(dbgs() << " =s=> ");
                         outLFS[BB] = FnState::DefinitelyEF;
                     } else {
                         // BB not task exit, still inside a parallel region
-                        LLVM_DEBUG(dbgs() << " =p=> ");
                         outLFS[BB] = FnState::DefinitelyDAC;
                     }
                 }
             } else {
-                // BB is in serial region
-                LLVM_DEBUG(dbgs() << " =s=> ");
-                outLFS[BB] = FnState::DefinitelyEF;
+                // BB is in serial region unless terminated with detach
+                if (dyn_cast<DetachInst>(BB->getTerminator())) {
+                    outLFS[BB] = FnState::DefinitelyDAC;
+                } else {
+                    outLFS[BB] = FnState::DefinitelyEF;
+                }
             }
             break;
         }
@@ -297,7 +294,7 @@ private:
 };
 
 bool LocalFnStatePass::run(FnState initFS, TaskInfo &TI) {
-    LLVM_DEBUG(dbgs() << "\nrun(" << Caller->getName() << ") with state " << ppFnState(initFS) << "...\n");
+    // LLVM_DEBUG(dbgs() << "\nrun(" << Caller->getName() << ") with state " << ppFnState(initFS) << "...\n");
     // refresh TaskInfo: DEBUG! You must get Caller's analysis result everytime, as the lifetime of a function pass is short
 
     // initialize all basic block FnState to Untouched & set entry block's
@@ -314,7 +311,7 @@ bool LocalFnStatePass::run(FnState initFS, TaskInfo &TI) {
       bool erased = workSet.erase(BB);
       assert(erased && "Found basicblock in workList but not in workSet!");
 
-      LLVM_DEBUG(dbgs() << "    " << BB->getName() << ": in=" << ppFnState(inLFS[BB]) << ", out=" << ppFnState(outLFS[BB]));
+    //   LLVM_DEBUG(dbgs() << "    " << BB->getName() << ": in=" << ppFnState(inLFS[BB]) << ", out=" << ppFnState(outLFS[BB]));
 
       // update inLFS of BB from outLFS of predecessors of BB
       reduceInLFS(BB);
@@ -326,7 +323,7 @@ bool LocalFnStatePass::run(FnState initFS, TaskInfo &TI) {
       transferFnState(BB, TI);
       FnState sNew = outLFS[BB];
 
-      LLVM_DEBUG(dbgs() << "in=" << ppFnState(inLFS[BB]) << ", out=" << ppFnState(outLFS[BB]) << "\n");
+    //   LLVM_DEBUG(dbgs() << "in=" << ppFnState(inLFS[BB]) << ", out=" << ppFnState(outLFS[BB]) << "\n");
 
       // if local state changed, push successors back to the worklist
       if (sOld != sNew) {
@@ -347,7 +344,7 @@ bool LocalFnStatePass::run(FnState initFS, TaskInfo &TI) {
 bool LocalFnStatePass::postProcess(CallGraphNode *CGN, GlobalFnStatesTy &GlobalFnStates,
                    SmallVector<CallGraphNode *, 8> &globalWorkList, 
                    SmallSet<CallGraphNode *, 8> &Callbacks) {
-    LLVM_DEBUG(dbgs() << "  postProcess(" << Caller->getName() << ")...\n");
+    // LLVM_DEBUG(dbgs() << "  postProcess(" << Caller->getName() << ")...\n");
     bool Changed = false;
     // for each callee/callsite inside the callnode, update GlobalFnStates & globalWorkList
     for (CallGraphNode::CallRecord &CallRecord : *CGN) {
@@ -375,18 +372,18 @@ bool LocalFnStatePass::postProcess(CallGraphNode *CGN, GlobalFnStatesTy &GlobalF
       assert(CallSite &&
              "CallRecord doesn't have CallBase callsite instruction!");
 
-      LLVM_DEBUG(dbgs() << "    examing callsite at " << CallSite->getParent()->getName() << ":");
-      CallSite->dump();
-      LLVM_DEBUG(dbgs() << "\n");
+    //   LLVM_DEBUG(dbgs() << "    examing callsite at " << CallSite->getParent()->getName() << ":");
+    //   CallSite->dump();
+    //   LLVM_DEBUG(dbgs() << "\n");
 
       // update state of callee node based on local pass results
       FnState sOld = GlobalFnStates[Callee];
-      FnState sNew = joinState(sOld, outLFS[CallSite->getParent()]);
+      FnState sNew = joinState(sOld, inLFS[CallSite->getParent()]);
       GlobalFnStates[Callee] = sNew;
 
       // push Callee back on to worklist because of state change
       if (sOld != sNew) {
-        LLVM_DEBUG(dbgs() << "  <!> state change " << ppFnState(sOld) << "-->" << ppFnState(sNew) << "\n");
+        // LLVM_DEBUG(dbgs() << "  <!> state change " << ppFnState(sOld) << "-->" << ppFnState(sNew) << "\n");
         globalWorkList.push_back(CallRecord.second);
         Changed = true;
       }
@@ -398,17 +395,17 @@ struct ParallelRegionReachable : public ModulePass {
   static char ID;
 
   explicit ParallelRegionReachable() : ModulePass(ID) {
-    initializeParallelRegionReachablePass(*PassRegistry::getPassRegistry());
+    llvm::initializeParallelRegionReachablePass(*PassRegistry::getPassRegistry());
   }
 
   ~ParallelRegionReachable() {
-    toJSON();
+    flushStatisticsToJSON();
+    flushStatesToCSV();
   }
 
-  bool runOnModule(llvm::Module &M) override;
+  bool runOnModule(Module &M) override;
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
-    // AU.addRequired<DominatorTreeWrapperPassF>();
     AU.addRequired<CallGraphWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
     AU.addRequired<TaskInfoWrapperPass>();
@@ -416,66 +413,496 @@ struct ParallelRegionReachable : public ModulePass {
   }
 
 private:
-  void initializeGlobalFnStates(CallGraph &CG) {
-    LLVM_DEBUG(dbgs() << "calling initializeGlobalFnStates...\n");
+    void initializeGlobalFnStates(CallGraph &CG) {
+        LLVM_DEBUG(dbgs() << "calling initializeGlobalFnStates...\n");
 
-    for (auto &it : CG) {
-      Function *F = it.second->getFunction();
-      if (!F) 
-        continue;
-      //   assert(F && "initializeGlobalFnStates encounters callnode with null function!");
-      GlobalFnStates[F] = FnState::Untouched;
-      // update global satistic: NumFn
-      ++NumFn;
+        /// Collect Function pointer address argument =========================
+        SmallSet<Function *, 8> FunInFunArgs;
+        for (auto &it : CG) {
+            Function *F = it.second->getFunction();
+            if (!F) continue;
+
+            for (auto I = inst_begin(F), E = inst_end(F); I != E; ++I) {
+                if (const CallBase *CI = dyn_cast<CallBase>(&*I)) {
+                    for (unsigned i = 0; i < CI->arg_size(); ++i) {
+                        Value *arg = CI->getArgOperand(i);
+                        if (PointerType *ptrTy = dyn_cast<PointerType>(arg->getType())) {
+                            if (ptrTy->getElementType()->isFunctionTy()) {
+                                ConstantExpr *BitCast = dyn_cast<ConstantExpr>(arg);
+                                assert(BitCast && BitCast->isCast() && "function pointer argument is not a bitcast!");
+                                Function *Callee = dyn_cast<Function>(BitCast->getOperand(0));
+                                FunInFunArgs.insert(Callee);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for (Function *Callee : FunInFunArgs) {
+            outs() << "\nBroker function argument ";
+            outs() << Callee->getName() << "\n";
+            // LLVM_DEBUG(dbgs() << "\n");
+            if (Callee->isDeclaration()) {
+                continue;
+            }
+            outs() << "has a body!!\n";
+            ++NumFuncPtrAsArg;
+
+            // for each top-level pfor in callee
+            TaskInfo &TI = getAnalysis<TaskInfoWrapperPass>(*Callee).getTaskInfo();
+            LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*Callee).getLoopInfo();
+            if (TI.isSerial()) 
+                continue;
+            for (Loop *TopLevelLoop : LI) {
+                if (llvm::getTaskIfTapirLoopStructure(TopLevelLoop, &TI)) {
+                    // L is a top level TapirLoop with a state of BOTH 
+                    BasicBlock *H = TopLevelLoop->getHeader();
+                    outs() << "-- toplevel pfor (header): " << H->getName() << " is BOTH because of this!\n";
+                }
+            }
+        }
+        /// ========================================================
+
+        for (auto &it : CG) {
+            Function *F = it.second->getFunction();
+            if (!F) 
+                continue;
+            //   assert(F && "initializeGlobalFnStates encounters callnode with null function!");
+            
+            /// DEBUG ====================================
+            // GlobalFnStates[F] = FnState::Untouched;
+            /// ------------------------------------------
+            if (FunInFunArgs.find(F) == FunInFunArgs.end()) {
+                GlobalFnStates[F] = FnState::Untouched;
+            } else {
+                GlobalFnStates[F] = FnState::Both;
+            }
+            /// ==========================================
+
+            // update global satistic: NumFn
+            ++NumFn;
+        }
     }
-  }
 
-  void initializeLocalFnStates(CallGraph &CG) {
-    LLVM_DEBUG(dbgs() << "initializeLocalFnStates...\n");
-    for (auto &it : CG) {
-      CallGraphNode *CGN = it.second.get();
-      assert(CGN && "encounter null call graph node");
-      Function *Caller = CGN->getFunction();
-    //   assert(Caller && "initializeLocalFnStates encounters callnode with null function!");
-      if (!Caller)
-        continue;
-      if (Caller->isDeclaration()) {
-        continue;
-      }
+    void initializeLocalFnStates(CallGraph &CG) {
+        LLVM_DEBUG(dbgs() << "initializeLocalFnStates...\n");
+        for (auto &it : CG) {
+            CallGraphNode *CGN = it.second.get();
+            assert(CGN && "encounter null call graph node");
+            Function *Caller = CGN->getFunction();
+            //   assert(Caller && "initializeLocalFnStates encounters callnode with null function!");
+            if (!Caller)
+                continue;
+            if (Caller->isDeclaration()) {
+                continue;
+            }
 
-      // initialize LocalFnStatePass for Caller function
-      assert(Caller && "encounter null caller in initializeLocalFnStates!");
-      Fn2LFP[Caller] = new LocalFnStatePass(Caller);
+            // initialize LocalFnStatePass for Caller function
+            assert(Caller && "encounter null caller in initializeLocalFnStates!");
+            Fn2LFP[Caller] = new LocalFnStatePass(Caller);
+        }
     }
-  }
 
-  void initializeWorkList(CallGraph &CG,
-                          SmallVector<CallGraphNode *, 8> &workList) {
-    LLVM_DEBUG(dbgs() << "initializeWorkList...\n");
-    for (auto &it : CG) {
-      const Function *F = it.first;
-      CallGraphNode *CGN = it.second.get();
-      assert(CGN && "encounter null call graph node");
-      if (!F)
-        continue;
-      workList.push_back(CGN);
+    void initializeWorkList(CallGraph &CG,
+                            SmallVector<CallGraphNode *, 8> &workList) {
+        LLVM_DEBUG(dbgs() << "initializeWorkList...\n");
+        for (auto &it : CG) {
+        const Function *F = it.first;
+        CallGraphNode *CGN = it.second.get();
+        assert(CGN && "encounter null call graph node");
+        if (!F)
+            continue;
+        workList.push_back(CGN);
 
-    //   LLVM_DEBUG(dbgs() << "Function " << F->getName() << " pushed onto workList!\n");
+        //   LLVM_DEBUG(dbgs() << "Function " << F->getName() << " pushed onto workList!\n");
+        }
     }
-  }
 
-  void printStatistic(CallGraph &CG);
+    void flushStatistic(CallGraph &CG) {
+        // print functions state & update function statistics
+        for (auto it : GlobalFnStates) {
+            // function name
+            const Function *F = it.first;
+            StringRef FuncName = F->getName();
+            // insert function state
+            FnState st = it.second;
+            FuncStates[FuncName] = st;
+            // update function statistics
+            switch (st) {
+                case FnState::DefinitelyDAC: {
+                    ++NumDefinitelyDAC;
+                    break;
+                }
+                case FnState::DefinitelyEF: {
+                    ++NumDefinitelyEF;
+                    // LLVM_DEBUG(dbgs() << "Function " << F->getName()
+                    //        << " is definitelyEF at the end!\n";
+                    break;
+                }
+                case FnState::Both: {
+                    ++NumBoth;
+                    // LLVM_DEBUG(dbgs() << "Function " << F->getName() << " is Both at the end!\n";
+                    break;
+                }
+                case FnState::Untouched: {
+                    ++NumUntouched;
+                    // LLVM_DEBUG(dbgs() << "Function " << F->getName() << " is untouched at the end!\n");
+                    break;
+                }
+            }
+        }
 
-  bool markLoopMetaData();
-  
-  void toJSON() const;
+        // print basic block states inside all functions
+        // LLVM_DEBUG(dbgs() << "\n>>> printing local fn states for each function...\n");
+        for (auto it : GlobalFnStates) {
+            Function *F = it.first;
+            // LLVM_DEBUG(dbgs() << F->getName() << ": --------------------------------\n");
+            
+            for (auto &BB : *F) {
+                // LLVM_DEBUG(dbgs() << BB.getName() << ": " << ppFnState(Fn2LFP[F]->getLocalFnState(&BB)) << "\n");
+            }
+            // LLVM_DEBUG(dbgs() << "\n");
+        }
 
+        // update statistics for TapirLoops / pfors
+        for (auto it : GlobalFnStates) {
+            Function *F = it.first;
+            if (Fn2LFP.find(F) == Fn2LFP.end())
+                continue;
+            LLVM_DEBUG(dbgs() << "\n" << F->getName() << ":\n");
+            TaskInfo &TI = getAnalysis<TaskInfoWrapperPass>(*F).getTaskInfo();
+            LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
+
+            // if F only have rootTask, no pfor, skip
+            if (TI.isSerial()) {
+                outs() << "  is serial!\n";
+                continue;
+            }
+            
+            for (Loop *TopLevelLoop : LI) {
+                for (Loop *L : post_order(TopLevelLoop)) {
+                    outs() << "  has loop: " << L->getHeader()->getName() << "\n";
+                    if (!L->isLoopSimplifyForm()) {
+                        outs() << "  not simplified!\n";
+                    }
+                    if (Task *T = getTaskIfTapirLoopStructure(L, &TI)) {
+                        // L is a TapirLoop
+                        outs() << "  has pfor: " << L->getHeader()->getName() << "\n";
+                        // update NumPFor
+                        ++NumPFor;
+                        if (L == TopLevelLoop) {
+                            ++NumPForTopLevel;
+                            // top-level TapirLoop needs precaution about their FnState
+                            FnState LoopLFS = Fn2LFP[F]->getLocalFnState(L->getHeader());
+                            switch (LoopLFS) {
+                                case FnState::DefinitelyDAC: {
+                                    ++NumPForDefinitelyDAC;
+                                    ++NumPForTopLevelDefinitelyDAC; 
+                                    break;
+                                } 
+                                case FnState::DefinitelyEF: {
+                                    ++NumPForDefinitelyEF;
+                                    ++NumPForTopLevelDefinitelyEF;
+                                    break;
+                                } 
+                                case FnState::Both: {
+                                    ++NumPForBoth;
+                                    ++NumPForTopLevelBoth;
+                                    break;
+                                } 
+                                case FnState::Untouched: {
+                                    ++NumPForUntouched;
+                                    break;
+                                } 
+                            }
+                            // update LoopLFS
+                            StringRef loopname = L->getHeader()->getName();
+                            LoopStates[F->getName()][loopname] = LoopLFS;
+
+                        } else {
+                            // inner TapirLoops are by default definitelyDAC
+                            ++NumPForDefinitelyDAC;
+
+                            // update LoopState
+                            StringRef loopname = L->getHeader()->getName();
+                            LoopStates[F->getName()][loopname] = FnState::DefinitelyDAC;
+                        }
+                    }
+                }
+            }
+        }
+
+        // update statistic for NumCallBacks
+        // LLVM_DEBUG(dbgs() << "\n>>> printing indirect callsites & callbase uses....\n");
+        for (auto CB : Callbacks) {
+            // LLVM_DEBUG(dbgs() << CB->getFunction()->getName() << " is a callback function!\n");
+            ++NumCallback;
+        }
+
+        for (auto it : GlobalFnStates) {
+            const Function *F = it.first;
+            assert(F && "flushStatistic encounter callnode with null function!");
+        }
+    }
+
+    bool markLoopMetaData() {
+        bool Changed = false;
+
+        // update metadata for all tapir loop
+        for (auto it : GlobalFnStates) {
+        Function *F = it.first;
+        if (Fn2LFP.find(F) == Fn2LFP.end())
+            continue;
+        // LLVM_DEBUG(dbgs() << "\n" << F->getName() << ":\n");
+
+        // refresh function pass analysis results
+        TaskInfo &TI = getAnalysis<TaskInfoWrapperPass>(*F).getTaskInfo();
+        LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
+
+        // get context
+        Module *M = F->getParent();
+        LLVMContext &Context = M->getContext();
+        
+        // if F only have rootTask, no pfor, skip
+        if (TI.isSerial()) 
+            continue;
+        
+        for (Loop *TopLevelLoop : LI) {
+            for (Loop *L : post_order(TopLevelLoop)) {
+            if (!getTaskIfTapirLoop(L, &TI)) {
+                // L not a TapirLoop
+                continue;
+            }
+            // create loop metadata depending on analysis result
+            MDNode *NewLoopID = nullptr;
+
+            if (L == TopLevelLoop) {
+                // top-level TapirLoop needs precaution about their FnState
+                FnState LoopLFS = Fn2LFP[F]->getLocalFnState(L->getHeader());
+                switch (LoopLFS) {
+                    case FnState::DefinitelyDAC: {
+                        NewLoopID = MDNode::get(Context, MDString::get(Context, "llvm.loop.prr.dac"));
+                        break;
+                    } 
+                    case FnState::DefinitelyEF: {
+                        NewLoopID = MDNode::get(Context, MDString::get(Context, "llvm.loop.prr.ef"));
+                        break;
+                    } 
+                    case FnState::Both: {
+                        NewLoopID = MDNode::get(Context, MDString::get(Context, "llvm.loop.prr.both"));
+                        break;
+                    } 
+                }
+            } else {
+                // inner TapirLoops are by default definitelyDAC
+                NewLoopID = MDNode::get(Context, MDString::get(Context, "llvm.loop.prr.dac"));
+            }
+
+            if (NewLoopID) {
+                MDNode *LoopID = L->getLoopID();
+                MDNode *MDN = llvm::makePostTransformationMetadata(
+                        Context, LoopID, {"llvm.loop.prr."}, {NewLoopID});
+                L->setLoopID(MDN);
+                
+                // update Change
+                Changed = true;
+            }
+            }
+        }
+        }
+
+        return Changed;
+    }
+
+    void flushStatisticsToJSON() const {
+        json::Object jsonObj;
+        jsonObj["NumFn"] = static_cast<uint64_t>(NumFn);
+        jsonObj["NumDefinitelyDAC"] = static_cast<uint64_t>(NumDefinitelyDAC);
+        jsonObj["NumDefinitelyEF"] = static_cast<uint64_t>(NumDefinitelyEF);
+        jsonObj["NumBoth"] = static_cast<uint64_t>(NumBoth);
+        jsonObj["NumUntouched"] = static_cast<uint64_t>(NumUntouched);
+        jsonObj["NumCallback"] = static_cast<uint64_t>(NumCallback);
+        jsonObj["NumFuncPtrAsArg"] = static_cast<uint64_t>(NumFuncPtrAsArg);
+
+        jsonObj["NumPFor"] = static_cast<uint64_t>(NumPFor);
+        jsonObj["NumPForDefinitelyDAC"] = static_cast<uint64_t>(NumPForDefinitelyDAC);
+        jsonObj["NumPForDefinitelyEF"] = static_cast<uint64_t>(NumPForDefinitelyEF);
+        jsonObj["NumPForBoth"] = static_cast<uint64_t>(NumPForBoth);
+        jsonObj["NumPForUntouched"] = static_cast<uint64_t>(NumPForUntouched);
+
+        jsonObj["NumPForTopLevel"] = static_cast<uint64_t>(NumPForTopLevel);
+        jsonObj["NumPForTopLevelDefinitelyDAC"] = static_cast<uint64_t>(NumPForTopLevelDefinitelyDAC);
+        jsonObj["NumPForTopLevelDefinitelyEF"] = static_cast<uint64_t>(NumPForTopLevelDefinitelyEF);
+        jsonObj["NumPForTopLevelBoth"] = static_cast<uint64_t>(NumPForTopLevelBoth);
+
+        //
+        json::Value jsonVal = std::move(jsonObj);
+
+        // output to file
+        std::string FileName = TestName + ".json";
+        outs() << "\n------\nFileName: " << FileName << "\n";
+        std::error_code EC;
+        raw_fd_ostream file(FileName, EC);
+        if (EC) {
+            errs() << "Error opening file: " << EC.message() << "\n";
+            return;
+        }
+        file << formatv("{0:2}", jsonVal);
+    }
+
+    void flushStatesToCSV() const {
+        // create funcfile
+        std::string FuncFileName = TestName + ".func.csv";
+        (outs() << "\n------\nFileName: " << FuncFileName << "\n");
+        std::error_code EC1;
+        raw_fd_ostream funcfile(FuncFileName, EC1);
+        if (EC1) {
+            errs() << "Error opening file: " << EC1.message() << "\n";
+            return;
+        }
+        // fill in funcfile
+        funcfile << "funcname,state\n";
+        for (auto it : FuncStates) {
+            // function names
+            std::string FuncName = it.first.str();
+            // func static states
+            std::string State;
+            switch (it.second) {
+                case FnState::DefinitelyDAC: {
+                    State = "dac";
+                    break;
+                }
+                case FnState::DefinitelyEF: {
+                    State = "ef";
+                    break;
+                }
+                case FnState::Both: {
+                    State = "both";
+                    break;
+                }
+                case FnState::Untouched: {
+                    State = "untouched";
+                    break;
+                }
+            }
+            funcfile << FuncName << "," << State << "\n";
+        }
+
+        // create loopfile
+        std::string LoopFileName = TestName + ".loop.csv";
+        (outs() << "\n------\nFileName: " << LoopFileName << "\n");
+        std::error_code EC2;
+        raw_fd_ostream loopfile(LoopFileName, EC2);
+        if (EC2) {
+            errs() << "Error opening file: " << EC2.message() << "\n";
+            return;
+        }
+        
+        // fill in loopfile
+        loopfile << "funcname,loopname,state\n";
+        for (auto it : LoopStates) {
+            // function names
+            std::string FuncName = it.first.str();
+            // loop static states
+            auto L2S = it.second;
+            for (auto it : L2S) {
+                // loop name
+                std::string LoopName = it.first.str();
+                // loop state
+                std::string State;
+                switch (it.second) {
+                    case FnState::DefinitelyDAC: {
+                        State = "dac";
+                        break;
+                    }
+                    case FnState::DefinitelyEF: {
+                        State = "ef";
+                        break;
+                    }
+                    case FnState::Both: {
+                        State = "both";
+                        break;
+                    }
+                    case FnState::Untouched: {
+                        State = "untouched";
+                        break;
+                    }
+                }
+                // output row
+                loopfile << FuncName << "," << LoopName << "," << State << "\n";
+            }
+        }
+
+    }
+private: 
+    // copy from getTaskIfTapirLoopStructure in lib/Analysis/TapirTaskInfo.cpp
+    Task *getTaskIfTapirLoopRelaxed(const Loop *L, TaskInfo *TI) {
+        if (!L || !TI)
+            return nullptr;
+
+        const BasicBlock *Header = L->getHeader();
+        const BasicBlock *Latch = L->getLoopLatch();
+
+        LLVM_DEBUG(dbgs() << "Analyzing loop: " << *L);
+
+        // Header must be terminated by a detach.
+        const DetachInst *DI = dyn_cast<DetachInst>(Header->getTerminator());
+        if (!DI) {
+            LLVM_DEBUG(dbgs() << "Loop header does not detach.\n");
+            return nullptr;
+        }
+
+        // Loop must have a unique latch.
+        if (!Latch) {
+            LLVM_DEBUG(dbgs() << "Loop does not have a unique latch.\n");
+            return nullptr;
+        }
+
+        // The loop latch must be the continuation of the detach in the header.
+        if (Latch != DI->getContinue()) {
+            LLVM_DEBUG(dbgs() <<
+                    "Continuation of detach in header is not the latch.\n");
+            return nullptr;
+        }
+
+        Task *T = TI->getTaskFor(DI->getDetached());
+        assert(T && "Detached block not mapped to a task.");
+        assert(T->getDetach() == DI && "Task mapped to unexpected detach.");
+
+        // All predecessors of the latch other than the header must be in the task.
+        for (const BasicBlock *Pred : predecessors(Latch)) {
+            if (Header == Pred) continue;
+            if (!T->encloses(Pred)) {
+            LLVM_DEBUG(dbgs() << "Latch has predecessor outside of spawned body.\n");
+            return nullptr;
+            }
+        }
+
+        // For each exit from the latch, any predecessor of that exit inside the loop
+        // must be the header or the latch.
+        for (const BasicBlock *Exit : successors(Latch)) {
+            for (const BasicBlock *ExitPred : predecessors(Exit)) {
+            if (!L->contains(ExitPred)) continue;
+            if (Header != ExitPred && Latch != ExitPred) {
+                LLVM_DEBUG(dbgs() <<
+                        "Loop branches to an exit of the latch from a block " <<
+                        "other than the header or latch.\n");
+                return nullptr;
+            }
+            }
+        }
+
+        return T;
+    }
 private:
   SmallSet<CallGraphNode *, 8> Callbacks;
   GlobalFnStatesTy GlobalFnStates;
   DenseMap<const Function *, LocalFnStatePass *> Fn2LFP;
-
   DenseMap<const Function *, AbstractCallSite::CallbackInfo *> Fn2CBI;
+
+  DenseMap<StringRef, DenseMap<StringRef, FnState>> LoopStates;
+  DenseMap<StringRef, FnState> FuncStates;
 };
 
 bool ParallelRegionReachable::runOnModule(llvm::Module &M) {    
@@ -511,303 +938,13 @@ bool ParallelRegionReachable::runOnModule(llvm::Module &M) {
     }
 
     // set statistics
-    printStatistic(CG);
+    flushStatistic(CG);
 
     // change loop metadata
     return markLoopMetaData();
 
 
 }
-
-void ParallelRegionReachable::printStatistic(CallGraph &CG) {
-    // print && udpate statistics for functions 
-    LLVM_DEBUG(dbgs() << "\n>>> printing global fn states...\n");
-    for (auto it : GlobalFnStates) {
-        Function *F = it.first;
-        LLVM_DEBUG(dbgs() << F->getName() << ": " << ppFnState(it.second) << "\n");
-    }
-
-    for (auto it : GlobalFnStates) {
-      //   const Function *F = it.first;
-      switch (it.second) {
-      case FnState::DefinitelyDAC: {
-        ++NumDefinitelyDAC;
-        // LLVM_DEBUG(dbgs() << "Function " << F->getName()
-        //        << " is definitelyDAC at the end!\n");
-        break;
-      }
-      case FnState::DefinitelyEF: {
-        ++NumDefinitelyEF;
-        // LLVM_DEBUG(dbgs() << "Function " << F->getName()
-        //        << " is definitelyEF at the end!\n";
-        break;
-      }
-      case FnState::Both: {
-        ++NumBoth;
-        // LLVM_DEBUG(dbgs() << "Function " << F->getName() << " is Both at the end!\n";
-        break;
-      }
-      case FnState::Untouched: {
-        ++NumUntouched;
-        // LLVM_DEBUG(dbgs() << "Function " << F->getName() << " is untouched at the end!\n");
-        break;
-      }
-      }
-    }
-
-    // print states inside all functions
-    LLVM_DEBUG(dbgs() << "\n>>> printing local fn states for each function...\n");
-    for (auto it : GlobalFnStates) {
-        Function *F = it.first;
-        LLVM_DEBUG(dbgs() << F->getName() << ": --------------------------------\n");
-        
-        for (auto &BB : *F) {
-            errs() << BB.getName() << ": " << ppFnState(Fn2LFP[F]->getLocalFnState(&BB)) << "\n";
-        }
-        LLVM_DEBUG(dbgs() << "\n");
-    }
-
-    // update statistics for TapirLoops / pfors
-    for (auto it : GlobalFnStates) {
-      Function *F = it.first;
-      if (Fn2LFP.find(F) == Fn2LFP.end())
-        continue;
-      LLVM_DEBUG(dbgs() << "\n" << F->getName() << ":\n");
-      TaskInfo &TI = getAnalysis<TaskInfoWrapperPass>(*F).getTaskInfo();
-      LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
-      
-      for (Task *T : TI) {
-        if (T->getDetach()) {
-            T->dump();
-            LLVM_DEBUG(dbgs() << "\n");
-        }
-      }
-      // if F only have rootTask, no pfor, skip
-      if (TI.isSerial()) 
-        continue;
-    
-      for (Loop *TopLevelLoop : LI) {
-        for (Loop *L : post_order(TopLevelLoop)) {
-          Task *T = getTaskIfTapirLoop(L, &TI);
-          if (!T) {
-            // L not a TapirLoop
-            continue;
-          }
-
-          // L is a TapirLoop
-          ++NumPFor;
-          L->dump();
-          LLVM_DEBUG(dbgs() << "\n");
-          if (L == TopLevelLoop) {
-            ++NumPForTopLevel;
-            // top-level TapirLoop needs precaution about their FnState
-            FnState LoopLFS = Fn2LFP[F]->getLocalFnState(L->getHeader());
-            switch (LoopLFS) {
-                case FnState::DefinitelyDAC: {
-                    ++NumPForDefinitelyDAC;
-                    ++NumPForTopLevelDefinitelyDAC;
-                    break;
-                } 
-                case FnState::DefinitelyEF: {
-                    ++NumPForDefinitelyEF;
-                    ++NumPForTopLevelDefinitelyEF;
-                    break;
-                } 
-                case FnState::Both: {
-                    ++NumPForBoth;
-                    ++NumPForTopLevelBoth;
-                    break;
-                } 
-                case FnState::Untouched: {
-                    ++NumPForUntouched;
-                    break;
-                } 
-            }
-          } else {
-            // inner TapirLoops are by default definitelyDAC
-            ++NumPForDefinitelyDAC;
-          }
-
-        }
-      }
-    }
- 
-    // update statistic for NumCallBacks
-    LLVM_DEBUG(dbgs() << "\n>>> printing indirect callsites & callbase uses....\n");
-    for (auto CB : Callbacks) {
-        LLVM_DEBUG(dbgs() << CB->getFunction()->getName() << " is a callback function!\n");
-        ++NumCallback;
-    }
-
-    for (auto it : GlobalFnStates) {
-      const Function *F = it.first;
-      assert(F && "printStatistic encounter callnode with null function!");
-
-      LLVM_DEBUG(dbgs() << "\nPrinting broker function instructions encountered in " << F->getName() << "...\n");
-      for (auto I = inst_begin(F), E = inst_end(F); I != E; ++I) {
-        if (const CallBase *CI = dyn_cast<CallBase>(&*I)) {
-            /// DEBUG: 
-            // LLVM_DEBUG(dbgs() << "\nIn " << F->getName() << ": \n");
-            // CI->dump();
-            // LLVM_DEBUG(dbgs() << "\n");
-            /////////
-
-            // SmallVector<const Use *, 4> CallbackUses;
-            // AbstractCallSite::getCallbackUses(*CI, CallbackUses);
-            // for (const Use *CBU : CallbackUses) {
-            //     LLVM_DEBUG(dbgs() << "  ACS: Found callback call: ");
-            //     CBU->get()->dump(); 
-            //     LLVM_DEBUG(dbgs() << "\n");
-            // }
-            
-            // for (auto &U : CI->operands()) {
-            //     LLVM_DEBUG(dbgs() << "[U] ");
-            //     U.get()->dump();
-            //     // LLVM_DEBUG(dbgs()<< ": \n");
-            //     if (auto ACS = AbstractCallSite(&U)) {
-            //         if (ACS.isIndirectCall()) {
-            //             LLVM_DEBUG(dbgs() << "  ACS: Found indirect call: ");
-            //             U.get()->dump();
-            //             LLVM_DEBUG(dbgs() << "\n");
-            //             ++NumIndirectCall;
-            //         } else if (ACS.isCallbackCall()) {
-            //             LLVM_DEBUG(dbgs() << "  ACS: Found callback call: ");
-            //             U.get()->dump();
-            //             LLVM_DEBUG(dbgs() << "\n");
-            //         }
-            //         // else if (ACS.isDirectCall()) {
-            //         //     LLVM_DEBUG(dbgs() << "  ACS: Found direct call: ");
-            //         //     U.get()->dump();
-            //         //     LLVM_DEBUG(dbgs() << "\n");
-            //         // }
-            //     }
-            // }
-
-            Function *Broker = CI->getCalledFunction();
-            if (!Broker)
-                continue;
-            for (unsigned i = 0; i < CI->arg_size(); ++i) {
-                Value *arg = CI->getArgOperand(i);
-                assert(arg && "Callbase has null argument");
-                if (PointerType *ptrTy = dyn_cast<PointerType>(arg->getType())) {
-                    if (ptrTy->getElementType()->isFunctionTy()) {
-                        CI->dump();
-                        LLVM_DEBUG(dbgs() << "\n");
-                        ++NumFnArg;
-                    }
-                }
-            }
-        }
-      }
-    }
-}
-
-bool ParallelRegionReachable::markLoopMetaData() {
-    bool Changed = false;
-
-    // update metadata for all tapir loop
-    for (auto it : GlobalFnStates) {
-      Function *F = it.first;
-      if (Fn2LFP.find(F) == Fn2LFP.end())
-        continue;
-      LLVM_DEBUG(dbgs() << "\n" << F->getName() << ":\n");
-
-      // refresh function pass analysis results
-      TaskInfo &TI = getAnalysis<TaskInfoWrapperPass>(*F).getTaskInfo();
-      LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*F).getLoopInfo();
-
-      // get context
-      Module *M = F->getParent();
-      LLVMContext &Context = M->getContext();
-      
-      // if F only have rootTask, no pfor, skip
-      if (TI.isSerial()) 
-        continue;
-    
-      for (Loop *TopLevelLoop : LI) {
-        for (Loop *L : post_order(TopLevelLoop)) {
-          if (!getTaskIfTapirLoop(L, &TI)) {
-            // L not a TapirLoop
-            continue;
-          }
-          // create loop metadata depending on analysis result
-          MDNode *NewLoopID = nullptr;
-
-          if (L == TopLevelLoop) {
-            // top-level TapirLoop needs precaution about their FnState
-            FnState LoopLFS = Fn2LFP[F]->getLocalFnState(L->getHeader());
-            switch (LoopLFS) {
-                case FnState::DefinitelyDAC: {
-                    NewLoopID = MDNode::get(Context, MDString::get(Context, "llvm.loop.prr.dac"));
-                    break;
-                } 
-                case FnState::DefinitelyEF: {
-                    NewLoopID = MDNode::get(Context, MDString::get(Context, "llvm.loop.prr.ef"));
-                    break;
-                } 
-                case FnState::Both: {
-                    NewLoopID = MDNode::get(Context, MDString::get(Context, "llvm.loop.prr.both"));
-                    break;
-                } 
-            }
-          } else {
-            // inner TapirLoops are by default definitelyDAC
-            NewLoopID = MDNode::get(Context, MDString::get(Context, "llvm.loop.prr.dac"));
-          }
-
-          if (NewLoopID) {
-            MDNode *LoopID = L->getLoopID();
-            MDNode *MDN = llvm::makePostTransformationMetadata(
-                    Context, LoopID, {"llvm.loop.prr."}, {NewLoopID});
-            L->setLoopID(MDN);
-            
-            // update Change
-            Changed = true;
-          }
-        }
-      }
-    }
-
-    return Changed;
-}
-
-void ParallelRegionReachable::toJSON() const {
-    json::Object jsonObj;
-    jsonObj["NumFn"] = static_cast<uint64_t>(NumFn);
-    jsonObj["NumDefinitelyDAC"] = static_cast<uint64_t>(NumDefinitelyDAC);
-    jsonObj["NumDefinitelyEF"] = static_cast<uint64_t>(NumDefinitelyEF);
-    jsonObj["NumBoth"] = static_cast<uint64_t>(NumBoth);
-    jsonObj["NumUntouched"] = static_cast<uint64_t>(NumUntouched);
-    jsonObj["NumCallback"] = static_cast<uint64_t>(NumCallback);
-    jsonObj["NumFnArg"] = static_cast<uint64_t>(NumFnArg);
-
-    jsonObj["NumPFor"] = static_cast<uint64_t>(NumPFor);
-    jsonObj["NumPForDefinitelyDAC"] = static_cast<uint64_t>(NumPForDefinitelyDAC);
-    jsonObj["NumPForDefinitelyEF"] = static_cast<uint64_t>(NumPForDefinitelyEF);
-    jsonObj["NumPForBoth"] = static_cast<uint64_t>(NumPForBoth);
-    jsonObj["NumPForUntouched"] = static_cast<uint64_t>(NumPForUntouched);
-
-    jsonObj["NumPForTopLevel"] = static_cast<uint64_t>(NumPForTopLevel);
-    jsonObj["NumPForTopLevelDefinitelyDAC"] = static_cast<uint64_t>(NumPForTopLevelDefinitelyDAC);
-    jsonObj["NumPForTopLevelDefinitelyEF"] = static_cast<uint64_t>(NumPForTopLevelDefinitelyEF);
-    jsonObj["NumPForTopLevelBoth"] = static_cast<uint64_t>(NumPForTopLevelBoth);
-
-    //
-    json::Value jsonVal = std::move(jsonObj);
-
-    // output to file
-    std::string FileName = TestName + ".json";
-    LLVM_DEBUG(dbgs() << "\n------\nFileName: " << FileName << "\n");
-    std::error_code EC;
-    raw_fd_ostream file(FileName, EC);
-    if (EC) {
-        errs() << "Error opening file: " << EC.message() << "\n";
-        return;
-    }
-    file << formatv("{0:2}", jsonVal);
-}
-
-
 } // namespace
 
 char ParallelRegionReachable::ID = 0;
@@ -820,29 +957,12 @@ char ParallelRegionReachable::ID = 0;
 static const char pr_name[] =
     "Conduct CallGraph Analysis to determine "
     "outlining fashion of functions called inside parallel-regions";
-static void* initializeParallelRegionReachablePassOnce(PassRegistry &Registry) {
-    initializeTaskInfoWrapperPassPass(Registry);
-    initializeCallGraphWrapperPassPass(Registry);
-    PassInfo *PI = new PassInfo(
-                    pr_name, PR_NAME, &ParallelRegionReachable::ID,
-                    PassInfo::NormalCtor_t(callDefaultCtor<ParallelRegionReachable>),
-                    false, false);
-    Registry.registerPass(*PI, true);
-    return PI;
-}
-static llvm::once_flag InitializeParallelRegionReachablePassFlag;
-void initializeParallelRegionReachablePassOnce(PassRegistry &Registry) {
-    llvm::call_once(InitializeParallelRegionReachablePassFlag,
-                    initializeParallelRegionReachablePassOnce, std::ref(Registry));
-}
-
-
-// INITIALIZE_PASS(ParallelRegionReachable, PR_NAME, pr_name, false, false)
-// INITIALIZE_PASS_BEGIN(ParallelRegionReachable, PR_NAME, pr_name, false, false) 
-// INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
-// INITIALIZE_PASS_DEPENDENCY(TaskInfoWrapperPass)
-// INITIALIZE_PASS_END(ParallelRegionReachable, PR_NAME, pr_name, false, false)
+INITIALIZE_PASS_BEGIN(ParallelRegionReachable, PR_NAME, pr_name, false, true) 
+INITIALIZE_PASS_DEPENDENCY(CallGraphWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(TaskInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
+INITIALIZE_PASS_END(ParallelRegionReachable, PR_NAME, pr_name, false, true)
 
 namespace llvm {
-Pass *createParallelRegionReachablePass() { return new ParallelRegionReachable(); }
+ModulePass *createParallelRegionReachablePass() { return new ParallelRegionReachable(); }
 } // namespace llvm

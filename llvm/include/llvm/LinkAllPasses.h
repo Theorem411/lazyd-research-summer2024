@@ -265,7 +265,8 @@ namespace {
       (void) llvm::createHandleUnwindPollPass();
       (void) llvm::createLazyDTransPass();
       (void) llvm::createEagerDTransPass();
-      (void) llvm::createParallelRegionPass();
+      // debug
+      (void) llvm::createParallelRegionReachablePass();
 #if 0
       (void) llvm::createTaskSimplifyPass();
 #endif

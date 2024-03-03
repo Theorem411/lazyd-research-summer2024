@@ -1,4 +1,5 @@
 add_llvm_component_library(LLVMULI
+  ULI.cpp
   ULIPollingInsertion.cpp
   ULIIntrinsicToExternCall.cpp
   SendUli.cpp

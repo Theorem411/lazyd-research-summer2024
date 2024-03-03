@@ -63,6 +63,9 @@ void initializeTarget(PassRegistry&);
 /// Initialize all passes linked into the TapirOpts library.
 void initializeTapirOpts(PassRegistry&);
 
+/// Initialize all passes linked into the ULI library.
+void initializeULI(PassRegistry&);
+
 void initializeAAEvalLegacyPassPass(PassRegistry&);
 void initializeAAResultsWrapperPassPass(PassRegistry&);
 void initializeADCELegacyPassPass(PassRegistry&);
@@ -489,7 +492,8 @@ void initializeWinEHPreparePass(PassRegistry&);
 void initializeWriteBitcodePassPass(PassRegistry&);
 void initializeWriteThinLTOBitcodePass(PassRegistry&);
 void initializeXRayInstrumentationPass(PassRegistry&);
-
+// debug
+void initializeParallelRegionReachablePass(PassRegistry&);
 } // end namespace llvm
 
 #endif // LLVM_INITIALIZEPASSES_H
