@@ -19,6 +19,11 @@ using namespace std;
 
 #define DEBUG_TYPE "instrumentpfor"
 
+static cl::opt<bool> DisableUnwindPoll2(
+"lazy-disable-unwind-polling2", cl::init(false), cl::NotHidden,
+  cl::desc("Do not insert any polling call (default = off)"));
+
+
 namespace {
   struct InstrumentPfor : public FunctionPass {
     /// Pass identification, replacement for type id.
@@ -247,10 +252,11 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   B.CreateStore(L_ONE, workExists);
 #else
   GlobalVariable* reqlocal = GetGlobalVariable("req_local", RequestChannelTy, *M, true);
-  StoreSTyField(B, DL, RequestChannelTy,
-		B.getInt8(1),
-		reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
-		AtomicOrdering::NotAtomic);
+  if(!DisableUnwindPoll2)
+    StoreSTyField(B, DL, RequestChannelTy,
+		  B.getInt8(1),
+		  reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
+		  AtomicOrdering::NotAtomic);
 #endif
 
 }
@@ -279,10 +285,12 @@ bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)
     auto workExists = B.CreateConstInBoundsGEP2_64(IntegerType::getInt64Ty(C)->getPointerTo(), prequestcell, 0, 1 );
     B.CreateStore(L_ONE, workExists);
 #else
-    StoreSTyField(B, DL, RequestChannelTy,
-		  B.getInt8(1),
-		  reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
-		  AtomicOrdering::NotAtomic);
+
+    if(!DisableUnwindPoll2)
+      StoreSTyField(B, DL, RequestChannelTy,
+		    B.getInt8(1),
+		    reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
+		    AtomicOrdering::NotAtomic);
 #endif
   }
 
