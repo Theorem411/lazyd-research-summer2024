@@ -3766,7 +3766,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   // Why?
   // qsort will generate an error without this
   if(F.getName().contains(F.getParent()->getSourceFileName())) {
-    errs() << "Function " << F.getName() << " will not have an unwinder\n";
+    //errs() << "Function " << F.getName() << " will not have an unwinder\n";
     F.addFnAttr(Attribute::NoUnwindPath);
   }
 
