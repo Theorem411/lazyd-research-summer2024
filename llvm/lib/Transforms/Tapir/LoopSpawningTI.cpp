@@ -905,6 +905,8 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
   Function* SeqLoopSpawnFcn = CloneFunction(Helper, VMap);
   SeqLoopSpawnFcn->setName(SeqLoopSpawnFcn->getName() + "_helper_loop");
 
+
+  Helper->addFnAttr("par-for-par", "true");
   SeqLoopSpawnFcn->addFnAttr("poll-at-loop", "true");
   SeqLoopSpawnFcn->addFnAttr("cilk-pfor-fcn", "true");
   SeqLoopSpawnFcn->addFnAttr(Attribute::NoInline);

@@ -205,16 +205,6 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   Function* ui_disable_region = Intrinsic::getDeclaration(M, Intrinsic::ui_disable_region);
   Function* ui_enable_region = Intrinsic::getDeclaration(M, Intrinsic::ui_enable_region);
 
-//#define UI_REGION
-#ifdef UI_REGION
-  B.CreateCall(ui_disable_region);
-#endif
-
-//#define ENABLE_LAZY_ENDISUI
-#ifdef ENABLE_LAZY_ENDISUI
-  B.CreateStore(ZERO, guiOn);
-#endif
-
 #define NO_UNWIND_POLLPFOR
 #ifdef NO_UNWIND_POLLPFOR
   auto nextIteration = B.CreateAdd(CanonicalIV, constStep->getValue());
@@ -228,9 +218,6 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
 
 #endif
 
-#ifdef UI_REGION
-  B.CreateCall(ui_enable_region);
-#endif
 
   B.CreateStore(nextIteration, argsCtx, true);
   //B.CreateStore(ONE, guiOn, true);
@@ -239,25 +226,12 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   //B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
   B.SetInsertPoint(Latch->getFirstNonPHIOrDbgOrLifetime());
 
-#ifdef ENABLE_LAZY_ENDISUI
-  B.CreateStore(ONE, guiOn);
-#endif
-
-#if 0
-  //B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
-  //B.SetInsertPoint(Latch->getTerminator());
-  GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(C), 32), *M, true);
-  Value* L_ONE = B.getInt64(1);
-  auto workExists = B.CreateConstInBoundsGEP2_64(IntegerType::getInt64Ty(C)->getPointerTo(), prequestcell, 0, 1 );
-  B.CreateStore(L_ONE, workExists);
-#else
   GlobalVariable* reqlocal = GetGlobalVariable("req_local", RequestChannelTy, *M, true);
   if(!DisableUnwindPoll2)
     StoreSTyField(B, DL, RequestChannelTy,
 		  B.getInt8(1),
 		  reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
 		  AtomicOrdering::NotAtomic);
-#endif
 
 }
 
@@ -267,11 +241,7 @@ bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)
   const DataLayout &DL = M->getDataLayout();
   LLVMContext& C = M->getContext();
 
-#if 0
-  GlobalVariable* prequestcell = GetGlobalVariable("request_cell", ArrayType::get(IntegerType::getInt64Ty(C), 32), *M, true);
-#else
   GlobalVariable* reqlocal = GetGlobalVariable("req_local", RequestChannelTy, *M, true);
-#endif
   IRBuilder<> B(F.getContext());
   Value* L_ONE = B.getInt64(1);
   //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -281,17 +251,12 @@ bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)
   if(bDetachExists) {
     B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
 
-#if 0
-    auto workExists = B.CreateConstInBoundsGEP2_64(IntegerType::getInt64Ty(C)->getPointerTo(), prequestcell, 0, 1 );
-    B.CreateStore(L_ONE, workExists);
-#else
 
     if(!DisableUnwindPoll2)
       StoreSTyField(B, DL, RequestChannelTy,
 		    B.getInt8(1),
 		    reqlocal, RequestChannelFields::potentialParallelTask, /*isVolatile=*/false,
 		    AtomicOrdering::NotAtomic);
-#endif
   }
 
   if(!(F.getFnAttribute("poll-at-loop").getValueAsString()=="true")) return false;
@@ -300,20 +265,6 @@ bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)
   for (Loop *L : LI) {
     SmallVector<Loop *, 8> VisitStack = {L};
     instrumentLoop(F, SE, L);
-#if 0
-    while (!VisitStack.empty()) {
-      Loop *CurrentLoop = VisitStack.pop_back_val();
-      auto &SubLoops    = CurrentLoop->getSubLoops();
-
-      if (!SubLoops.empty()) {
-	for (Loop *SubLoop : SubLoops)
-	  VisitStack.push_back(SubLoop);
-      } else {
-	instrumentLoop(F, SE, CurrentLoop);
-      }
-    }
-#endif
-
   }
   return true;
 }
