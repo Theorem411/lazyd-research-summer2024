@@ -891,7 +891,7 @@ PassBuilder::buildModuleSimplificationPipeline(OptimizationLevel Level,
   EarlyFPM.addPass(LowerExpectIntrinsicPass());
   EarlyFPM.addPass(SendUliPass());
   EarlyFPM.addPass(ULIIntrinsicToExternCallPass());
-  //EarlyFPM.addPass(HandleUnwindPollPass());
+  EarlyFPM.addPass(HandleUnwindPollPass());
 
   EarlyFPM.addPass(SimplifyCFGPass());
   EarlyFPM.addPass(SROAPass());

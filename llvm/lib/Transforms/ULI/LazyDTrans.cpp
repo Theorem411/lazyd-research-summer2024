@@ -4166,7 +4166,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     // Get the predecessor
     for( pred_iterator PI = pred_begin(parent); PI != pred_end(parent); PI++ ) {
       BasicBlock* pred = *PI;
-      // Check if predecessor in the reachingBB
+      // Check if predecessor is not in the reachingBB
       if(reachingBB.find(pred) == reachingBB.end()) {
         B.SetInsertPoint(pred->getTerminator());
 #define USE_CHANNEL
