@@ -266,7 +266,7 @@ namespace {
       (void) llvm::createLazyDTransPass();
       (void) llvm::createEagerDTransPass();
       // debug
-      (void) llvm::createParallelRegionReachablePass();
+      (void) llvm::createParallelRegionWrapperPass();
 #if 0
       (void) llvm::createTaskSimplifyPass();
 #endif

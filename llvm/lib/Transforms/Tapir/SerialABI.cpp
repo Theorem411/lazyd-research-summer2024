@@ -15,6 +15,7 @@
 #include "llvm/Analysis/TapirTaskInfo.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/TapirUtils.h"
+#include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
 

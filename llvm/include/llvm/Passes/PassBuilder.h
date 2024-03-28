@@ -34,6 +34,7 @@
 #include "llvm/Transforms/ULI/InsertLazyDEnDisUI.h"
 #include "llvm/Transforms/ULI/InstrumentPfor.h"
 #include "llvm/Transforms/ULI/LazyDTrans.h"
+#include "llvm/Transforms/ULI/ParallelRegion.h"
 
 
 #include <vector>

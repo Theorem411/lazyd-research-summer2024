@@ -21,5 +21,5 @@ using namespace llvm;
 
 /// initializeULI - Initialize all passes linked into the ULI library
 void llvm::initializeULI(PassRegistry &Registry) {
-    initializeParallelRegionReachablePass(Registry);
+    initializeParallelRegionWrapperPassPass(Registry);
 }
