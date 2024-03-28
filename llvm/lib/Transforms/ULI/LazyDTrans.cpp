@@ -245,6 +245,18 @@ namespace {
     return globalVar;
   }
 
+
+  GlobalVariable* GetGlobalVariableNoLink(const char* GlobalName, Type* GlobalType, Module& M, bool localThread=false){
+    GlobalVariable* globalVar = M.getNamedGlobal(GlobalName);
+    if(globalVar){
+      return globalVar;
+    }
+    globalVar = dyn_cast<GlobalVariable>(M.getOrInsertGlobal(GlobalName, GlobalType));
+    if(localThread)
+      globalVar->setThreadLocal(true);
+    return globalVar;
+  }
+
   /// \brief Helper to find a function with the given name, creating it if it
   /// doesn't already exist. If the function needed to be created then return
   /// false, signifying that the caller needs to add the function body.
@@ -1247,7 +1259,16 @@ namespace {
   void instrumentLoop (Function *F, Loop* CurrentLoop, Value* bHaveUnwindAlloc) {
     Module *M = F->getParent();
     LLVMContext& C = M->getContext();
-    IRBuilder<> B(M->getContext());
+    IRBuilder<> B(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+    const DataLayout &DL = M->getDataLayout();
+    Type *VoidPtrTy  = PointerType::getInt8PtrTy(C);
+
+    // TODO: CNP At the start of the function record the return address
+    auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress, {VoidPtrTy});
+    Value* myRA = B.CreateCall(addrOfRA);
+    myRA = B.CreateBitCast(myRA, IntegerType::getInt64Ty(C)->getPointerTo());
+    Value* myRAStorage = B.CreateAlloca(IntegerType::getInt64Ty(C), DL.getAllocaAddrSpace(), nullptr, "myra");
+    B.CreateStore(B.CreateLoad(IntegerType::getInt64Ty(C), myRA, 1), myRAStorage, true);
 
     // Inner most loop, insert ULI polling.
     BasicBlock *HeaderBlock = CurrentLoop->getHeader();
@@ -1273,21 +1294,29 @@ namespace {
 #endif
 
         Instruction *term = HeaderBlock->getTerminator();
-        //B.SetInsertPoint(term);
-        B.SetInsertPoint(HeaderBlock->getFirstNonPHIOrDbgOrLifetime());
+        B.SetInsertPoint(term);
+        //B.SetInsertPoint(HeaderBlock->getFirstNonPHIOrDbgOrLifetime());
 
 
-        Value* bHaveUnwind = B.CreateLoad(Type::getInt1Ty(C), bHaveUnwindAlloc, 1);
-        Value* haveBeenUnwind = B.CreateICmpEQ(bHaveUnwind, B.getInt1(1));
+
+	// TODO: CNP Check if return address is still the same
+	Value* myRAVal = B.CreateLoad(IntegerType::getInt64Ty(C), myRAStorage, 1);
+	auto myCurrentRA = B.CreateCall(addrOfRA);
+	myCurrentRA->setCanReturnTwice();
+	auto myCurrentRAVal = B.CreateBitCast(myCurrentRA, IntegerType::getInt64Ty(C)->getPointerTo());
+	myCurrentRAVal = B.CreateLoad(IntegerType::getInt64Ty(C), myCurrentRAVal, 1);
+
+        //Value* bHaveUnwind = B.CreateLoad(Type::getInt1Ty(C), bHaveUnwindAlloc, 1);
+        //Value* haveBeenUnwind = B.CreateICmpEQ(bHaveUnwind, B.getInt1(1));
+
+	Value* haveBeenUnwind = B.CreateICmpNE(myRAVal, myCurrentRAVal);
 
         BasicBlock* loopUnwound = BasicBlock::Create(C, "loop.unwounded", F);
-
         B.CreateCondBr(haveBeenUnwind, loopUnwound, afterBB);
 
         term->eraseFromParent();
 
         B.SetInsertPoint(loopUnwound);
-
         B.CreateRetVoid();
       }
 
@@ -2262,6 +2291,9 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   GlobalVariable* gUnwindStackCnt = GetGlobalVariable("unwindStackCnt", Int32Ty, *M, true);
   // The thread id
   GlobalVariable* gThreadId = GetGlobalVariable("threadId", Int32Ty, *M, true);
+  // Number of par-for-par encountered
+  GlobalVariable* gParForParEncountered = GetGlobalVariable("parForParEncountered", Int32Ty, *M, true);
+
   // Store the original return address (this can be pass through register)
   GlobalVariable* gPrevRa = GetGlobalVariable("prevRa", Int64Ty, *M, true);
   // Store the original return address (this can be pass through register)
@@ -2303,7 +2335,6 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   //saveContext->addFnAttr(Attribute::Forkable);
   auto res2 = B.CreateCall(saveContext, {B.CreateBitCast(gPTmpContext, IntegerType::getInt8Ty(C)->getPointerTo()), NULL8});
   res2->setTailCall(true);
-
   // TODO: How does this interact with stacklet
 
   // Get the SP and BP to get my return address
@@ -2338,7 +2369,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     BasicBlock* stackAlreadyUnwindCheckBB = BasicBlock::Create(C, "unwind.path.already.unwind.check", &F);
 
     Value* haveBeenUnwind = nullptr;
-    if(bHaveFork) {
+    if(bHaveFork && !(F.getFnAttribute("par-for-par").getValueAsString()=="true")) {
       Value* bHaveUnwind = B.CreateLoad(Int1Ty, bHaveUnwindAlloc, 1);
       haveBeenUnwind = B.CreateICmpEQ(bHaveUnwind, B.getInt1(1));
     } else {
@@ -2376,10 +2407,12 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     // Basic block for first time unwind
     B.SetInsertPoint(firstTimeUnwindBB);
 
+    B.CreateStore(B.getInt32(0), gParForParEncountered);
+
     // If the function has poll-at loop attribute
     if(F.getFnAttribute("poll-at-loop").getValueAsString()=="true") {
       if(EnableUnwindOnce && !DisableUnwindPoll ) {
-        B.CreateStore(B.getInt1(1), bHaveUnwindAlloc);
+        //B.CreateStore(B.getInt1(1), bHaveUnwindAlloc);
       }
     }
 
@@ -2417,6 +2450,15 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
       // Check if the return address has work to do
       Value* fastPathCont = B.CreateCast(Instruction::PtrToInt, BlockAddress::get(detachBB, 0), IntegerType::getInt64Ty(C));
       auto isEqOne1 = (B.CreateICmpEQ(rai, fastPathCont));
+
+      if(F.getFnAttribute("par-for-par").getValueAsString()=="true") {
+	Value* bHaveUnwind = B.CreateLoad(Int1Ty, bHaveUnwindAlloc, 1);
+	// If already encounted a par-for-par
+	Value* bHaveEncountered = B.CreateLoad(Int32Ty, gParForParEncountered, 1);
+	Value* comb = B.CreateOr(B.CreateICmpEQ(bHaveEncountered, B.getInt32(1)), bHaveUnwind);
+	isEqOne1 = B.CreateAnd(isEqOne1, comb);
+      }
+
       B.CreateCondBr(isEqOne1, workExistsBB, noworkBB);
 
       B.SetInsertPoint(workExistsBB);
@@ -2605,13 +2647,21 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     B.SetInsertPoint(nextBlock);
 
     // Store the original return address to child return address
+
+    if(F.getFnAttribute("par-for-par").getValueAsString()=="true") {
+      if(EnableUnwindOnce && !DisableUnwindPoll ) {
+        B.CreateStore(B.getInt1(1), bHaveUnwindAlloc);
+	B.CreateStore(B.getInt32(1), gParForParEncountered);
+      }
+    }
+
     Value * gPrevRaToVoid = B.CreateCast(Instruction::IntToPtr, gPrevRaVal, IntegerType::getInt8Ty(C)->getPointerTo());
     B.CreateStore(gPrevRaToVoid, pChildRA);
     //}
 
     if(F.getFnAttribute("poll-at-loop").getValueAsString()=="true") {
       if(EnableUnwindOnce && !DisableUnwindPoll ) {
-        B.CreateStore(B.getInt1(1), bHaveUnwindAlloc);
+        //B.CreateStore(B.getInt1(1), bHaveUnwindAlloc);
       }
     }
 
@@ -3362,7 +3412,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   // Why?
   // qsort will generate an error without this
   if(F.getName().contains(F.getParent()->getSourceFileName())) {
-    errs() << "Function " << F.getName() << " will not have an unwinder\n";
+    //errs() << "Function " << F.getName() << " will not have an unwinder\n";
     F.addFnAttr(Attribute::NoUnwindPath);
   }
 
@@ -3831,7 +3881,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     // Get the predecessor
     for( pred_iterator PI = pred_begin(parent); PI != pred_end(parent); PI++ ) {
       BasicBlock* pred = *PI;
-      // Check if predecessor in the reachingBB
+      // Check if predecessor is not in the reachingBB
       if(reachingBB.find(pred) == reachingBB.end()) {
         B.SetInsertPoint(pred->getTerminator());
         if(!DisableUnwindPoll)

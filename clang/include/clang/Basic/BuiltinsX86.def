@@ -2187,6 +2187,14 @@ BUILTIN(__builtin_ui_clui, "v", "")
 BUILTIN(__builtin_ui_testui, "v", "")
 BUILTIN(__builtin_ui_senduipi, "vULLi", "")
 
+// Use for instrumentation
+// First argument: void pointer (function pointer)
+// Second argument: void pointer (not used)
+// Third argument: unsigned long (trip count)
+// Fourth argument: long (graisize)
+// Fifth argument: int (depth)
+BUILTIN(__builtin_uli_lazyd_inst, "vv*v*ULLiLLii", "")
+
 // Builtin to expose multiretcall. Return void, first paramter: number of arguments, second paramater: number of indirect destination, third parameter: function name
 // Remaning args: arguments to function and indirect destination
 
