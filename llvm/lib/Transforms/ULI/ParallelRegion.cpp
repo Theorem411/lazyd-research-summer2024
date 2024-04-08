@@ -71,8 +71,8 @@ raw_ostream &llvm::operator<<(raw_ostream &os, PRState prs) {
 
 void LocalDataflow::initializeBoundaryCondition(PRState initFS) {
     for (auto &BB : *F) {
-    inLFS[&BB] = PRState::Untouched;
-    outLFS[&BB] = PRState::Untouched;
+        inLFS[&BB] = PRState::Untouched;
+        outLFS[&BB] = PRState::Untouched;
     }
     const BasicBlock *Entry = &F->getEntryBlock();
     inLFS[Entry] = initFS;
@@ -122,8 +122,14 @@ void LocalDataflow::transferPRState(const BasicBlock *BB, TaskInfo &TI) {
                     // if BB marks the exit of a depth-1 task, then stepping out
                     // would mean the termination of parallel region
                     if (T->isTaskExiting(BB)) {
-                        // BB is the task exit into a serial region
-                        outLFS[BB] = PRState::DefinitelyEF;
+                        // BB is the task exit into a serial region 
+                        if (outLFS[T->getDetach()->getParent()] == PRState::Untouched) {
+                            /// BUG: during initial phases, when func entrance has untouched state, the output should propgate DefEF; Untouched states should not be propagate to callsites within func body
+                            outLFS[BB] = PRState::DefinitelyEF;
+                        } else {
+                            ///BUG: exit state should be ambient task boundary in-state
+                            outLFS[BB] = outLFS[T->getDetach()->getParent()]; // PRState::DefinitelyEF;
+                        }
                     } else {
                         // BB not task exit, still inside a parallel region
                         outLFS[BB] = PRState::DefinitelyDAC;
@@ -131,7 +137,14 @@ void LocalDataflow::transferPRState(const BasicBlock *BB, TaskInfo &TI) {
                 }
             } else {
                 // BB is in serial region
-                outLFS[BB] = PRState::DefinitelyEF;
+                /// BUG: exit state should be ambient func in-state
+                if (inLFS[BB] == PRState::Untouched) {
+                    /// BUG: during initial phases, when func entrance has untouched state, the output should propgate DefEF; Untouched states should not be propagate to callsites within func body
+                    outLFS[BB] = PRState::DefinitelyEF;
+                } else {
+                    /// BUG: exit state should be ambient func state
+                    outLFS[BB] = inLFS[BB]; // PRState::DefinitelyEF;
+                }
             }
             break;
         }
@@ -270,24 +283,7 @@ void ParallelRegion::initializeFuncPRState(CallGraph &CG,
             }
         }
     }
-    // for (Function *Callee : FunInFunArgs) {
-    //     if (Callee->isDeclaration()) {
-    //         continue;
-    //     }
-
-    //     // for each top-level pfor in callee
-    //     TaskInfo &TI = getTI(*Callee);
-    //     LoopInfo &LI = getLI(*Callee);
-    //     if (TI.isSerial()) 
-    //         continue;
-    //     for (Loop *TopLevelLoop : LI) {
-    //         if (llvm::getTaskIfTapirLoopStructure(TopLevelLoop, &TI)) {
-    //             // L is a top level TapirLoop with a state of BOTH 
-    //             BasicBlock *H = TopLevelLoop->getHeader();
-    //         }
-    //     }
-    // }
-
+    
     // initialize function in-state to Untouch/Both
     for (auto &it : CG) {
         Function *F = it.second->getFunction();
@@ -375,11 +371,11 @@ void ParallelRegion::populateLoopPRState(Function *F, TaskInfo &TI, LoopInfo &LI
                 /// plus my dataflow propagation should already take care of this
 
                 // if (L == TopLevelLoop) {
-                //     LoopPRState[F][L] = LDF[F]->getIn(L->getHeader()); // DEBUG: original impl used getOut!
+                //     LoopPRState[F][L] = LDF[F]->getIn(L->getHeader()); // DEBUG: original implementation used getOut!
                 // } else {
                 //     LoopPRState[F][L] = PRState::DefinitelyDAC;
                 // }
-                LoopPRState[F][L] = LDF[F]->getIn(L->getHeader()); // DEBUG: original impl used getOut!
+                LoopPRState[F][L] = LDF[F]->getIn(L->getHeader()); // DEBUG: original implementation used getOut!
                 
                 // DEBUG 
                 // if (F->getName() == "test_correctness") {
