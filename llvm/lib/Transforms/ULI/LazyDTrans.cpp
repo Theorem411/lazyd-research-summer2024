@@ -1,5 +1,6 @@
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/DominanceFrontier.h"
 #include "llvm/Analysis/LoopInfo.h"
@@ -563,6 +564,62 @@ namespace {
     llvm::InlineFunction(*(hashVal), ifi, nullptr, true);
     Fn->addFnAttr(Attribute::NoUnwindPath);
     return Fn;
+  }
+
+  Value* FindRootArgument0(Value* Src, DominatorTree& DT, Instruction* insertPt) {
+    if(isa<Argument>(Src))
+      return Src;
+
+    if(isa<GlobalVariable>(Src))
+      return Src;
+
+    if(!isa<Instruction>(Src))
+      return nullptr;
+
+    if(DT.dominates(Src, insertPt))
+      return Src;
+
+    Instruction* SInst = dyn_cast<Instruction>(Src);
+    errs()<< "Sinst: \n";
+    SInst->dump();
+    unsigned nOp = SInst->getNumOperands();
+    errs() << "Argument \n:";
+    for (unsigned i = 0; i<nOp; i++) {
+      auto opVal = SInst->getOperand(i);
+      errs() << "i: " << i << "\n";
+      opVal->dump();
+      return FindRootArgument0(opVal, DT, insertPt);
+    }
+  }
+
+  // Rematerialize instruction to prevent function not dominating
+  // TODO" Fix this, cause infinite loop, add a hash table
+  void FindPathToDst(Value *Src, Value *Dst, SmallVector<Instruction*, 8>& Insts2Clone, SmallSet<Instruction*, 8>& InstsSet) {
+    if(!isa<Instruction>(Src))
+      return;
+
+    errs() << "Rematerialize:\n";
+    Instruction* SInst = dyn_cast<Instruction>(Src);
+    if(InstsSet.count(SInst) > 0)
+      return;
+
+    InstsSet.insert(SInst);
+
+    if(!isa<PHINode>(SInst))
+      Insts2Clone.push_back(dyn_cast<Instruction>(SInst));
+    SInst->dump();
+    if (Src == Dst)
+      return;
+
+    errs() << "Argument in find path to dst\n";
+    unsigned nOp = SInst->getNumOperands();
+    for (unsigned i = 0; i<nOp; i++) {
+      auto opVal = SInst->getOperand(i);
+      // Push copied instruction into set
+      errs() << "i: " << i << "\n";
+      opVal->dump();
+      FindPathToDst(opVal, Dst, Insts2Clone, InstsSet);
+    }
   }
 
   // Create helper function
@@ -1173,7 +1230,7 @@ namespace {
     auto *NewModule = Wrapper->getParent();
     if (OldModule && NewModule && OldModule != NewModule &&
         DIFinder.compile_unit_count()) {
-      //outs() << "Never going to be executed?\n";
+      //errs() << "Never going to be executed?\n";
       auto *NMD = NewModule->getOrInsertNamedMetadata("llvm.dbg.cu");
       // Avoid multiple insertions of the same DICompileUnit to NMD.
       SmallPtrSet<const void *, 8> Visited;
@@ -1378,9 +1435,9 @@ namespace {
     BasicBlock *HeaderBlock = CurrentLoop->getHeader();
 #if 0
     BasicBlock *Latch = CurrentLoop->getLoopLatch();
-    outs() << "Loop latch in Clone.cpp\n";
+    errs() << "Loop latch in Clone.cpp\n";
     if(Latch) {
-      outs() << "Loop latch name: " << Latch->getName() << "\n";
+      errs() << "Loop latch name: " << Latch->getName() << "\n";
       if(F->getFnAttribute("poll-at-loop").getValueAsString()=="true") {
         auto splitPt = Latch->getTerminator()->getPrevNode();
         auto afterBB = Latch->splitBasicBlock(splitPt);
@@ -1553,7 +1610,7 @@ INITIALIZE_PASS_END(LazyDTrans, "LazyDTrans",
                     "Lower Tapir to LazyDTrans", false, false)
 
 // Create the multiretcall from fast path to slow path
-void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder, ValueToValueMapTy& VMapSlowPath, Value* fromSlowPathAlloc, SSAUpdater& SSAUpdateWorkContext, DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet) {
+void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder, ValueToValueMapTy& VMapSlowPath, Value* fromSlowPathAlloc, SSAUpdater& SSAUpdateWorkContext, DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet, DominatorTree &DT) {
   Module* M = F.getParent();
   LLVMContext& C = M->getContext();
   Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::uli_potential_jump);
@@ -1580,6 +1637,43 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
     for ( auto &II : *detachBB ) {
       instsVec.push_back(&II);
     }
+
+
+    SmallVector<Value*, 5> IntrinsicsArgs;
+    // Look for Intrinsic::uli_lazyd_inst to clone
+    for (auto &BB: F) {
+      bool breakNow = false;
+      for( auto &II : BB) {
+	auto CI = dyn_cast<CallInst>(&II);
+	Function *Intrinsic = nullptr;
+	if(CI)  {
+	  Intrinsic = CI->getCalledFunction();
+	  //errs() << "Call inst\n";
+	  //CI->dump();
+	}
+	if (Intrinsic && Intrinsic->getIntrinsicID() == Intrinsic::uli_lazyd_inst)
+	  {
+	    //errs() << "Found intrinsices\n";
+	    for(unsigned i=0; i<CI->arg_size(); i++) {
+	      // Collect the arguments
+	      //errs() << "Args type dump\n";
+
+	      //if(i == 1) {
+		//Value* NULL8 = ConstantPointerNull::get(IntegerType::getInt8Ty(C)->getPointerTo());
+		//IntrinsicsArgs.push_back(NULL8);
+		//IntrinsicsArgs.push_back(CI->getArgOperand(i));
+	      //} else {
+		IntrinsicsArgs.push_back(CI->getArgOperand(i));
+		//}
+	    }
+	    breakNow = true;
+	    break;
+	  }
+      }
+      if (breakNow)
+	break;
+    }
+
 
     // Look for the spawn function
     for (auto ii : instsVec) {
@@ -1609,6 +1703,154 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
               insertPt = dyn_cast<Instruction>(B.CreateStore(loadRes, reachingAlloca, true));
             }
           }
+
+
+	  if(IntrinsicsArgs.size() != 0) {
+	    DT.recalculate(F);
+	    // Look for uli_lazyd_inst and copy it to the slow path entry
+	    Function* LazyDInstrumentation = Intrinsic::getDeclaration(M, Intrinsic::uli_lazyd_inst);
+	    //B.SetInsertPoint(insertPt);
+
+	    Instruction* insertPtOld = insertPt;
+
+	    SmallVector<Value*, 5> Args;
+	    errs() << "Function type dump\n";
+	    LazyDInstrumentation->getFunctionType()->dump();
+
+	    for(int i=0; i<IntrinsicsArgs.size(); i++) {
+	      IntrinsicsArgs[i]->getType()->dump();
+	      Value* arg = IntrinsicsArgs[i];
+	      if(!isa<Argument>(arg)) {
+		SmallVector<Instruction*, 8> Insts2Clone;
+		errs() << "Find root argument " << i << " \n";
+		arg->dump();
+		Value* dst = FindRootArgument0(arg, DT, insertPt);
+		if(dst) {
+		  errs() << "Destination\n";
+		  dst->dump();
+		  SmallSet<Instruction*, 8> InstsSet;
+		  FindPathToDst(arg, dst, Insts2Clone, InstsSet);
+		  if (Insts2Clone.size() == 0)
+		    Args.push_back(dst);
+
+		} else {
+		  errs() << "Destination not found\n";
+		  Args.push_back(arg);
+		}
+
+		// Insert the cloned instruction
+		ValueToValueMapTy VMapClone;
+		if(Insts2Clone.size() > 0) {
+		  int i=0;
+		  for(auto ii: Insts2Clone) {
+		    // If the instruction already dominate insertPt, then there is no need to clone, and just break
+		    //DT.recalculate(F);
+		    if(DT.dominates(ii, insertPtOld)) {
+		      errs() << "It dominates\n";
+		      ii->dump();
+		      insertPtOld->dump();
+		      if(i == 0)
+			Args.push_back(ii);
+		      break;
+		    }
+
+		    Instruction * iiClone = ii->clone();
+		    errs() << "It does not dominate\n";
+		    ii->dump();
+		    insertPtOld->dump();
+
+		    iiClone->insertBefore(insertPt);
+		    VMapClone[ii] = iiClone;
+		    insertPt = iiClone;
+		    iiClone->dump();
+		    if(i == 0)
+		      Args.push_back(iiClone);
+		    i++;
+		  }
+		  //insertPt = dyn_cast<Instruction>(VMapClone[Insts2Clone[0]]);
+		  insertPt = insertPtOld;
+		}
+
+		errs() << "Update uses\n";
+		// Update the use def of the cloned instruction
+		SmallVector< Use*, 4 >  useNeed2Update;
+		for(auto ii: Insts2Clone) {
+		  useNeed2Update.clear();
+
+		  if(!VMapClone[ii]) {
+		    errs() << "No entry\n";
+		    ii->dump();
+		    continue;
+		  }
+
+		  Instruction * clonedII = dyn_cast<Instruction>(VMapClone[ii]);
+
+		  for (auto &use : ii->uses()) {
+		    auto * user = dyn_cast<Instruction>(use.getUser());
+		    if(user->getParent() == insertPt->getParent()) {
+		      useNeed2Update.push_back(&use);
+		    }
+		  }
+		  for( auto U : useNeed2Update ){
+		    U->set(clonedII);
+		  }
+
+		  // If it is a phi node, change the predecessor to the precedecessor of the slowpathentry
+		  if(isa<PHINode>(clonedII)) {
+		    PHINode* phiNode = dyn_cast<PHINode>(clonedII);
+		    if(phiNode->getNumIncomingValues() == 1) {
+		      // If only have one predecessor
+		      errs() << "Phi node before\n";
+		      phiNode->dump();
+		      errs() << "Phi node old :" << phiNode->getIncomingBlock(0)->getName() << "\n";
+		      errs() << "Phi node new :" << detachInst->getDetached()->getName() << "\n";
+		      phiNode->replaceIncomingBlockWith(phiNode->getIncomingBlock(0), detachInst->getDetached());
+		      errs() << "Change phinode\n";
+		      phiNode->dump();
+		    } else {
+		      // If only have two or more predecessor
+		      // Delete value not from the same basic block
+		      unsigned incomingPair = phiNode->getNumIncomingValues();
+		      errs() << "Multipred phinode:\n";
+		      phiNode->dump();
+		      for(unsigned i = 0; i<incomingPair; i++)  {
+			//Instruction* incomingVal = dyn_cast<Instruction>(phiNode->getIncomingValue(i));
+			auto incomingVal = (phiNode->getIncomingValue(i));
+			errs() << "Incoming val: \n";
+			incomingVal->dump();
+			if(!DT.dominates(incomingVal, clonedII)) {
+			  // Remove the incoming block and its value
+			  errs() << "Removed\n";
+			  //phiNode->removeIncomingValue(i);
+			} else {
+			  errs() << "Do not removed\n";
+			}
+		      }
+		      phiNode->replaceIncomingBlockWith(phiNode->getIncomingBlock(0), detachInst->getDetached());
+		      errs() << "Final\n";
+		      phiNode->dump();
+		    }
+		  }
+		}
+
+	      } else {
+		Args.push_back(arg);
+	      }
+	    }
+	    errs() << "Args for call\n";
+	    for(int i=0; i<Args.size(); i++) {
+	      Args[i]->dump();
+	    }
+
+	    B.SetInsertPoint(insertPt->getParent()->getTerminator());
+	    errs() << "Create call\n";
+	    auto res = B.CreateCall(LazyDInstrumentation, Args);
+	    res->getParent()->getParent()->dump();
+	    if(res->getPrevNode())
+	      res->setDebugLoc(res->getPrevNode()->getDebugLoc());
+	    else
+	      res->setDebugLoc(detachInst->getDebugLoc());
+	  }
 
         } else {
           B.SetInsertPoint(ii->getNextNode());
@@ -1722,9 +1964,9 @@ void LazyDTransPass::replaceUses(Instruction *liveVar, Instruction *slowLiveVar)
 
 void LazyDTransPass::updateSSA(SSAUpdater& SSAUpdate, Instruction* inst2replace) {
   SmallVector<Use*, 16> UsesToRename;
-  //outs() << "User of \n";
+  //errs() << "User of \n";
   //inst2replace->dump();
-  //outs() << "are:\n";
+  //errs() << "are:\n";
 
   for (Use &U : inst2replace->uses()) {
     Instruction *User = cast<Instruction>(U.getUser());
@@ -1745,7 +1987,7 @@ void LazyDTransPass::updateSSA(SSAUpdater& SSAUpdate, Instruction* inst2replace)
           }
         }
         if(!foundPair) {
-          //outs() << "pred: " << pred->getName() << "does not have an incoming BB\n";
+          //errs() << "pred: " << pred->getName() << "does not have an incoming BB\n";
           Value* rematerialzeVal = nullptr;
           if(true)
             // Needed for cholesky
@@ -1780,7 +2022,7 @@ void LazyDTransPass::updateSSA(SSAUpdater& SSAUpdate, Instruction* inst2replace)
   while (!UsesToRename.empty()) {
     auto use = UsesToRename.pop_back_val();
     Instruction *User = cast<Instruction>(use->getUser());
-    //outs() << "User :\n";
+    //errs() << "User :\n";
     //User->dump();
     SSAUpdate.RewriteUse(*use);
     //SSAUpdate.RewriteUseAfterInsertions(*use);
@@ -2000,7 +2242,7 @@ void LazyDTransPass::updateSlowVariables_2(Function& F,
                   // If incoming inst dominate parallel region,
                   // then add value where the source is from slow path to fast path
                   if(requiredPhiVarSet.find(incomingInst) == requiredPhiVarSet.end()) {
-                    //outs() << "Incoming inst dominate: "<< *incomingInst << "\n";
+                    //errs() << "Incoming inst dominate: "<< *incomingInst << "\n";
                     SSAUpdate.AddAvailableValue(syncBB2syncPred[continueBB], incomingInst);
                     continue;
                   }
@@ -3506,7 +3748,7 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
 
     assert(ci && "No call inst found in slowpath");
 
-    // Find variables used by clone function but defined outside
+    // Find variables used by clone function but defined errside
     for(auto ii : insts2clone) {
       for (Use &U : ii->operands()) {
         Value *v = U.get();
@@ -3799,7 +4041,7 @@ static unsigned getInstructionCount(Function &F) {
 
 bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, DominatorTree &DT,  DominanceFrontier &DF, LoopInfo &LI)  {
   if(F.getName() == "main") {
-    outs() << "Source filename: " << F.getParent()->getSourceFileName() << "\n";
+    errs() << "Source filename: " << F.getParent()->getSourceFileName() << "\n";
     if(EnableMainInstrumentation)
       instrumentMainFcn(F);
     //F.addFnAttr(Attribute::NoUnwindPath);
@@ -4226,7 +4468,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
     //-------------------------------------------------------------------------------------------------
     // Add potential jump to the slow path continuation
-    addPotentialJump(F, seqOrder, loopOrder, VMapSlowPath, fromSlowPathAlloc, SSAUpdateWorkContext, ReachingAllocSet);
+    addPotentialJump(F, seqOrder, loopOrder, VMapSlowPath, fromSlowPathAlloc, SSAUpdateWorkContext, ReachingAllocSet, DT);
 
     // Merge slow path into fast path
     for(auto syncBBi = syncInsts.begin(); syncBBi != syncInsts.end() ; syncBBi++ ) {
@@ -4549,6 +4791,9 @@ LazyDTransPass::run(Function &F, FunctionAnalysisManager &AM) {
   runInitialization(*F.getParent());
 
   bool Changed = runImpl(F, AM, DT, DF, LI);
+
+  //F.dump();
+
   if (!Changed)
     return PreservedAnalyses::all();
 
