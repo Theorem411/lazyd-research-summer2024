@@ -1,5 +1,7 @@
-/* HandleUnwindPoll function pass
- * Turn builtin into code
+/*
+ *
+ * HandleUnwindPoll function pass that lowers LazyD's poll
+ *
  */
 
 #include "llvm/Pass.h"
@@ -14,7 +16,6 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/MDBuilder.h"
-//#include "llvm/IR/TypeBuilder.h"
 #include "llvm/Transforms/ULI/HandleUnwindPoll.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -1007,9 +1008,7 @@ namespace {
 
     return Fn;
   }
-
 }
-
 
 bool HandleUnwindPollPass::detachExists(Function& F) {
   Module* M = F.getParent();
@@ -1269,208 +1268,6 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
   return false;
 }
 
-bool HandleUnwindPollPass::handleSaveRestoreCtx(BasicBlock &BB) {
-  // Search for the unwind path entry, if not found, return
-  Module* M = BB.getModule();
-  Function* F = BB.getParent();
-  LLVMContext& C = BB.getContext();
-  IRBuilder<> B(C);
-
-  bool changed = false;
-
-  BasicBlock* unwindPathEntry = nullptr;
-  for (auto it = BB.begin(); it != BB.end(); ++it) {
-    auto &instr = *it;
-    auto call = dyn_cast<CallInst>(&instr);
-    if (!call) continue;
-    auto fn = call->getCalledFunction();
-    if (!fn) continue;
-    if ( (fn->getIntrinsicID() != Intrinsic::uli_restore_context)
-         && (fn->getIntrinsicID() != Intrinsic::uli_save_context)
-         && (fn->getIntrinsicID() != Intrinsic::uli_save_context_nosp) ) continue;
-
-
-    // For now replace we function call
-    if(fn->getIntrinsicID() == Intrinsic::uli_restore_context) {
-      // TODO
-
-    } else if(fn->getIntrinsicID() == Intrinsic::uli_save_context) {
-
-    } else if(fn->getIntrinsicID() == Intrinsic::uli_save_context_nosp) {
-
-    }
-
-    changed = true;
-  }
-
-  return changed;
-}
-
-/// Handle both changereturnaddress and savereturnaddress
-bool HandleUnwindPollPass::handleChangeRetAddr(BasicBlock &BB)  {
-  // Search for the unwind path entry, if not found, return
-  Module* M = BB.getModule();
-  Function* F = BB.getParent();
-  LLVMContext& C = BB.getContext();
-  IRBuilder<> B(C);
-  Type *VoidPtrTy  = PointerType::getInt8PtrTy(C);
-
-  SmallVector<Instruction*, 4> inst2delete;
-  bool modified = false;
-  // Search for the intrinsic related to unwind polling
-  for (auto it = BB.begin(); it != BB.end(); ++it) {
-    auto &instr = *it;
-    auto call = dyn_cast<CallInst>(&instr);
-    if (!call) continue;
-    auto fn = call->getCalledFunction();
-    if (!fn) continue;
-    bool isFcnNotChangeRetAddr = (fn->getIntrinsicID() != Intrinsic::uli_change_returnaddress) && ( (fn->getIntrinsicID() != Intrinsic::uli_save_returnaddress));
-    if (isFcnNotChangeRetAddr) continue;
-
-    B.SetInsertPoint(&instr);
-    modified=true;
-    // Collect the intrinsic
-    if(fn->getIntrinsicID() == Intrinsic::uli_change_returnaddress) {
-      inst2delete.push_back(call);
-    } else if(fn->getIntrinsicID() == Intrinsic::uli_save_returnaddress) {
-      inst2delete.push_back(call);
-    }
-
-  }
-
-  // Modify and delete call to intrisic
-  for(auto ii: inst2delete) {
-    auto call = dyn_cast<CallInst>(ii);
-    auto fn = call->getCalledFunction();
-    B.SetInsertPoint(ii);
-
-    if(fn->getIntrinsicID() == Intrinsic::uli_change_returnaddress) {
-      auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress, {VoidPtrTy});
-      Value* myRA = B.CreateCall(addrOfRA);
-      myRA = B.CreateBitCast(myRA, IntegerType::getInt64Ty(C)->getPointerTo());
-      Value* newAddr = B.CreateCast(Instruction::PtrToInt, call->getArgOperand(0), IntegerType::getInt64Ty(C));
-      // Store new returnaddress to location of returnaddress
-      B.CreateStore(newAddr, myRA, 1);
-    } else if(fn->getIntrinsicID() == Intrinsic::uli_save_returnaddress) {
-      auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress, {VoidPtrTy});
-      Value* myRA = B.CreateCall(addrOfRA);
-      myRA = B.CreateBitCast(myRA, IntegerType::getInt64Ty(C)->getPointerTo());
-      Value* raValue = B.CreateLoad(IntegerType::getInt64Ty(C), myRA);
-      Value* storageLoc = B.CreateBitCast(call->getArgOperand(0), IntegerType::getInt64Ty(C)->getPointerTo());
-      // Store return address to stack slot
-      B.CreateStore(raValue, storageLoc, 1);
-    }
-
-    ii->eraseFromParent();
-  }
-
-  return modified;
-}
-
-
-bool HandleUnwindPollPass::handleLazyDInstrumentation(Function &F) {
-  Module *M = F.getParent();
-  LLVMContext &ctx = F.getContext();
-  IRBuilder<> builder(ctx);
-  bool Changed = false;
-
-  // iteration variables
-  CallInst *CI = nullptr;
-  Function *Intrinsic = nullptr;
-
-  // LLVM Types constructors
-  IntegerType *I32 = IntegerType::getInt32Ty(ctx);
-  IntegerType *I64 = IntegerType::getInt64Ty(ctx);
-  Type *I8Ptr = PointerType::get(Type::getInt8Ty(ctx), 0);
-  FunctionType *FnTy = FunctionType::get(
-                                         /*Result*/Type::getVoidTy(ctx),
-                                         /*Params*/{I8Ptr, I64, I64, I32},
-                                         /*isVarArg*/false
-                                         );
-  PointerType *FnPtrTy = PointerType::get(FnTy, 0);
-
-  Value *idx_zero = ConstantInt::get(Type::getInt64Ty(ctx), 0);
-
-  // file and line number using DISubprogram of parent function F
-  DISubprogram *Subprogram = F.getSubprogram();
-
-  // collect list of __builtin_uli_lazyd_inst intrinsic for replacement
-  SmallVector<Instruction *, 8> Builtin_Uli_Lazyd_Insts;
-  for (auto I = inst_begin(F), E = inst_end(F); I != E; ++I) {
-    if ((CI = dyn_cast<CallInst>(&*I))
-        && (Intrinsic = CI->getCalledFunction())
-        && (Intrinsic->getIntrinsicID() == Intrinsic::uli_lazyd_inst))
-      {
-	// If no subprogram or the second argument is not a nullptr
-	Constant *Message= dyn_cast<Constant>(CI->getArgOperand(1));
-	assert(Message && "Message is not a constant");
-	if(Message->isNullValue()){
-	  errs() << "Messsage: is null\n";
-	  Message->dump();
-	} else {
-	  errs() << "Message is not null\n";
-	  Message->dump();
-	}
-	if (Subprogram) {
-	  StringRef subpNameStr = Subprogram->getName();
-	  // outs() << "found __builtin_uli_lazyd_inst callsite in " << F.getName() << '\n';
-	  builder.SetInsertPoint(&*I);
-	  // Extract lazydIntrumentLoop function
-	  // %0 = bitcast i8* %fnptr to void (i8*, i64, i64, i32)*
-	  Value *FnPtr= CI->getArgOperand(0);
-	  assert(FnPtr && "fail to retrieve lazydIntrumentLoop from __builtin_uli_lazyd_inst first arg!");
-	  Value *Callee = builder.CreateBitCast(
-						/*Value*/FnPtr,
-						/*DestTy*/FnPtrTy,
-						/*Twine:Name*/"instloop"
-						);
-	  GlobalVariable *globvar = builder.CreateGlobalString(
-							       subpNameStr,
-							       "file_and_line_number",
-							       0 /* Default AddressSpace */,
-							       nullptr /* Default Module */
-							       );
-
-	  Value *FileAndLineNumber = builder.CreateInBoundsGEP(
-							       /*Ty*/globvar->getValueType(),
-							       /*Ptr*/globvar,
-							       /*IdxList*/{idx_zero, idx_zero}
-							       );
-
-	  // extract other operands of __builtin_uli_lazyd_inst
-	  Value *TripCount = CI->getArgOperand(2);
-	  Value *GranSize = CI->getArgOperand(3);
-	  Value *Depth = CI->getArgOperand(4);
-	  assert(FileAndLineNumber
-		 && TripCount
-		 && GranSize
-		 && Depth
-		 && "__builtin_uli_lazyd_inst has null argument!");
-
-	  // call void %0(i8* file_and_line_number, i64 trip_count, i64 grain_size, i32 depth)
-	  auto res = builder.CreateCall(
-			     /*FTy*/FnTy,
-			     /*Callee*/Callee,
-			     /*Args*/{FileAndLineNumber, TripCount, GranSize, Depth}
-			     );
-
-
-	  res->setDebugLoc(CI->getDebugLoc());
-	  res->dump();
-	  //res->addFnAttr(Attribute::NoInline);
-	}
-	// delete original intrinsic later
-	Builtin_Uli_Lazyd_Insts.push_back(&*I);
-	Changed = true;
-      }
-  }
-  // delete replaced intrinsics
-  for (auto *I : Builtin_Uli_Lazyd_Insts) {
-    I->eraseFromParent();
-  }
-  return Changed;
-}
-
 bool HandleUnwindPollPass::runInitialization(Module &M) {
   auto &C = M.getContext();
   BoolTy = Type::getInt1Ty(C);
@@ -1511,45 +1308,16 @@ bool HandleUnwindPollPass::runInitialization(Module &M) {
 
 bool HandleUnwindPollPass::runImpl(Function &F) {
   bool changed = false;
-
   bool bDetachExists= detachExists(F);
-  //assert(!bDetachExists && "Detach still exists");
-
   if(bDetachExists) {
-    for (auto &BB : F) {
-      // TODO: handleSaveRestoreCtx is not used, could be removed
-      changed |= handleSaveRestoreCtx(BB);
-      changed |= handleChangeRetAddr(BB);
-    }
-    //changed |= handleLazyDInstrumentation(F);
     return changed;
   }
-
-
-
   auto unwindPathEntry = findUnwindPathEntry(F);
 
   if(unwindPathEntry && !initialized) {
     Module &M = *(F.getParent());
     auto fcn = Get__unwindrts_unwind_ulifsim2(M);
     fcn->addFnAttr(Attribute::NoUnwindPath);
-
-    //auto fcn = UNWINDRTS_FUNC(unwind_poll, M);
-    //fcn->addFnAttr(Attribute::NoUnwindPath);
-    //fcn = UNWINDRTS_FUNC(unwind_suspend, M);
-    //fcn->addFnAttr(Attribute::NoUnwindPath);
-    //fcn = UNWINDRTS_FUNC(unwind_communicate, M);
-    //fcn->addFnAttr(Attribute::NoUnwindPath);
-
-    //fcn = UNWINDRTS_FUNC(mysetjmp_callee, M);
-    //fcn->addFnAttr(Attribute::NoUnwindPath);
-    //fcn = UNWINDRTS_FUNC(mysetjmp_callee_nosp, M);
-    //fcn->addFnAttr(Attribute::NoUnwindPath);
-    //fcn = UNWINDRTS_FUNC(mylongwithoutjmp_callee, M);
-    //fcn->addFnAttr(Attribute::NoUnwindPath);
-    //fcn = UNWINDRTS_FUNC(mylongjmp_callee, M);
-    //fcn->addFnAttr(Attribute::NoUnwindPath);
-
     initialized = true;
   }
 
@@ -1557,21 +1325,12 @@ bool HandleUnwindPollPass::runImpl(Function &F) {
     // If detach have not been lowered, don't lower the poll
     if(!bDetachExists)
       changed |= handleUnwindPoll(BB, unwindPathEntry);
-    // TODO: handleSaveRestoreCtx is not used, could be removed
-    changed |= handleSaveRestoreCtx(BB);
-
-    changed |= handleChangeRetAddr(BB);
-
   }
-
-  changed |= handleLazyDInstrumentation(F);
-
   return changed;
 }
 
 PreservedAnalyses
 HandleUnwindPollPass::run(Function &F, FunctionAnalysisManager &AM) {
-
   runInitialization(*F.getParent());
   // Run on function.
   bool Changed = runImpl(F);

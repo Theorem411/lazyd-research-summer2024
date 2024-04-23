@@ -27,9 +27,6 @@ struct HandleUnwindPollPass
   bool initialized;
 
   bool handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPathEntry);
-  bool handleSaveRestoreCtx(BasicBlock &BB);
-  bool handleChangeRetAddr(BasicBlock &BB);
-  bool handleLazyDInstrumentation(Function &F);
   BasicBlock* findUnwindPathEntry(Function &F);
   bool   detachExists(Function &F);
 
