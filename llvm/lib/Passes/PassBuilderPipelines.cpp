@@ -123,6 +123,8 @@
 #include "llvm/Transforms/Tapir/DRFScopedNoAliasAA.h"
 #include "llvm/Transforms/ULI/SendUli.h"
 #include "llvm/Transforms/ULI/ULIIntrinsicToExternCall.h"
+#include "llvm/Transforms/ULI/HandleLazyDIntrinsics.h"
+#include "llvm/Transforms/ULI/HandleLazyDInstrumentation.h"
 #include "llvm/Transforms/Utils/AddDiscriminators.h"
 #include "llvm/Transforms/Utils/AssumeBundleBuilder.h"
 #include "llvm/Transforms/Utils/CanonicalizeAliases.h"
@@ -891,7 +893,7 @@ PassBuilder::buildModuleSimplificationPipeline(OptimizationLevel Level,
   EarlyFPM.addPass(LowerExpectIntrinsicPass());
   EarlyFPM.addPass(SendUliPass());
   EarlyFPM.addPass(ULIIntrinsicToExternCallPass());
-  EarlyFPM.addPass(HandleUnwindPollPass());
+  EarlyFPM.addPass(HandleLazyDIntrinsicsPass());
 
   EarlyFPM.addPass(SimplifyCFGPass());
   EarlyFPM.addPass(SROAPass());
@@ -1427,6 +1429,7 @@ PassBuilder::buildTapirLoweringPipeline(OptimizationLevel Level,
 
     FPM3.addPass(HandleInletsPass());
     FPM3.addPass(HandleUnwindPollPass());
+    FPM3.addPass(HandleLazyDInstrumentationPass());
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM3)));
   }
   // The TapirToTarget pass may leave cruft around.  Clean it up using the

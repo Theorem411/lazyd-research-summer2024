@@ -5,6 +5,8 @@ add_llvm_component_library(LLVMULI
   HandleUli.cpp
   HandleInlets.cpp
   HandleUnwindPoll.cpp
+  HandleLazyDIntrinsics.cpp
+  HandleLazyDInstrumentation.cpp
   LazyDTrans.cpp
   EagerDTrans.cpp
   LazyLiveVariable.cpp
