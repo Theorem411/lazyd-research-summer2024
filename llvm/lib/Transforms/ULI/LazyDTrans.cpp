@@ -566,18 +566,25 @@ namespace {
     return Fn;
   }
 
-  Value* FindRootArgument0(Value* Src, DominatorTree& DT, Instruction* insertPt) {
-    if(isa<Argument>(Src))
-      return Src;
+  // TODO: Return a set of Value* that is used by Src and that dominates the Src
+  void FindRootArgument(Value* Src, DominatorTree& DT, Instruction* insertPt, SmallSet<Value*, 4>& dsts) {
+    if(isa<Argument>(Src)) {
+      dsts.insert(Src);
+      return;
+    }
 
-    if(isa<GlobalVariable>(Src))
-      return Src;
+    if(isa<GlobalVariable>(Src)) {
+      dsts.insert(Src);
+      return;
+    }
 
     if(!isa<Instruction>(Src))
-      return nullptr;
+      return;
 
-    if(DT.dominates(Src, insertPt))
-      return Src;
+    if(DT.dominates(Src, insertPt)) {
+      dsts.insert(Src);
+      return;
+    }
 
     Instruction* SInst = dyn_cast<Instruction>(Src);
     errs()<< "Sinst: \n";
@@ -588,8 +595,9 @@ namespace {
       auto opVal = SInst->getOperand(i);
       errs() << "i: " << i << "\n";
       opVal->dump();
-      return FindRootArgument0(opVal, DT, insertPt);
+      FindRootArgument(opVal, DT, insertPt, dsts);
     }
+    return;
   }
 
   // Rematerialize instruction to prevent function not dominating
@@ -1724,15 +1732,21 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
 		SmallVector<Instruction*, 8> Insts2Clone;
 		errs() << "Find root argument " << i << " \n";
 		arg->dump();
-		Value* dst = FindRootArgument0(arg, DT, insertPt);
-		if(dst) {
-		  errs() << "Destination\n";
-		  dst->dump();
-		  SmallSet<Instruction*, 8> InstsSet;
-		  FindPathToDst(arg, dst, Insts2Clone, InstsSet);
-		  if (Insts2Clone.size() == 0)
-		    Args.push_back(dst);
 
+		SmallSet<Value*, 4> dsts;
+		FindRootArgument(arg, DT, insertPt, dsts);
+
+		// Have a for loop that loops the dst
+		if(dsts.size() > 0) {
+		  for(auto dst : dsts) {
+
+		    errs() << "Destination\n";
+		    dst->dump();
+		    SmallSet<Instruction*, 8> InstsSet;
+		    FindPathToDst(arg, dst, Insts2Clone, InstsSet);
+		    if (Insts2Clone.size() == 0)
+		      Args.push_back(dst);
+		  }
 		} else {
 		  errs() << "Destination not found\n";
 		  Args.push_back(arg);
@@ -1751,7 +1765,8 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
 		      insertPtOld->dump();
 		      if(i == 0)
 			Args.push_back(ii);
-		      break;
+		      //break;
+		      continue;
 		    }
 
 		    Instruction * iiClone = ii->clone();
