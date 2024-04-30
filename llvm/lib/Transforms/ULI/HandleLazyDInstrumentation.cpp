@@ -25,6 +25,10 @@
 
 using namespace llvm;
 
+static cl::opt<bool> EnableLazyDInstrumentation(
+"enable-lazydinst", cl::init(false), cl::NotHidden,
+  cl::desc("Enable LazyD instrumentation (default: false)"));
+
 namespace {
   struct HandleLazyDInstrumentation : public FunctionPass {
 
@@ -83,15 +87,18 @@ bool HandleLazyDInstrumentationPass::handleLazyDInstrumentation(Function &F) {
       {
 	// If no subprogram or the second argument is not a nullptr
 	Constant *Message= dyn_cast<Constant>(CI->getArgOperand(1));
-	assert(Message && "Message is not a constant");
-	if(Message->isNullValue()){
-	  errs() << "Messsage: is null\n";
-	} else {
-	  errs() << "Message is not null\n";
+#if 0
+	if(isa<ConstantExpr>(Message)) {
+	  Instruction * i = (dyn_cast<ConstantExpr>(Message))->getAsInstruction();
+	  if(i) {
+	    auto res = i->getOperand(0);
+	  }
 	}
+#endif
 
-	if (Subprogram) {
+	if (EnableLazyDInstrumentation && Subprogram && !Message->isNullValue()) {
 	  StringRef subpNameStr = Subprogram->getName();
+	  StringRef linkageNameStr = Subprogram->getLinkageName();
 	  // outs() << "found __builtin_uli_lazyd_inst callsite in " << F.getName() << '\n';
 	  builder.SetInsertPoint(&*I);
 	  // Extract lazydIntrumentLoop function
@@ -104,7 +111,7 @@ bool HandleLazyDInstrumentationPass::handleLazyDInstrumentation(Function &F) {
 						/*Twine:Name*/"instloop"
 						);
 	  GlobalVariable *globvar = builder.CreateGlobalString(
-							       subpNameStr,
+							       StringRef((subpNameStr + "_" + linkageNameStr).str()),
 							       "file_and_line_number",
 							       0 /* Default AddressSpace */,
 							       nullptr /* Default Module */
@@ -134,7 +141,6 @@ bool HandleLazyDInstrumentationPass::handleLazyDInstrumentation(Function &F) {
 			     );
 
 	  res->setDebugLoc(CI->getDebugLoc());
-	  res->dump();
 	  //res->addFnAttr(Attribute::NoInline);
 	}
 	// delete original intrinsic later
