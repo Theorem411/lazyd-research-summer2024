@@ -286,6 +286,18 @@ static void moveInstrumentation(StringRef Name, BasicBlock &From,
   }
 }
 
+static GlobalVariable* GetGlobalVariable(const char* GlobalName, Type* GlobalType, Module& M, bool localThread=false){
+  GlobalVariable* globalVar = M.getNamedGlobal(GlobalName);
+  if(globalVar){
+    return globalVar;
+  }
+  globalVar = dyn_cast<GlobalVariable>(M.getOrInsertGlobal(GlobalName, GlobalType));
+  globalVar->setLinkage(GlobalValue::ExternalLinkage);
+  if(localThread)
+    globalVar->setThreadLocal(true);
+  return globalVar;
+}
+
 void LoopOutlineProcessor::moveCilksanInstrumentation(TapirLoopInfo &TL,
                                                       TaskOutlineInfo &Out,
                                                       ValueToValueMapTy &VMap) {
@@ -902,9 +914,35 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
   Module *M = Helper->getParent();
   const DataLayout &DL = M->getDataLayout();
 
+  // Get the Intrinsic if exists
+  Function* OriF = L->getLoopPreheader()->getParent();
+  Value* fcn = nullptr;
+  for(auto &BB : *OriF) {
+    for (auto &II : BB) {
+      auto CI = dyn_cast<CallInst>(&II);
+      Function *Intrinsic = nullptr;
+      if(CI)  {
+	Intrinsic = CI->getCalledFunction();
+      }
+      if (Intrinsic && Intrinsic->getIntrinsicID() == Intrinsic::uli_lazyd_inst) {
+	Constant *Message= dyn_cast<Constant>(CI->getArgOperand(1));
+	int messageVal = 0;
+	if(isa<ConstantExpr>(Message)) {
+	  Instruction * i = (dyn_cast<ConstantExpr>(Message))->getAsInstruction();
+	  if(i) {
+	    auto res = i->getOperand(0);
+	    if(isa<ConstantInt>(res))
+	      messageVal = dyn_cast<ConstantInt>(res)->getSExtValue();
+	  }
+	}
+	if(messageVal != 1)
+	  fcn = CI->getArgOperand(0);
+      }
+    }
+  }
+
   Function* SeqLoopSpawnFcn = CloneFunction(Helper, VMap);
   SeqLoopSpawnFcn->setName(SeqLoopSpawnFcn->getName() + "_helper_loop");
-
 
   Helper->addFnAttr("par-for-par", "true");
   SeqLoopSpawnFcn->addFnAttr("poll-at-loop", "true");
@@ -1071,18 +1109,7 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
   ReplaceInstWithInst(Preheader->getTerminator(), DI2);
 
   Builder.SetInsertPoint(Preheader->getTerminator());
-  AllocaInst* ivStorage = Builder.CreateAlloca(PrimaryIV->getType(), DL.getAllocaAddrSpace(), nullptr, "ivStorage");
-  ivStorage->setAlignment(Align(8));
 
-  Builder.SetInsertPoint(RetBB);
-  Builder.CreateRetVoid();
-
-  Builder.SetInsertPoint(SyncBB);
-  Builder.CreateSync(RetBB, SyncRegion);
-
-  Builder.SetInsertPoint(DetachedBB);
-  // Store before executing fast path
-  //Builder.CreateStore(ConstantInt::get(CanonicalIV->getType(), Helper->), ivStorage);
   // Setup arguments for call.
   SmallVector<Value *, 4> TopCallArgs;
 
@@ -1102,6 +1129,40 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
   //++AI;
 
   auto startVar = &*AI++;
+
+  // Create the instrumentation code
+  Function* LazyDInstrumentation = Intrinsic::getDeclaration(M, Intrinsic::uli_lazyd_inst);
+  SmallVector<Value*, 8> Args;
+  Type *Int32Ty = Type::getInt32Ty(M->getContext());
+  // Function to call
+  //
+  if(fcn) {
+    assert(fcn && "Cannot be nulled");
+    Value* NULL8 = ConstantPointerNull::get(IntegerType::getInt8Ty(M->getContext())->getPointerTo());
+    Args.push_back(fcn);
+    Args.push_back(NULL8);
+    Args.push_back(Builder.CreateSub(End, startVar));
+    Args.push_back(Grainsize);
+    GlobalVariable* delegate_work = GetGlobalVariable("delegate_work", Int32Ty, *M, true);
+    Args.push_back(Builder.CreateLoad(Int32Ty, delegate_work));
+    auto res = Builder.CreateCall(LazyDInstrumentation, Args);
+    res->setDebugLoc(DI2->getDebugLoc());
+  }
+
+  // Create the ivStorage
+  AllocaInst* ivStorage = Builder.CreateAlloca(PrimaryIV->getType(), DL.getAllocaAddrSpace(), nullptr, "ivStorage");
+  ivStorage->setAlignment(Align(8));
+
+  Builder.SetInsertPoint(RetBB);
+  Builder.CreateRetVoid();
+
+  Builder.SetInsertPoint(SyncBB);
+  Builder.CreateSync(RetBB, SyncRegion);
+
+  Builder.SetInsertPoint(DetachedBB);
+  // Store before executing fast path
+  //Builder.CreateStore(ConstantInt::get(CanonicalIV->getType(), Helper->), ivStorage);
+
   RecurInputs.insert(startVar);
   //++AI;
 
@@ -1117,6 +1178,7 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
 
   for (Function::arg_iterator AE = Helper->arg_end(); AI != AE; ++AI)
     RecurInputs.insert(&*AI);
+
 
   // Store before executing fast path
   Builder.CreateStore(startVar, ivStorage);
@@ -1225,7 +1287,7 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
   // TopCall->setCallingConv(Helper->getCallingConv());
   TopCall2->setDebugLoc(Header->getTerminator()->getDebugLoc());
 
-  Helper->addFnAttr(Attribute::NoInline);
+  //Helper->addFnAttr(Attribute::NoInline);
   Builder.CreateBr(DACRetBBSlow);
 
   Builder.SetInsertPoint(DACRetBBSlow);
