@@ -46,6 +46,10 @@ cl::opt<bool> llvm::EnableTapirLoopStripmine(
    "stripmine-loops", cl::init(true), cl::Hidden,
     cl::desc("Run the Tapir Loop stripmining pass"));
 
+static cl::opt<bool> PrintLambdaCost(
+   "print-lambdacost", cl::init(false), cl::Hidden,
+    cl::desc("Print the cost of the lambda function"));
+
 static cl::opt<bool> AllowParallelEpilog(
   "allow-parallel-epilog", cl::Hidden, cl::init(true),
   cl::desc("Allow stripmined Tapir loops to execute their epilogs in parallel."));
@@ -154,8 +158,27 @@ static bool tryToStripMineLoop(
   int64_t LoopCost =
       ApproximateLoopCost(L, NumCalls, NotDuplicatable, Convergent, IsRecursive,
                           UnknownSize, TTI, LI, SE, EphValues, TLI);
+
   // Determine the iteration count of the eventual stripmined the loop.
   bool explicitCount = computeStripMineCount(L, TTI, LoopCost, SMP);
+
+  if(PrintLambdaCost) {
+    Function &F = *L->getHeader()->getParent();
+    DISubprogram *Subprogram = F.getSubprogram();
+    if (Subprogram) {
+      StringRef subpNameStr = Subprogram->getName();
+      StringRef linkageStr = Subprogram->getLinkageName();
+      errs() << subpNameStr << "_" << linkageStr << "," << LoopCost << ",";
+      errs() << NumCalls << ",";
+      errs() << NotDuplicatable << ",";
+      errs() << Convergent << ",";
+      errs() << IsRecursive << ",";
+      errs() << UnknownSize << ",";
+      errs() << explicitCount << ",";
+      errs() << SMP.Count;
+      errs() << "\n";
+    }
+  }
 
   // If the loop size is unknown, then we cannot compute a stripmining count for
   // it.
