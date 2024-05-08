@@ -97,7 +97,16 @@ bool HandleLazyDInstrumentationPass::handleLazyDInstrumentation(Function &F) {
 #endif
 
 	if (EnableLazyDInstrumentation && Subprogram && !Message->isNullValue()) {
-	  StringRef subpNameStr = Subprogram->getName();
+	  // Replace the , with -
+	  std::string subpNameStrOld = Subprogram->getName().str();
+	  std::string subpNameStrNew = "";
+	  for(char c : subpNameStrOld) {
+	    if( c == ',')
+	      subpNameStrNew += '-';
+	    else
+	      subpNameStrNew += c;
+	  }
+	  StringRef subpNameStr = StringRef(subpNameStrNew);
 	  StringRef linkageNameStr = Subprogram->getLinkageName();
 	  // outs() << "found __builtin_uli_lazyd_inst callsite in " << F.getName() << '\n';
 	  builder.SetInsertPoint(&*I);

@@ -166,7 +166,16 @@ static bool tryToStripMineLoop(
     Function &F = *L->getHeader()->getParent();
     DISubprogram *Subprogram = F.getSubprogram();
     if (Subprogram) {
-      StringRef subpNameStr = Subprogram->getName();
+      std::string subpNameStrOld = Subprogram->getName().str();
+      std::string subpNameStrNew = "";
+      for(char c : subpNameStrOld) {
+	if( c == ',')
+	  subpNameStrNew += '-';
+	else
+	  subpNameStrNew += c;
+      }
+      StringRef subpNameStr = StringRef(subpNameStrNew);
+
       StringRef linkageStr = Subprogram->getLinkageName();
       errs() << subpNameStr << "_" << linkageStr << "," << LoopCost << ",";
       errs() << NumCalls << ",";
