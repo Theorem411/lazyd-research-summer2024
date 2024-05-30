@@ -274,7 +274,7 @@ namespace {
     return globalVar;
   }
 
-
+  /*
   GlobalVariable* GetGlobalVariableNoLink(const char* GlobalName, Type* GlobalType, Module& M, bool localThread=false){
     GlobalVariable* globalVar = M.getNamedGlobal(GlobalName);
     if(globalVar){
@@ -285,6 +285,7 @@ namespace {
       globalVar->setThreadLocal(true);
     return globalVar;
   }
+  */
 
   /// \brief Helper to find a function with the given name, creating it if it
   /// doesn't already exist. If the function needed to be created then return
@@ -1417,6 +1418,7 @@ namespace {
   void instrumentLoop (Function *F, Loop* CurrentLoop, Value* bHaveUnwindAlloc) {
     Module *M = F->getParent();
     LLVMContext& C = M->getContext();
+#ifdef PRL_LATER
     IRBuilder<> B(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
     const DataLayout &DL = M->getDataLayout();
     Type *VoidPtrTy  = PointerType::getInt8PtrTy(C);
@@ -1427,6 +1429,9 @@ namespace {
     myRA = B.CreateBitCast(myRA, IntegerType::getInt64Ty(C)->getPointerTo());
     Value* myRAStorage = B.CreateAlloca(IntegerType::getInt64Ty(C), DL.getAllocaAddrSpace(), nullptr, "myra");
     B.CreateStore(B.CreateLoad(IntegerType::getInt64Ty(C), myRA, 1), myRAStorage, true);
+#else
+    IRBuilder<> B(M->getContext());
+#endif
 
     // Inner most loop, insert ULI polling.
     BasicBlock *HeaderBlock = CurrentLoop->getHeader();
@@ -1481,26 +1486,30 @@ namespace {
 #endif
 
         Instruction *term = HeaderBlock->getTerminator();
-        B.SetInsertPoint(term);
-        //B.SetInsertPoint(HeaderBlock->getFirstNonPHIOrDbgOrLifetime());
+#ifdef PRL_LATER
+	B.SetInsertPoint(term);
+#else
+	B.SetInsertPoint(HeaderBlock->getFirstNonPHIOrDbgOrLifetime());
+#endif
 
 #define NO_UNWIND_POLLPFOR
 #ifdef NO_UNWIND_POLLPFOR
 
 
 	// TODO: CNP Check if return address is still the same
+#ifdef PRL_LATER
 	Value* myRAVal = B.CreateLoad(IntegerType::getInt64Ty(C), myRAStorage, 1);
 	auto myCurrentRA = B.CreateCall(addrOfRA);
 	myCurrentRA->setCanReturnTwice();
 	auto myCurrentRAVal = B.CreateBitCast(myCurrentRA, IntegerType::getInt64Ty(C)->getPointerTo());
 	myCurrentRAVal = B.CreateLoad(IntegerType::getInt64Ty(C), myCurrentRAVal, 1);
-
-        //Value* bHaveUnwind = B.CreateLoad(Type::getInt1Ty(C), bHaveUnwindAlloc, 1);
-        //Value* haveBeenUnwind = B.CreateICmpEQ(bHaveUnwind, B.getInt1(1));
-
 	Value* haveBeenUnwind = B.CreateICmpNE(myRAVal, myCurrentRAVal);
+#else
+        Value* bHaveUnwind = B.CreateLoad(Type::getInt1Ty(C), bHaveUnwindAlloc, 1);
+        Value* haveBeenUnwind = B.CreateICmpEQ(bHaveUnwind, B.getInt1(1));
+#endif
+	BasicBlock* loopUnwound = BasicBlock::Create(C, "loop.unwounded", F);
 
-        BasicBlock* loopUnwound = BasicBlock::Create(C, "loop.unwounded", F);
         B.CreateCondBr(haveBeenUnwind, loopUnwound, afterBB);
 
         term->eraseFromParent();
@@ -2796,8 +2805,9 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   // The thread id
   GlobalVariable* gThreadId = GetGlobalVariable("threadId", Int32Ty, *M, true);
   // Number of par-for-par encountered
+#ifdef PRL_LATER
   GlobalVariable* gParForParEncountered = GetGlobalVariable("parForParEncountered", Int32Ty, *M, true);
-
+#endif
   // Store the original return address (this can be pass through register)
   GlobalVariable* gPrevRa = GetGlobalVariable("prevRa", Int64Ty, *M, true);
   // Store the original return address (this can be pass through register)
@@ -2873,7 +2883,11 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     BasicBlock* stackAlreadyUnwindCheckBB = BasicBlock::Create(C, "unwind.path.already.unwind.check", &F);
 
     Value* haveBeenUnwind = nullptr;
+#ifdef PRL_LATER
     if(bHaveFork && !(F.getFnAttribute("par-for-par").getValueAsString()=="true")) {
+#else
+    if(bHaveFork) {
+#endif
       Value* bHaveUnwind = B.CreateLoad(Int1Ty, bHaveUnwindAlloc, 1);
       haveBeenUnwind = B.CreateICmpEQ(bHaveUnwind, B.getInt1(1));
     } else {
@@ -2910,13 +2924,16 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   {
     // Basic block for first time unwind
     B.SetInsertPoint(firstTimeUnwindBB);
-
+#ifdef PRL_LATER
     B.CreateStore(B.getInt32(0), gParForParEncountered);
+#endif
 
     // If the function has poll-at loop attribute
     if(F.getFnAttribute("poll-at-loop").getValueAsString()=="true") {
       if(EnableUnwindOnce && !DisableUnwindPoll ) {
-        //B.CreateStore(B.getInt1(1), bHaveUnwindAlloc);
+#ifndef PRL_LATER
+        B.CreateStore(B.getInt1(1), bHaveUnwindAlloc);
+#endif
       }
     }
 
@@ -2955,6 +2972,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
       Value* fastPathCont = B.CreateCast(Instruction::PtrToInt, BlockAddress::get(detachBB, 0), IntegerType::getInt64Ty(C));
       auto isEqOne1 = (B.CreateICmpEQ(rai, fastPathCont));
 
+#ifdef PRL_LATER
       if(F.getFnAttribute("par-for-par").getValueAsString()=="true") {
 	Value* bHaveUnwind = B.CreateLoad(Int1Ty, bHaveUnwindAlloc, 1);
 	// If already encounted a par-for-par
@@ -2962,6 +2980,7 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 	Value* comb = B.CreateOr(B.CreateICmpEQ(bHaveEncountered, B.getInt32(1)), bHaveUnwind);
 	isEqOne1 = B.CreateAnd(isEqOne1, comb);
       }
+#endif
 
       B.CreateCondBr(isEqOne1, workExistsBB, noworkBB);
 
@@ -3175,13 +3194,14 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     //  B.CreateStore(gPrevRaToVoid, pChildRA);
     //} else {
     // Store the original return address to child return address
-
+#ifdef PRL_LATER
     if(F.getFnAttribute("par-for-par").getValueAsString()=="true") {
       if(EnableUnwindOnce && !DisableUnwindPoll ) {
         B.CreateStore(B.getInt1(1), bHaveUnwindAlloc);
 	B.CreateStore(B.getInt32(1), gParForParEncountered);
       }
     }
+#endif
 
     Value * gPrevRaToVoid = B.CreateCast(Instruction::IntToPtr, gPrevRaVal, IntegerType::getInt8Ty(C)->getPointerTo());
     B.CreateStore(gPrevRaToVoid, pChildRA);
@@ -3189,7 +3209,9 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 
     if(F.getFnAttribute("poll-at-loop").getValueAsString()=="true") {
       if(EnableUnwindOnce && !DisableUnwindPoll ) {
-        //B.CreateStore(B.getInt1(1), bHaveUnwindAlloc);
+#ifndef PRL_LATER
+        B.CreateStore(B.getInt1(1), bHaveUnwindAlloc);
+#endif
       }
     }
 
