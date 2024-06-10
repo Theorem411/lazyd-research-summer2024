@@ -1,5 +1,7 @@
-/* HandleUnwindPoll function pass
- * Turn builtin into code
+/*
+ *
+ * HandleUnwindPoll function pass that lowers LazyD's poll
+ *
  */
 
 #include "llvm/Pass.h"
@@ -8,12 +10,12 @@
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/MDBuilder.h"
-//#include "llvm/IR/TypeBuilder.h"
 #include "llvm/Transforms/ULI/HandleUnwindPoll.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -1006,9 +1008,7 @@ namespace {
 
     return Fn;
   }
-
 }
-
 
 bool HandleUnwindPollPass::detachExists(Function& F) {
   Module* M = F.getParent();
@@ -1268,105 +1268,6 @@ bool HandleUnwindPollPass::handleUnwindPoll(BasicBlock &BB, BasicBlock* unwindPa
   return false;
 }
 
-bool HandleUnwindPollPass::handleSaveRestoreCtx(BasicBlock &BB) {
-  // Search for the unwind path entry, if not found, return
-  Module* M = BB.getModule();
-  Function* F = BB.getParent();
-  LLVMContext& C = BB.getContext();
-  IRBuilder<> B(C);
-
-  bool changed = false;
-
-  BasicBlock* unwindPathEntry = nullptr;
-  for (auto it = BB.begin(); it != BB.end(); ++it) {
-    auto &instr = *it;
-    auto call = dyn_cast<CallInst>(&instr);
-    if (!call) continue;
-    auto fn = call->getCalledFunction();
-    if (!fn) continue;
-    if ( (fn->getIntrinsicID() != Intrinsic::uli_restore_context)
-         && (fn->getIntrinsicID() != Intrinsic::uli_save_context)
-         && (fn->getIntrinsicID() != Intrinsic::uli_save_context_nosp) ) continue;
-
-
-    // For now replace we function call
-    if(fn->getIntrinsicID() == Intrinsic::uli_restore_context) {
-      // TODO
-
-    } else if(fn->getIntrinsicID() == Intrinsic::uli_save_context) {
-
-    } else if(fn->getIntrinsicID() == Intrinsic::uli_save_context_nosp) {
-
-    }
-
-    changed = true;
-  }
-
-  return changed;
-}
-
-/// Handle both changereturnaddress and savereturnaddress
-bool HandleUnwindPollPass::handleChangeRetAddr(BasicBlock &BB)  {
-  // Search for the unwind path entry, if not found, return
-  Module* M = BB.getModule();
-  Function* F = BB.getParent();
-  LLVMContext& C = BB.getContext();
-  IRBuilder<> B(C);
-  Type *VoidPtrTy  = PointerType::getInt8PtrTy(C);
-
-  SmallVector<Instruction*, 4> inst2delete;
-  bool modified = false;
-  // Search for the intrinsic related to unwind polling
-  for (auto it = BB.begin(); it != BB.end(); ++it) {
-    auto &instr = *it;
-    auto call = dyn_cast<CallInst>(&instr);
-    if (!call) continue;
-    auto fn = call->getCalledFunction();
-    if (!fn) continue;
-    bool isFcnNotChangeRetAddr = (fn->getIntrinsicID() != Intrinsic::uli_change_returnaddress) && ( (fn->getIntrinsicID() != Intrinsic::uli_save_returnaddress));
-    if (isFcnNotChangeRetAddr) continue;
-
-    B.SetInsertPoint(&instr);
-    modified=true;
-    // Collect the intrinsic
-    if(fn->getIntrinsicID() == Intrinsic::uli_change_returnaddress) {
-      inst2delete.push_back(call);
-    } else if(fn->getIntrinsicID() == Intrinsic::uli_save_returnaddress) {
-      inst2delete.push_back(call);
-    }
-
-  }
-
-  // Modify and delete call to intrisic
-  for(auto ii: inst2delete) {
-    auto call = dyn_cast<CallInst>(ii);
-    auto fn = call->getCalledFunction();
-    B.SetInsertPoint(ii);
-
-    if(fn->getIntrinsicID() == Intrinsic::uli_change_returnaddress) {
-      auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress, {VoidPtrTy});
-      Value* myRA = B.CreateCall(addrOfRA);
-      myRA = B.CreateBitCast(myRA, IntegerType::getInt64Ty(C)->getPointerTo());
-      Value* newAddr = B.CreateCast(Instruction::PtrToInt, call->getArgOperand(0), IntegerType::getInt64Ty(C));
-      // Store new returnaddress to location of returnaddress
-      B.CreateStore(newAddr, myRA, 1);
-    } else if(fn->getIntrinsicID() == Intrinsic::uli_save_returnaddress) {
-      auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress, {VoidPtrTy});
-      Value* myRA = B.CreateCall(addrOfRA);
-      myRA = B.CreateBitCast(myRA, IntegerType::getInt64Ty(C)->getPointerTo());
-      Value* raValue = B.CreateLoad(IntegerType::getInt64Ty(C), myRA);
-      Value* storageLoc = B.CreateBitCast(call->getArgOperand(0), IntegerType::getInt64Ty(C)->getPointerTo());
-      // Store return address to stack slot
-      B.CreateStore(raValue, storageLoc, 1);
-    }
-
-    ii->eraseFromParent();
-  }
-
-  return modified;
-}
-
-
 bool HandleUnwindPollPass::runInitialization(Module &M) {
   auto &C = M.getContext();
   BoolTy = Type::getInt1Ty(C);
@@ -1407,44 +1308,16 @@ bool HandleUnwindPollPass::runInitialization(Module &M) {
 
 bool HandleUnwindPollPass::runImpl(Function &F) {
   bool changed = false;
-
   bool bDetachExists= detachExists(F);
-  //assert(!bDetachExists && "Detach still exists");
-
   if(bDetachExists) {
-    for (auto &BB : F) {
-      // TODO: handleSaveRestoreCtx is not used, could be removed
-      changed |= handleSaveRestoreCtx(BB);
-      changed |= handleChangeRetAddr(BB);
-    }
     return changed;
   }
-
-
-
   auto unwindPathEntry = findUnwindPathEntry(F);
 
   if(unwindPathEntry && !initialized) {
     Module &M = *(F.getParent());
     auto fcn = Get__unwindrts_unwind_ulifsim2(M);
     fcn->addFnAttr(Attribute::NoUnwindPath);
-
-    //auto fcn = UNWINDRTS_FUNC(unwind_poll, M);
-    //fcn->addFnAttr(Attribute::NoUnwindPath);
-    //fcn = UNWINDRTS_FUNC(unwind_suspend, M);
-    //fcn->addFnAttr(Attribute::NoUnwindPath);
-    //fcn = UNWINDRTS_FUNC(unwind_communicate, M);
-    //fcn->addFnAttr(Attribute::NoUnwindPath);
-
-    //fcn = UNWINDRTS_FUNC(mysetjmp_callee, M);
-    //fcn->addFnAttr(Attribute::NoUnwindPath);
-    //fcn = UNWINDRTS_FUNC(mysetjmp_callee_nosp, M);
-    //fcn->addFnAttr(Attribute::NoUnwindPath);
-    //fcn = UNWINDRTS_FUNC(mylongwithoutjmp_callee, M);
-    //fcn->addFnAttr(Attribute::NoUnwindPath);
-    //fcn = UNWINDRTS_FUNC(mylongjmp_callee, M);
-    //fcn->addFnAttr(Attribute::NoUnwindPath);
-
     initialized = true;
   }
 
@@ -1452,18 +1325,12 @@ bool HandleUnwindPollPass::runImpl(Function &F) {
     // If detach have not been lowered, don't lower the poll
     if(!bDetachExists)
       changed |= handleUnwindPoll(BB, unwindPathEntry);
-    // TODO: handleSaveRestoreCtx is not used, could be removed
-    changed |= handleSaveRestoreCtx(BB);
-
-    changed |= handleChangeRetAddr(BB);
   }
-
   return changed;
 }
 
 PreservedAnalyses
 HandleUnwindPollPass::run(Function &F, FunctionAnalysisManager &AM) {
-
   runInitialization(*F.getParent());
   // Run on function.
   bool Changed = runImpl(F);

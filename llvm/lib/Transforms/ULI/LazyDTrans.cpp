@@ -1,5 +1,6 @@
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/DominanceFrontier.h"
 #include "llvm/Analysis/LoopInfo.h"
@@ -272,6 +273,19 @@ namespace {
       globalVar->setThreadLocal(true);
     return globalVar;
   }
+
+  /*
+  GlobalVariable* GetGlobalVariableNoLink(const char* GlobalName, Type* GlobalType, Module& M, bool localThread=false){
+    GlobalVariable* globalVar = M.getNamedGlobal(GlobalName);
+    if(globalVar){
+      return globalVar;
+    }
+    globalVar = dyn_cast<GlobalVariable>(M.getOrInsertGlobal(GlobalName, GlobalType));
+    if(localThread)
+      globalVar->setThreadLocal(true);
+    return globalVar;
+  }
+  */
 
   /// \brief Helper to find a function with the given name, creating it if it
   /// doesn't already exist. If the function needed to be created then return
@@ -551,6 +565,60 @@ namespace {
     llvm::InlineFunction(*(hashVal), ifi, nullptr, true);
     Fn->addFnAttr(Attribute::NoUnwindPath);
     return Fn;
+  }
+
+  // TODO: Return a set of Value* that is used by Src and that dominates the Src
+  void FindRootArgument(Value* Src, DominatorTree& DT, Instruction* insertPt, SmallSet<Value*, 4>& dsts) {
+    if(isa<Argument>(Src)) {
+      dsts.insert(Src);
+      return;
+    }
+
+    if(isa<GlobalVariable>(Src)) {
+      dsts.insert(Src);
+      return;
+    }
+
+    if(!isa<Instruction>(Src))
+      return;
+
+    if(DT.dominates(Src, insertPt)) {
+      dsts.insert(Src);
+      return;
+    }
+
+    Instruction* SInst = dyn_cast<Instruction>(Src);
+    unsigned nOp = SInst->getNumOperands();
+    for (unsigned i = 0; i<nOp; i++) {
+      auto opVal = SInst->getOperand(i);
+      FindRootArgument(opVal, DT, insertPt, dsts);
+    }
+    return;
+  }
+
+  // Rematerialize instruction to prevent function not dominating
+  // TODO" Fix this, cause infinite loop, add a hash table
+  void FindPathToDst(Value *Src, Value *Dst, SmallVector<Instruction*, 8>& Insts2Clone, SmallSet<Instruction*, 8>& InstsSet) {
+    if(!isa<Instruction>(Src))
+      return;
+
+    Instruction* SInst = dyn_cast<Instruction>(Src);
+    if(InstsSet.count(SInst) > 0)
+      return;
+
+    InstsSet.insert(SInst);
+
+    if(!isa<PHINode>(SInst))
+      Insts2Clone.push_back(dyn_cast<Instruction>(SInst));
+    if (Src == Dst)
+      return;
+
+    unsigned nOp = SInst->getNumOperands();
+    for (unsigned i = 0; i<nOp; i++) {
+      auto opVal = SInst->getOperand(i);
+      // Push copied instruction into set
+      FindPathToDst(opVal, Dst, Insts2Clone, InstsSet);
+    }
   }
 
   // Create helper function
@@ -1161,7 +1229,6 @@ namespace {
     auto *NewModule = Wrapper->getParent();
     if (OldModule && NewModule && OldModule != NewModule &&
         DIFinder.compile_unit_count()) {
-      //outs() << "Never going to be executed?\n";
       auto *NMD = NewModule->getOrInsertNamedMetadata("llvm.dbg.cu");
       // Avoid multiple insertions of the same DICompileUnit to NMD.
       SmallPtrSet<const void *, 8> Visited;
@@ -1351,15 +1418,28 @@ namespace {
   void instrumentLoop (Function *F, Loop* CurrentLoop, Value* bHaveUnwindAlloc) {
     Module *M = F->getParent();
     LLVMContext& C = M->getContext();
+#ifdef PRL_LATER
+    IRBuilder<> B(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+    const DataLayout &DL = M->getDataLayout();
+    Type *VoidPtrTy  = PointerType::getInt8PtrTy(C);
+
+    // TODO: CNP At the start of the function record the return address
+    auto addrOfRA = Intrinsic::getDeclaration(M, Intrinsic::addressofreturnaddress, {VoidPtrTy});
+    Value* myRA = B.CreateCall(addrOfRA);
+    myRA = B.CreateBitCast(myRA, IntegerType::getInt64Ty(C)->getPointerTo());
+    Value* myRAStorage = B.CreateAlloca(IntegerType::getInt64Ty(C), DL.getAllocaAddrSpace(), nullptr, "myra");
+    B.CreateStore(B.CreateLoad(IntegerType::getInt64Ty(C), myRA, 1), myRAStorage, true);
+#else
     IRBuilder<> B(M->getContext());
+#endif
 
     // Inner most loop, insert ULI polling.
     BasicBlock *HeaderBlock = CurrentLoop->getHeader();
 #if 0
     BasicBlock *Latch = CurrentLoop->getLoopLatch();
-    outs() << "Loop latch in Clone.cpp\n";
+    errs() << "Loop latch in Clone.cpp\n";
     if(Latch) {
-      outs() << "Loop latch name: " << Latch->getName() << "\n";
+      errs() << "Loop latch name: " << Latch->getName() << "\n";
       if(F->getFnAttribute("poll-at-loop").getValueAsString()=="true") {
         auto splitPt = Latch->getTerminator()->getPrevNode();
         auto afterBB = Latch->splitBasicBlock(splitPt);
@@ -1406,23 +1486,35 @@ namespace {
 #endif
 
         Instruction *term = HeaderBlock->getTerminator();
-        //B.SetInsertPoint(term);
-        B.SetInsertPoint(HeaderBlock->getFirstNonPHIOrDbgOrLifetime());
+#ifdef PRL_LATER
+	B.SetInsertPoint(term);
+#else
+	B.SetInsertPoint(HeaderBlock->getFirstNonPHIOrDbgOrLifetime());
+#endif
 
 #define NO_UNWIND_POLLPFOR
 #ifdef NO_UNWIND_POLLPFOR
 
+
+	// TODO: CNP Check if return address is still the same
+#ifdef PRL_LATER
+	Value* myRAVal = B.CreateLoad(IntegerType::getInt64Ty(C), myRAStorage, 1);
+	auto myCurrentRA = B.CreateCall(addrOfRA);
+	myCurrentRA->setCanReturnTwice();
+	auto myCurrentRAVal = B.CreateBitCast(myCurrentRA, IntegerType::getInt64Ty(C)->getPointerTo());
+	myCurrentRAVal = B.CreateLoad(IntegerType::getInt64Ty(C), myCurrentRAVal, 1);
+	Value* haveBeenUnwind = B.CreateICmpNE(myRAVal, myCurrentRAVal);
+#else
         Value* bHaveUnwind = B.CreateLoad(Type::getInt1Ty(C), bHaveUnwindAlloc, 1);
         Value* haveBeenUnwind = B.CreateICmpEQ(bHaveUnwind, B.getInt1(1));
-
-        BasicBlock* loopUnwound = BasicBlock::Create(C, "loop.unwounded", F);
+#endif
+	BasicBlock* loopUnwound = BasicBlock::Create(C, "loop.unwounded", F);
 
         B.CreateCondBr(haveBeenUnwind, loopUnwound, afterBB);
 
         term->eraseFromParent();
 
         B.SetInsertPoint(loopUnwound);
-
         B.CreateRetVoid();
 #else
 
@@ -1524,7 +1616,7 @@ INITIALIZE_PASS_END(LazyDTrans, "LazyDTrans",
                     "Lower Tapir to LazyDTrans", false, false)
 
 // Create the multiretcall from fast path to slow path
-void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder, ValueToValueMapTy& VMapSlowPath, Value* fromSlowPathAlloc, SSAUpdater& SSAUpdateWorkContext, DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet) {
+void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder, ValueToValueMapTy& VMapSlowPath, Value* fromSlowPathAlloc, SSAUpdater& SSAUpdateWorkContext, DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet, DominatorTree &DT) {
   Module* M = F.getParent();
   LLVMContext& C = M->getContext();
   Function* potentialJump = Intrinsic::getDeclaration(M, Intrinsic::uli_potential_jump);
@@ -1551,6 +1643,46 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
     for ( auto &II : *detachBB ) {
       instsVec.push_back(&II);
     }
+
+
+    SmallVector<Value*, 5> IntrinsicsArgs;
+    // Look for Intrinsic::uli_lazyd_inst to clone
+    for (auto &BB: F) {
+      bool breakNow = false;
+      for( auto &II : BB) {
+	auto CI = dyn_cast<CallInst>(&II);
+	Function *Intrinsic = nullptr;
+	if(CI)  {
+	  Intrinsic = CI->getCalledFunction();
+	}
+	if (Intrinsic && Intrinsic->getIntrinsicID() == Intrinsic::uli_lazyd_inst)
+	  {
+
+	    Constant *Message= dyn_cast<Constant>(CI->getArgOperand(1));
+	    int messageVal = 0;
+	    if(isa<ConstantExpr>(Message)) {
+	      Instruction * i = (dyn_cast<ConstantExpr>(Message))->getAsInstruction();
+	      if(i) {
+		auto res = i->getOperand(0);
+		if(isa<ConstantInt>(res))
+		  messageVal = dyn_cast<ConstantInt>(res)->getSExtValue();
+	      }
+	    }
+
+	    if(messageVal == 1) continue;
+
+	    for(unsigned i=0; i<CI->arg_size(); i++) {
+	      // Collect the arguments
+	      IntrinsicsArgs.push_back(CI->getArgOperand(i));
+	    }
+	    breakNow = true;
+	    break;
+	  }
+      }
+      if (breakNow)
+	break;
+    }
+
 
     // Look for the spawn function
     for (auto ii : instsVec) {
@@ -1580,6 +1712,121 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
               insertPt = dyn_cast<Instruction>(B.CreateStore(loadRes, reachingAlloca, true));
             }
           }
+
+
+	  if(IntrinsicsArgs.size() != 0) {
+	    DT.recalculate(F);
+	    // Look for uli_lazyd_inst and copy it to the slow path entry
+	    Function* LazyDInstrumentation = Intrinsic::getDeclaration(M, Intrinsic::uli_lazyd_inst);
+	    //B.SetInsertPoint(insertPt);
+
+	    Instruction* insertPtOld = insertPt;
+
+	    SmallVector<Value*, 5> Args;
+	    for(int i=0; i<IntrinsicsArgs.size(); i++) {
+	      Value* arg = nullptr;
+	      if (i == 1) {
+		auto TWO = ConstantInt::get(IntegerType::getInt32Ty(C), 2, false);
+		auto TWOPTR = ConstantExpr::getIntToPtr(TWO, IntegerType::getInt8Ty(C)->getPointerTo(), false);
+		arg = TWOPTR;
+		//IntrinsicsArgs[i-1];
+	      } else {
+		arg = IntrinsicsArgs[i];
+	      }
+	      if(!isa<Argument>(arg)) {
+		SmallVector<Instruction*, 8> Insts2Clone;
+		SmallSet<Value*, 4> dsts;
+		FindRootArgument(arg, DT, insertPt, dsts);
+
+		// Have a for loop that loops the dst
+		if(dsts.size() > 0) {
+		  for(auto dst : dsts) {
+		    SmallSet<Instruction*, 8> InstsSet;
+		    FindPathToDst(arg, dst, Insts2Clone, InstsSet);
+		    if (Insts2Clone.size() == 0)
+		      Args.push_back(dst);
+		  }
+		} else {
+		  Args.push_back(arg);
+		}
+
+		// Insert the cloned instruction
+		ValueToValueMapTy VMapClone;
+		if(Insts2Clone.size() > 0) {
+		  int i=0;
+		  for(auto ii: Insts2Clone) {
+		    // If the instruction already dominate insertPt, then there is no need to clone, and just break
+		    if(DT.dominates(ii, insertPtOld)) {
+		      if(i == 0)
+			Args.push_back(ii);
+		      continue;
+		    }
+
+		    Instruction * iiClone = ii->clone();
+		    iiClone->insertBefore(insertPt);
+		    VMapClone[ii] = iiClone;
+		    insertPt = iiClone;
+		    if(i == 0)
+		      Args.push_back(iiClone);
+		    i++;
+		  }
+		  //insertPt = dyn_cast<Instruction>(VMapClone[Insts2Clone[0]]);
+		  insertPt = insertPtOld;
+		}
+		// Update the use def of the cloned instruction
+		SmallVector< Use*, 4 >  useNeed2Update;
+		for(auto ii: Insts2Clone) {
+		  useNeed2Update.clear();
+		  if(!VMapClone[ii]) {
+		    continue;
+		  }
+
+		  Instruction * clonedII = dyn_cast<Instruction>(VMapClone[ii]);
+
+		  for (auto &use : ii->uses()) {
+		    auto * user = dyn_cast<Instruction>(use.getUser());
+		    if(user->getParent() == insertPt->getParent()) {
+		      useNeed2Update.push_back(&use);
+		    }
+		  }
+		  for( auto U : useNeed2Update ){
+		    U->set(clonedII);
+		  }
+
+		  // If it is a phi node, change the predecessor to the precedecessor of the slowpathentry
+		  if(isa<PHINode>(clonedII)) {
+		    PHINode* phiNode = dyn_cast<PHINode>(clonedII);
+		    if(phiNode->getNumIncomingValues() == 1) {
+		      // If only have one predecessor
+		      phiNode->replaceIncomingBlockWith(phiNode->getIncomingBlock(0), detachInst->getDetached());
+		    } else {
+		      // If only have two or more predecessor
+		      // Delete value not from the same basic block
+		      unsigned incomingPair = phiNode->getNumIncomingValues();
+		      for(unsigned i = 0; i<incomingPair; i++)  {
+			//Instruction* incomingVal = dyn_cast<Instruction>(phiNode->getIncomingValue(i));
+			auto incomingVal = (phiNode->getIncomingValue(i));
+			if(!DT.dominates(incomingVal, clonedII)) {
+			  // Remove the incoming block and its value
+			} else {
+			}
+		      }
+		      phiNode->replaceIncomingBlockWith(phiNode->getIncomingBlock(0), detachInst->getDetached());
+		    }
+		  }
+		}
+
+	      } else {
+		Args.push_back(arg);
+	      }
+	    }
+	    B.SetInsertPoint(insertPt->getParent()->getTerminator());
+	    auto res = B.CreateCall(LazyDInstrumentation, Args);
+	    if(res->getPrevNode())
+	      res->setDebugLoc(res->getPrevNode()->getDebugLoc());
+	    else
+	      res->setDebugLoc(detachInst->getDebugLoc());
+	  }
 
         } else {
           B.SetInsertPoint(ii->getNextNode());
@@ -1693,10 +1940,6 @@ void LazyDTransPass::replaceUses(Instruction *liveVar, Instruction *slowLiveVar)
 
 void LazyDTransPass::updateSSA(SSAUpdater& SSAUpdate, Instruction* inst2replace) {
   SmallVector<Use*, 16> UsesToRename;
-  //outs() << "User of \n";
-  //inst2replace->dump();
-  //outs() << "are:\n";
-
   for (Use &U : inst2replace->uses()) {
     Instruction *User = cast<Instruction>(U.getUser());
     if (PHINode *UserPN = dyn_cast<PHINode>(User)) {
@@ -1716,14 +1959,12 @@ void LazyDTransPass::updateSSA(SSAUpdater& SSAUpdate, Instruction* inst2replace)
           }
         }
         if(!foundPair) {
-          //outs() << "pred: " << pred->getName() << "does not have an incoming BB\n";
           Value* rematerialzeVal = nullptr;
           if(true)
             // Needed for cholesky
             rematerialzeVal = SSAUpdate.GetValueAtEndOfBlock(pred);
           else
             rematerialzeVal = SSAUpdate.GetValueInMiddleOfBlock(pred);
-          //rematerialzeVal->dump();
           phiNode2Update[UserPN]  = std::pair<Value*, BasicBlock*>(rematerialzeVal, pred);
         }
       }
@@ -1751,8 +1992,6 @@ void LazyDTransPass::updateSSA(SSAUpdater& SSAUpdate, Instruction* inst2replace)
   while (!UsesToRename.empty()) {
     auto use = UsesToRename.pop_back_val();
     Instruction *User = cast<Instruction>(use->getUser());
-    //outs() << "User :\n";
-    //User->dump();
     SSAUpdate.RewriteUse(*use);
     //SSAUpdate.RewriteUseAfterInsertions(*use);
   }
@@ -1971,7 +2210,6 @@ void LazyDTransPass::updateSlowVariables_2(Function& F,
                   // If incoming inst dominate parallel region,
                   // then add value where the source is from slow path to fast path
                   if(requiredPhiVarSet.find(incomingInst) == requiredPhiVarSet.end()) {
-                    //outs() << "Incoming inst dominate: "<< *incomingInst << "\n";
                     SSAUpdate.AddAvailableValue(syncBB2syncPred[continueBB], incomingInst);
                     continue;
                   }
@@ -2566,6 +2804,10 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   GlobalVariable* gUnwindStackCnt = GetGlobalVariable("unwindStackCnt", Int32Ty, *M, true);
   // The thread id
   GlobalVariable* gThreadId = GetGlobalVariable("threadId", Int32Ty, *M, true);
+  // Number of par-for-par encountered
+#ifdef PRL_LATER
+  GlobalVariable* gParForParEncountered = GetGlobalVariable("parForParEncountered", Int32Ty, *M, true);
+#endif
   // Store the original return address (this can be pass through register)
   GlobalVariable* gPrevRa = GetGlobalVariable("prevRa", Int64Ty, *M, true);
   // Store the original return address (this can be pass through register)
@@ -2607,7 +2849,6 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   //saveContext->addFnAttr(Attribute::Forkable);
   auto res2 = B.CreateCall(saveContext, {B.CreateBitCast(gPTmpContext, IntegerType::getInt8Ty(C)->getPointerTo()), NULL8});
   res2->setTailCall(true);
-
   // TODO: How does this interact with stacklet
 
   // Get the SP and BP to get my return address
@@ -2642,7 +2883,11 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     BasicBlock* stackAlreadyUnwindCheckBB = BasicBlock::Create(C, "unwind.path.already.unwind.check", &F);
 
     Value* haveBeenUnwind = nullptr;
+#ifdef PRL_LATER
+    if(bHaveFork && !(F.getFnAttribute("par-for-par").getValueAsString()=="true")) {
+#else
     if(bHaveFork) {
+#endif
       Value* bHaveUnwind = B.CreateLoad(Int1Ty, bHaveUnwindAlloc, 1);
       haveBeenUnwind = B.CreateICmpEQ(bHaveUnwind, B.getInt1(1));
     } else {
@@ -2679,11 +2924,16 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
   {
     // Basic block for first time unwind
     B.SetInsertPoint(firstTimeUnwindBB);
+#ifdef PRL_LATER
+    B.CreateStore(B.getInt32(0), gParForParEncountered);
+#endif
 
     // If the function has poll-at loop attribute
     if(F.getFnAttribute("poll-at-loop").getValueAsString()=="true") {
       if(EnableUnwindOnce && !DisableUnwindPoll ) {
+#ifndef PRL_LATER
         B.CreateStore(B.getInt1(1), bHaveUnwindAlloc);
+#endif
       }
     }
 
@@ -2721,6 +2971,17 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
       // Check if the return address has work to do
       Value* fastPathCont = B.CreateCast(Instruction::PtrToInt, BlockAddress::get(detachBB, 0), IntegerType::getInt64Ty(C));
       auto isEqOne1 = (B.CreateICmpEQ(rai, fastPathCont));
+
+#ifdef PRL_LATER
+      if(F.getFnAttribute("par-for-par").getValueAsString()=="true") {
+	Value* bHaveUnwind = B.CreateLoad(Int1Ty, bHaveUnwindAlloc, 1);
+	// If already encounted a par-for-par
+	Value* bHaveEncountered = B.CreateLoad(Int32Ty, gParForParEncountered, 1);
+	Value* comb = B.CreateOr(B.CreateICmpEQ(bHaveEncountered, B.getInt32(1)), bHaveUnwind);
+	isEqOne1 = B.CreateAnd(isEqOne1, comb);
+      }
+#endif
+
       B.CreateCondBr(isEqOne1, workExistsBB, noworkBB);
 
       B.SetInsertPoint(workExistsBB);
@@ -2933,13 +3194,24 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
     //  B.CreateStore(gPrevRaToVoid, pChildRA);
     //} else {
     // Store the original return address to child return address
+#ifdef PRL_LATER
+    if(F.getFnAttribute("par-for-par").getValueAsString()=="true") {
+      if(EnableUnwindOnce && !DisableUnwindPoll ) {
+        B.CreateStore(B.getInt1(1), bHaveUnwindAlloc);
+	B.CreateStore(B.getInt32(1), gParForParEncountered);
+      }
+    }
+#endif
+
     Value * gPrevRaToVoid = B.CreateCast(Instruction::IntToPtr, gPrevRaVal, IntegerType::getInt8Ty(C)->getPointerTo());
     B.CreateStore(gPrevRaToVoid, pChildRA);
     //}
 
     if(F.getFnAttribute("poll-at-loop").getValueAsString()=="true") {
       if(EnableUnwindOnce && !DisableUnwindPoll ) {
+#ifndef PRL_LATER
         B.CreateStore(B.getInt1(1), bHaveUnwindAlloc);
+#endif
       }
     }
 
@@ -3456,7 +3728,7 @@ void LazyDTransPass::instrumentSlowPath(Function& F, SmallVector<DetachInst*, 4>
 
     assert(ci && "No call inst found in slowpath");
 
-    // Find variables used by clone function but defined outside
+    // Find variables used by clone function but defined errside
     for(auto ii : insts2clone) {
       for (Use &U : ii->operands()) {
         Value *v = U.get();
@@ -3749,7 +4021,7 @@ static unsigned getInstructionCount(Function &F) {
 
 bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, DominatorTree &DT,  DominanceFrontier &DF, LoopInfo &LI)  {
   if(F.getName() == "main") {
-    outs() << "Source filename: " << F.getParent()->getSourceFileName() << "\n";
+    errs() << "Source filename: " << F.getParent()->getSourceFileName() << "\n";
     if(EnableMainInstrumentation)
       instrumentMainFcn(F);
     //F.addFnAttr(Attribute::NoUnwindPath);
@@ -3766,7 +4038,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   // Why?
   // qsort will generate an error without this
   if(F.getName().contains(F.getParent()->getSourceFileName())) {
-    errs() << "Function " << F.getName() << " will not have an unwinder\n";
+    //errs() << "Function " << F.getName() << " will not have an unwinder\n";
     F.addFnAttr(Attribute::NoUnwindPath);
   }
 
@@ -4116,7 +4388,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     // Get the predecessor
     for( pred_iterator PI = pred_begin(parent); PI != pred_end(parent); PI++ ) {
       BasicBlock* pred = *PI;
-      // Check if predecessor in the reachingBB
+      // Check if predecessor is not in the reachingBB
       if(reachingBB.find(pred) == reachingBB.end()) {
         B.SetInsertPoint(pred->getTerminator());
 #define USE_CHANNEL
@@ -4176,7 +4448,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
     //-------------------------------------------------------------------------------------------------
     // Add potential jump to the slow path continuation
-    addPotentialJump(F, seqOrder, loopOrder, VMapSlowPath, fromSlowPathAlloc, SSAUpdateWorkContext, ReachingAllocSet);
+    addPotentialJump(F, seqOrder, loopOrder, VMapSlowPath, fromSlowPathAlloc, SSAUpdateWorkContext, ReachingAllocSet, DT);
 
     // Merge slow path into fast path
     for(auto syncBBi = syncInsts.begin(); syncBBi != syncInsts.end() ; syncBBi++ ) {
@@ -4499,6 +4771,7 @@ LazyDTransPass::run(Function &F, FunctionAnalysisManager &AM) {
   runInitialization(*F.getParent());
 
   bool Changed = runImpl(F, AM, DT, DF, LI);
+
   if (!Changed)
     return PreservedAnalyses::all();
 
