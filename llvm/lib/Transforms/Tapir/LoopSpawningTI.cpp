@@ -286,6 +286,18 @@ static void moveInstrumentation(StringRef Name, BasicBlock &From,
   }
 }
 
+static GlobalVariable* GetGlobalVariable(const char* GlobalName, Type* GlobalType, Module& M, bool localThread=false){
+  GlobalVariable* globalVar = M.getNamedGlobal(GlobalName);
+  if(globalVar){
+    return globalVar;
+  }
+  globalVar = dyn_cast<GlobalVariable>(M.getOrInsertGlobal(GlobalName, GlobalType));
+  globalVar->setLinkage(GlobalValue::ExternalLinkage);
+  if(localThread)
+    globalVar->setThreadLocal(true);
+  return globalVar;
+}
+
 void LoopOutlineProcessor::moveCilksanInstrumentation(TapirLoopInfo &TL,
                                                       TaskOutlineInfo &Out,
                                                       ValueToValueMapTy &VMap) {
@@ -902,9 +914,37 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
   Module *M = Helper->getParent();
   const DataLayout &DL = M->getDataLayout();
 
+  // Get the Intrinsic if exists
+  Function* OriF = L->getLoopPreheader()->getParent();
+  Value* fcn = nullptr;
+  for(auto &BB : *OriF) {
+    for (auto &II : BB) {
+      auto CI = dyn_cast<CallInst>(&II);
+      Function *Intrinsic = nullptr;
+      if(CI)  {
+	Intrinsic = CI->getCalledFunction();
+      }
+      if (Intrinsic && Intrinsic->getIntrinsicID() == Intrinsic::uli_lazyd_inst) {
+	Constant *Message= dyn_cast<Constant>(CI->getArgOperand(1));
+	int messageVal = 0;
+	if(isa<ConstantExpr>(Message)) {
+	  Instruction * i = (dyn_cast<ConstantExpr>(Message))->getAsInstruction();
+	  if(i) {
+	    auto res = i->getOperand(0);
+	    if(isa<ConstantInt>(res))
+	      messageVal = dyn_cast<ConstantInt>(res)->getSExtValue();
+	  }
+	}
+	if(messageVal != 1)
+	  fcn = CI->getArgOperand(0);
+      }
+    }
+  }
+
   Function* SeqLoopSpawnFcn = CloneFunction(Helper, VMap);
   SeqLoopSpawnFcn->setName(SeqLoopSpawnFcn->getName() + "_helper_loop");
 
+  Helper->addFnAttr("par-for-par", "true");
   SeqLoopSpawnFcn->addFnAttr("poll-at-loop", "true");
   SeqLoopSpawnFcn->addFnAttr("cilk-pfor-fcn", "true");
   SeqLoopSpawnFcn->addFnAttr(Attribute::NoInline);
@@ -924,6 +964,7 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
   IRBuilder<> Builder(Helper->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
   // Get end and grainsize arguments
   Argument *End, *Grainsize;
+  Value* OriLen;
   {
     auto OutlineArgsIter = Helper->arg_begin();
     if (Helper->hasParamAttribute(0, Attribute::StructRet))
@@ -932,6 +973,10 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
     End = &*++OutlineArgsIter;
     // Grainsize argument is third LC input.
     Grainsize = &*++OutlineArgsIter;
+    // ivstorage
+    ++OutlineArgsIter;
+    // Orignal Len
+    OriLen = &*++OutlineArgsIter;
   }
 
   BasicBlock *DACHead = Preheader;
@@ -1069,18 +1114,7 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
   ReplaceInstWithInst(Preheader->getTerminator(), DI2);
 
   Builder.SetInsertPoint(Preheader->getTerminator());
-  AllocaInst* ivStorage = Builder.CreateAlloca(PrimaryIV->getType(), DL.getAllocaAddrSpace(), nullptr, "ivStorage");
-  ivStorage->setAlignment(Align(8));
 
-  Builder.SetInsertPoint(RetBB);
-  Builder.CreateRetVoid();
-
-  Builder.SetInsertPoint(SyncBB);
-  Builder.CreateSync(RetBB, SyncRegion);
-
-  Builder.SetInsertPoint(DetachedBB);
-  // Store before executing fast path
-  //Builder.CreateStore(ConstantInt::get(CanonicalIV->getType(), Helper->), ivStorage);
   // Setup arguments for call.
   SmallVector<Value *, 4> TopCallArgs;
 
@@ -1100,6 +1134,40 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
   //++AI;
 
   auto startVar = &*AI++;
+
+  if(fcn) {
+    // Create the instrumentation code
+    Function* LazyDInstrumentation = Intrinsic::getDeclaration(M, Intrinsic::uli_lazyd_inst);
+    SmallVector<Value*, 8> Args;
+    Type *Int32Ty = Type::getInt32Ty(M->getContext());
+    // Function to call
+    assert(fcn && "Cannot be nulled");
+    Value* NULL8 = ConstantPointerNull::get(IntegerType::getInt8Ty(M->getContext())->getPointerTo());
+    Args.push_back(fcn);
+    Args.push_back(NULL8);
+    //Args.push_back(Builder.CreateSub(End, startVar));
+    Args.push_back(OriLen);
+    Args.push_back(Grainsize);
+    GlobalVariable* delegate_work = GetGlobalVariable("delegate_work", Int32Ty, *M, true);
+    Args.push_back(Builder.CreateLoad(Int32Ty, delegate_work));
+    auto res = Builder.CreateCall(LazyDInstrumentation, Args);
+    res->setDebugLoc(DI2->getDebugLoc());
+  }
+
+  // Create the ivStorage
+  AllocaInst* ivStorage = Builder.CreateAlloca(PrimaryIV->getType(), DL.getAllocaAddrSpace(), nullptr, "ivStorage");
+  ivStorage->setAlignment(Align(8));
+
+  Builder.SetInsertPoint(RetBB);
+  Builder.CreateRetVoid();
+
+  Builder.SetInsertPoint(SyncBB);
+  Builder.CreateSync(RetBB, SyncRegion);
+
+  Builder.SetInsertPoint(DetachedBB);
+  // Store before executing fast path
+  //Builder.CreateStore(ConstantInt::get(CanonicalIV->getType(), Helper->), ivStorage);
+
   RecurInputs.insert(startVar);
   //++AI;
 
@@ -1115,6 +1183,7 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
 
   for (Function::arg_iterator AE = Helper->arg_end(); AI != AE; ++AI)
     RecurInputs.insert(&*AI);
+
 
   // Store before executing fast path
   Builder.CreateStore(startVar, ivStorage);
@@ -1176,6 +1245,7 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
   RecurInputsSlow1.insert(&*AI++);
   RecurInputsSlow1.insert(ivStorage);
   ++AI;
+  RecurInputsSlow1.insert(&*AI++);
   for (Function::arg_iterator AE = Helper->arg_end(); AI != AE; ++AI)
     RecurInputsSlow1.insert(&*AI);
 
@@ -1194,6 +1264,7 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
   RecurInputsSlow2.insert(&*AI++);
   RecurInputsSlow2.insert(ivStorage);
   ++AI;
+  RecurInputsSlow2.insert(&*AI++);
   for (Function::arg_iterator AE = Helper->arg_end(); AI != AE; ++AI)
     RecurInputsSlow2.insert(&*AI);
 
@@ -1223,7 +1294,7 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL, TaskOutlineIn
   // TopCall->setCallingConv(Helper->getCallingConv());
   TopCall2->setDebugLoc(Header->getTerminator()->getDebugLoc());
 
-  Helper->addFnAttr(Attribute::NoInline);
+  //Helper->addFnAttr(Attribute::NoInline);
   Builder.CreateBr(DACRetBBSlow);
 
   Builder.SetInsertPoint(DACRetBBSlow);
@@ -1508,21 +1579,66 @@ static void getLoopControlInputs(TapirLoopInfo *TL,
 
   if(Hints.getStrategy() == TapirLoopHints::ST_HYBRID) {
     // Add an argument to store the iv storage
-    LCInputs.push_back( ConstantInt::get(GrainsizeVal->getType(), 2));
+    // Get the 4th argument
+#if 1
+    auto parentFcn = TL->getLoop()->getHeader()->getParent();
+    size_t lastArg = parentFcn->arg_size()-1;
+    if(parentFcn->getArg(lastArg)->getType()->isIntegerTy(64)) {
+      if(parentFcn->getArg(lastArg-1)->getType()->isIntegerTy(64)) {
+	LCInputs.push_back(parentFcn->getArg(lastArg-1));
+      } else {
+	LCInputs.push_back( ConstantInt::get(GrainsizeVal->getType(), 1));
+      }
+    } else {
+      if(parentFcn->getArg(lastArg-2)->getType()->isIntegerTy(64)) {
+	LCInputs.push_back(parentFcn->getArg(lastArg-2));
+      } else {
+	LCInputs.push_back( ConstantInt::get(GrainsizeVal->getType(), 1));
+      }
+    }
+#else
+    LCInputs.push_back( ConstantInt::get(GrainsizeVal->getType(), 1));
+#endif
   } else {
     LCInputs.push_back(GrainsizeVal);
   }
   if(Hints.getStrategy() == TapirLoopHints::ST_HYBRID) {
     // Add an argument to store the iv storage
-    IRBuilder<> Builder(TL->getLoop()->getHeader()->getParent()->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
-    const DataLayout &DL = TL->getLoop()->getHeader()->getParent()->getParent()->getDataLayout();
+    auto parentFcn = TL->getLoop()->getHeader()->getParent();
+    LLVMContext& C = parentFcn->getParent()->getContext();
+    IRBuilder<> Builder(parentFcn->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+    const DataLayout &DL = parentFcn->getParent()->getDataLayout();
     AllocaInst* CurrIterVal = Builder.CreateAlloca(PrimaryPhi->getType(), DL.getAllocaAddrSpace(), nullptr, "ivStorage");
     CurrIterVal->setAlignment(Align(8));
-    TL->CurrIterArg = new Argument(CurrIterVal->getType(), "currIter");
+    //TL->CurrIterArg = new Argument(CurrIterVal->getType(), "currIter");
     //TL->CurrIterArg->addAttr(Attribute::getWithAlignment(TL->CurrIterArg->getContext(), llvm::Align(8)));
     //LCArgs.push_back(TL->CurrIterArg);
     LCArgs.push_back(CurrIterVal);
     LCInputs.push_back(CurrIterVal);
+
+#if 1
+    // Add an argument to store the original length of the iteration
+    // Get the 5th argument
+    size_t lastArg = parentFcn->arg_size()-1;
+    Argument* OriLensArg = nullptr;
+    //parentFcn->dump();
+    if(parentFcn->getArg(lastArg)->getType()->isIntegerTy(64) && !parentFcn->getArg(lastArg)->getType()->isPointerTy()) {
+      OriLensArg = new Argument(parentFcn->getArg(lastArg)->getType(), "originalsize");
+      //LCArgs.push_back(parentFcn->getArg(lastArg));
+      LCInputs.push_back(parentFcn->getArg(lastArg));
+    } else if(!parentFcn->getArg(lastArg-1)->getType()->isPointerTy()) {
+      OriLensArg = new Argument(parentFcn->getArg(lastArg-1)->getType(), "originalsize");
+      //LCArgs.push_back(parentFcn->getArg(lastArg-1));
+      LCInputs.push_back(parentFcn->getArg(lastArg-1));
+    } else {
+      OriLensArg = new Argument(IntegerType::getInt64Ty(C), "originalsize");
+      //LCArgs.push_back(parentFcn->getArg(lastArg-1));
+      LCInputs.push_back(ConstantInt::get(IntegerType::getInt64Ty(C), 0));
+    }
+    //OriLensArg->addAttr(Attribute::getWithAlignment(OriLensArg->getContext(), Align(8)));
+    LCArgs.push_back(OriLensArg);
+#endif
+
   }
 
   assert(TL->getInductionVars()->size() == 1 &&
