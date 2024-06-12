@@ -81,10 +81,7 @@ static cl::opt<bool> EnableMultiRetIR(
 "lazy-enable-multiretir", cl::init(true), cl::NotHidden,
   cl::desc("Use new ir to represent fork'ed function  (default = on)"));
 
-// TODO: http://blog.llvm.org/2011/09/greedy-register-allocation-in-llvm-30.html
-
 // Copied from CilkABI.cpp
-
 /// Helper methods for storing to and loading from struct fields.
 static Value *GEP(IRBuilder<> &B, Value *Base, int Field) {
   // return B.CreateStructGEP(cast<PointerType>(Base->getType()),
@@ -262,30 +259,25 @@ static Value* setSP(IRBuilder<> &B, Function& F, Value* val) {
 
 namespace {
 
+  /// \Get global variable
+  /// Return the globalVariable datastructure
+  /// First argument : Global variable's name
+  /// Second argument: Type of Global variable
+  /// Third argument : Module
+  /// Fourth argument: If it is a local thread variable or not
   GlobalVariable* GetGlobalVariable(const char* GlobalName, Type* GlobalType, Module& M, bool localThread=false){
     GlobalVariable* globalVar = M.getNamedGlobal(GlobalName);
     if(globalVar){
+      // If already exists, return it
       return globalVar;
     }
+    // If it doesn't exists, construct it now
     globalVar = dyn_cast<GlobalVariable>(M.getOrInsertGlobal(GlobalName, GlobalType));
     globalVar->setLinkage(GlobalValue::ExternalLinkage);
     if(localThread)
       globalVar->setThreadLocal(true);
     return globalVar;
   }
-
-  /*
-  GlobalVariable* GetGlobalVariableNoLink(const char* GlobalName, Type* GlobalType, Module& M, bool localThread=false){
-    GlobalVariable* globalVar = M.getNamedGlobal(GlobalName);
-    if(globalVar){
-      return globalVar;
-    }
-    globalVar = dyn_cast<GlobalVariable>(M.getOrInsertGlobal(GlobalName, GlobalType));
-    if(localThread)
-      globalVar->setThreadLocal(true);
-    return globalVar;
-  }
-  */
 
   /// \brief Helper to find a function with the given name, creating it if it
   /// doesn't already exist. If the function needed to be created then return
@@ -318,8 +310,19 @@ namespace {
     return M.getOrInsertFunction("__cilkrts_get_nworkers", FTy, AL);
   }
 
+
+  /// \Create the function that hashes a string
+  /// Based on the following computation (from GNU library)
+  /// uint32_t hashGnu(const uint8_t* name) {
+  ///    uint32_t h = 5381;
+  ///    for (; *name; name++) {
+  ///      h = (h << 5) + h + *name;
+  ///    }
+  ///    return h;
+  /// }
+  /// Returns the function body
+  /// First argument : Module
   Function* Get__unwindrts_unwind_gnuhash(Module& M) {
-    //using unwind_gnuhash_ty = unsigned (char *);
     Function* Fn = nullptr;
     LLVMContext& C = M.getContext();
     FunctionType* unwind_gnuhash_ty = FunctionType::get(Type::getInt32Ty(C), {PointerType::getInt8PtrTy(C)}, false);
@@ -332,15 +335,6 @@ namespace {
     BasicBlock* forbodypreheader = BasicBlock::Create(C, "for.body.preheader", Fn);
     BasicBlock* forbody = BasicBlock::Create(C, "for.body", Fn);
     BasicBlock* forend = BasicBlock::Create(C, "for.end", Fn);
-    /*
-      uint32_t hashGnu(const uint8_t* name) {
-      uint32_t h = 5381;
-      for (; *name; name++) {
-      h = (h << 5) + h + *name;
-      }
-      return h;
-      }
-    */
     /*
       define i32 @hashGnu(i8* nocapture readonly %name) local_unnamed_addr #0
       entry:
@@ -413,13 +407,20 @@ namespace {
     return Fn;
   }
 
+
+  /// \Create the function that locate the parent's backtrack routine based on the return address of the child
+  /// Based on the following computation
+  ///
+  ///   uint32_t hva = (uint32_t) (hashGnui((const uint32_t) ((uint64_t)ra) ) % nbucket);
+  ///   uint32_t query = bucket[hva];
+  ///   while((ra !=  ratable[query]) && (query != 0)) {
+  ///	  query = chain[query];
+  ///   }
+  ///   uint32_t uwpath = unwindtable[query];
+  ///
+  /// Returns the function body
+  /// First argument : Module
   Function* Get__unwindrts_unwind_queryunwindaddress(Module& M) {
-    //using unwind_queryunwindaddress_ty = unsigned (long);
-
-    //AttributeList AL;
-    //AL = AL.addAttribute(C, AttributeList::FunctionIndex,
-    //                   Attribute::NoUnwindPath);
-
     LLVMContext& C = M.getContext();
     Function* Fn = nullptr;
     FunctionType* unwind_queryunwindaddress_ty = FunctionType::get(Type::getInt32Ty(C), {Type::getInt64Ty(C)}, false);
@@ -567,37 +568,40 @@ namespace {
     return Fn;
   }
 
-  // TODO: Return a set of Value* that is used by Src and that dominates the Src
-  void FindRootArgument(Value* Src, DominatorTree& DT, Instruction* insertPt, SmallSet<Value*, 4>& dsts) {
-    if(isa<Argument>(Src)) {
-      dsts.insert(Src);
+  // Return the early set of Value* that is used by Dst and that dominates the Dst
+  // First argument: Dst variable
+  // Second argument: DT dominator tree
+  // Third argument: insertPt
+  // Fourt argument : Srcs, used to store the output
+  void findRootArgument(Value* Dst, DominatorTree& DT, Instruction* InsertPt, SmallSet<Value*, 4>& Srcs) {
+    if(isa<Argument>(Dst)) {
+      Srcs.insert(Dst);
       return;
     }
 
-    if(isa<GlobalVariable>(Src)) {
-      dsts.insert(Src);
+    if(isa<GlobalVariable>(Dst)) {
+      Srcs.insert(Dst);
       return;
     }
 
-    if(!isa<Instruction>(Src))
+    if(!isa<Instruction>(Dst))
       return;
 
-    if(DT.dominates(Src, insertPt)) {
-      dsts.insert(Src);
+    if(DT.dominates(Dst, InsertPt)) {
+      Srcs.insert(Dst);
       return;
     }
 
-    Instruction* SInst = dyn_cast<Instruction>(Src);
+    Instruction* SInst = dyn_cast<Instruction>(Dst);
     unsigned nOp = SInst->getNumOperands();
     for (unsigned i = 0; i<nOp; i++) {
       auto opVal = SInst->getOperand(i);
-      FindRootArgument(opVal, DT, insertPt, dsts);
+      findRootArgument(opVal, DT, InsertPt, Srcs);
     }
     return;
   }
 
   // Rematerialize instruction to prevent function not dominating
-  // TODO" Fix this, cause infinite loop, add a hash table
   void FindPathToDst(Value *Src, Value *Dst, SmallVector<Instruction*, 8>& Insts2Clone, SmallSet<Instruction*, 8>& InstsSet) {
     if(!isa<Instruction>(Src))
       return;
@@ -758,7 +762,6 @@ namespace {
     BasicBlock* resBB = nullptr;
 
     bbList.push_back(detachBB);
-    //bb2clones.push_back(detachBB);
     while(!bbList.empty()) {
       // Visit basic block
       bb = bbList.back();
@@ -784,18 +787,10 @@ namespace {
       haveVisited[bb] = true;
       bb2clones.push_back(bb);
 
-      //if(resBB)
-      //break;
-
-      //auto succBB = detachBB->getUniqueSuccessor();
-      //assert(succBB && "Block within detach has multiple successor");
-
       for ( succ_iterator SI = succ_begin(bb); SI != succ_end(bb); SI++ ) {
         auto succBB = *SI;
         bbList.push_back(succBB);
       }
-
-      //bbList.push_back(succBB);
     }
 
     assert(resBB && "no function call contain in detach");
@@ -842,82 +837,6 @@ namespace {
     assert(resBB && "no function call contain in detach");
     return resBB;
   }
-
-  // Get the actual detach basic block that contains the call
-  std::pair<BasicBlock*, BasicBlock*> getActualContinue(BasicBlock* continueBB, Value* syncRegion, DominatorTree &DT) {
-    SmallVector<BasicBlock*, 4> bbList;
-    ValueMap<BasicBlock*, bool> haveVisited;
-    BasicBlock* bb = nullptr;
-    BasicBlock* resBB = nullptr;
-
-    SmallVector<DetachInst*, 4> diList;
-    SmallVector<SyncInst*, 4> siList;
-
-    bbList.push_back(continueBB);
-    while(!bbList.empty()) {
-      // Visit basic block
-      bb = bbList.back();
-      bbList.pop_back();
-
-      // Basic block already visited, skip
-      if(haveVisited.lookup(bb)){
-        continue;
-      }
-
-      // Mark bb as visited
-      haveVisited[bb] = true;
-
-      if(isa<DetachInst>(bb->getTerminator())){
-        auto di = dyn_cast<DetachInst>(bb->getTerminator());
-        if(di->getSyncRegion() != syncRegion)
-          diList.push_back(di);
-
-      } else if( isa<SyncInst>(bb->getTerminator()) ) {
-        auto si = dyn_cast<SyncInst>(bb->getTerminator());
-        auto siSyncRegion = si->getSyncRegion();
-        if(siSyncRegion != syncRegion)
-          siList.push_back(si);
-        else
-          continue;
-      }
-
-
-      for ( succ_iterator SI = succ_begin(bb); SI != succ_end(bb); SI++ ) {
-        auto succBB = *SI;
-        bbList.push_back(succBB);
-      }
-    }
-
-    BasicBlock* commonB1 = nullptr;
-    // Find the common ancestor of all detach instruction not belonging to the sync region
-    if(diList.empty())
-      commonB1 = nullptr;
-    else if(diList.size() == 1)
-      commonB1 = diList.back()->getParent();
-    else {
-      commonB1 = diList.back()->getParent();
-      diList.pop_back();
-      for(auto di: diList) {
-        commonB1 = DT.findNearestCommonDominator(commonB1, di->getParent());
-      }
-    }
-
-    BasicBlock* commonB2 = nullptr;
-    // Find the common successor of all sync instruction not belonging to the sync region
-    if(siList.empty()) {
-      commonB2 = nullptr;
-    } else if(siList.size() == 1) {
-      commonB2 = siList.back()->getParent();
-    } else {
-      assert(false && "Not supporting multiple exit in the nested fork-join");
-    }
-
-    if(commonB1)
-      return std::make_pair(commonB1, commonB2);
-    else
-      return std::make_pair(nullptr, nullptr);
-  }
-
 
   // Return the set of basic block that is the predecessor of dstBB + dstBB itself
   void getAllPredecessor(BasicBlock* dstBB, SmallPtrSet<BasicBlock*, 8>& allPredBB) {
@@ -1107,7 +1026,6 @@ namespace {
   }
 
   Function* convertBBtoFcn (Function& F, BasicBlock* mainBB, SmallVector<BasicBlock*, 4>& bb2clones, SmallPtrSet<Value*, 4>& fcnArgs) {
-
     Module* M = F.getParent();
     LLVMContext& C = M->getContext();
 
@@ -1240,16 +1158,6 @@ namespace {
           NMD->addOperand(Unit);
     }
 
-
-#if 0
-    for(auto pBB : bb2clones) {
-      BasicBlock * ClonedBB = dyn_cast<BasicBlock>(VMapSlowPath[pBB]);
-      for (Instruction &II : *ClonedBB) {
-        //II.dump();
-      }
-    }
-#endif
-
     return Wrapper;
   }
 
@@ -1263,9 +1171,7 @@ namespace {
                                        ValueToValueMapTy& VMapGotStolenPath,
                                        SmallPtrSet<BasicBlock*, 8>& GotstolenSet,
                                        DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet,
-                                       DenseMap <BasicBlock*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocToGotstolenSet,
-                                       DenseMap <DetachInst*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForDetach,
-                                       DenseMap <BasicBlock*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForGotStolen) {
+                                       DenseMap <DetachInst*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForDetach) {
     // Locate the detach instruct
     Module* M = F.getParent();
     LLVMContext& C = M->getContext();
@@ -1736,7 +1642,7 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
 	      if(!isa<Argument>(arg)) {
 		SmallVector<Instruction*, 8> Insts2Clone;
 		SmallSet<Value*, 4> dsts;
-		FindRootArgument(arg, DT, insertPt, dsts);
+		findRootArgument(arg, DT, insertPt, dsts);
 
 		// Have a for loop that loops the dst
 		if(dsts.size() > 0) {
@@ -2580,90 +2486,23 @@ void LazyDTransPass::cloneBasicBlock(Function &F, SmallVector<BasicBlock*, 8>& b
 
 
 void LazyDTransPass::postProcessCfg(Function &F, FunctionAnalysisManager &AM, DominatorTree &DT, SmallPtrSet<AllocaInst*, 8>& AllocaSet,
-                    SmallPtrSet<BasicBlock*, 8>& GotstolenSet, DenseMap <BasicBlock*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocToGotstolenSet,
-                    DenseMap <BasicBlock*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForGotStolen) {
+                    SmallPtrSet<BasicBlock*, 8>& GotstolenSets) {
   // Desirable to  verify the IR before running simplify
   simplifyFcn(F, AM, DT);
 
-  if(!EnableStoreLoadForkStorage) {
-    assert(0 && "Pass not available");
-#if 0
-    // Rerun the analysis (AssumptionCacheTracker does not have a runOnFunction module provided)
-    DT.recalculate(F);
-    AM.getResult<AAManager>(F);
-    AM.getResult<LoopAnalysis>(F);
-    AM.getResult<MemoryDependenceAnalysis>(F);
-    AM.getResult<OptimizationRemarkEmitterAnalysis>(F);
-
-    // Get the analysis result
-    MemoryDependenceResults &MDR = AM.getResult<MemoryDependenceAnalysis>(F);
-    AssumptionCache &AC = AM.getResult<AssumptionAnalysis>(F);
-    LoopInfo &LI = AM.getResult<LoopAnalysis>(F);
-
-#if 0
-    // TODO: Need to be part of lib/Transform/Util folder
-
-    // Run the GVN (the old version) to remove redundant load and create phi instruction
-    runOldGVN(false, F, AC, DT,
-              AM.getResult<TargetLibraryAnalysis>(F),
-              AM.getResult<AAManager>(F),
-              &MDR,
-              &LI,
-              &AM.getResult<OptimizationRemarkEmitterAnalysis>(F));
-#endif
-
-    // Simplify CFG (in cholesky, these remove redundant phi node created by GVN)
-    simplifyFcn(F, AM, DT);
-
-    // Update Dominator Tree
-    DT.recalculate(F);
-    IRBuilder<> B(F.getContext());
-
-    // Remove store in fast path, too dangerous, don't use.
-    SmallVector<StoreInst*, 4 > str2delete;
-    for(auto ai : AllocaSet) {
-      for (auto &use : ai->uses()) {
-        auto * user = dyn_cast<Instruction>(use.getUser());
-        if(!use) continue;
-        if(isa<StoreInst>(user)  ) {
-          // FIXME: Need to properly remove store, for now keep it.
-          continue;
-          StoreInst * si = dyn_cast<StoreInst>(user);
-          // Remove non volatile store to alloca that stores fork result (volatile implies it is in gotstolen handler or parallel path)
-          if(!si->isVolatile()) {
-            LLVM_DEBUG(dbgs() << "Remove the non volatile inst :" << *si << "\n");
-            str2delete.push_back(si);
-          }
-        } else if (isa<LoadInst>(user)) {
-          LoadInst * li = dyn_cast<LoadInst>(user);
-          li->setVolatile(true);
-        }
+  // Make sure that the store and load to fork storage is volatile (not optimize out)
+  for(auto ai : AllocaSet) {
+    for (auto &use : ai->uses()) {
+      auto * user = dyn_cast<Instruction>(use.getUser());
+      if(!use) continue;
+      if(isa<StoreInst>(user)  ) {
+	StoreInst * si = dyn_cast<StoreInst>(user);
+	si->setVolatile(true);
+      } else if (isa<LoadInst>(user)) {
+	LoadInst * li = dyn_cast<LoadInst>(user);
+	li->setVolatile(true);
       }
     }
-    // Actually remove store in fast path
-    for(auto strInst : str2delete) {
-      strInst->eraseFromParent();
-    }
-
-    simplifyFcn(F, AM, DT);
-#endif
-  } else {
-
-    // Make sure that the store and load to fork storage is volatile (not optimize out)
-    for(auto ai : AllocaSet) {
-      for (auto &use : ai->uses()) {
-        auto * user = dyn_cast<Instruction>(use.getUser());
-        if(!use) continue;
-        if(isa<StoreInst>(user)  ) {
-          StoreInst * si = dyn_cast<StoreInst>(user);
-          si->setVolatile(true);
-        } else if (isa<LoadInst>(user)) {
-          LoadInst * li = dyn_cast<LoadInst>(user);
-          li->setVolatile(true);
-        }
-      }
-    }
-
   }
 
   // Update the multiretcall inst with the retpad inst
@@ -3361,10 +3200,7 @@ void LazyDTransPass::createGotStolenHandler(SmallVector<DetachInst*, 4>& seqOrde
                             ValueToValueMapTy& VMapGotStolenPath,
                             SmallPtrSet<BasicBlock*, 8>& GotstolenSet,
                             DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet,
-                            DenseMap <BasicBlock*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocToGotstolenSet,
-                            DenseMap <DetachInst*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForDetach,
-                            DenseMap <BasicBlock*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForGotStolen
-                            ) {
+                            DenseMap <DetachInst*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForDetach) {
   SmallVector<DetachInst*, 4> bbOrder;
   bbOrder.append(seqOrder.begin(), seqOrder.end());
   bbOrder.append(loopOrder.begin(), loopOrder.end());
@@ -3407,19 +3243,6 @@ void LazyDTransPass::createGotStolenHandler(SmallVector<DetachInst*, 4>& seqOrde
 
     // Keep record of the got stolen handler basic block
     GotstolenSet.insert(gotStolenHandler);
-
-    // TODO: Might remove this since no longer needed
-#if 0
-    // Copy information related to detach-alloca to gotstolen-alloca (contains the same information but use gotstolen basic block as key instead of detach inst, since detach inst will be replaced with branch inst)
-    // Create a map from gotstolen handler to a set of reaching alloca
-    for (auto reachingAlloca : ReachingAllocSet[detachInst]){
-      ReachingAllocToGotstolenSet[gotStolenHandler].insert(reachingAlloca);
-    }
-    // Transfer information of latest store that reaches detach (basically changing the key from detachinst to gotstolen)
-    for (auto reachingAlloca : ReachingAllocSet[detachInst]){
-      LatestStoreForGotStolen[gotStolenHandler][reachingAlloca] = LatestStoreForDetach[detachInst][reachingAlloca];
-    }
-#endif
   }
 }
 
@@ -4023,9 +3846,25 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   if(F.getName() == "main") {
     errs() << "Source filename: " << F.getParent()->getSourceFileName() << "\n";
     if(EnableMainInstrumentation)
+      /*
+	define dso_local noundef i32 @main(i32 noundef %argc, i8** nocapture noundef readonly %argv) local_unnamed_addr #4 {
+	entry:
+	  call void @initworkers_env() #12
+	  call void @initperworkers_sync(i32 0, i32 1) #12
+          ....
+          ....
+          ....
+        for.cond.cleanup:
+          call void @deinitperworkers_sync(i32 0, i32 1) #12
+	  call void @deinitworkers_env() #12
+	  ret i32 0
+       */
       instrumentMainFcn(F);
-    //F.addFnAttr(Attribute::NoUnwindPath);
+
+    // Don't insert polling in the main function since the scheduler have not been initialized yet.
     F.addFnAttr(Attribute::ULINoPolling);
+
+    // Should not be an issue?
     for(auto &BB : F) {
       for(auto &II : BB) {
         if (isa<DetachInst>(&II)) {
@@ -4035,10 +3874,8 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     }
   }
 
-  // Why?
   // qsort will generate an error without this
   if(F.getName().contains(F.getParent()->getSourceFileName())) {
-    //errs() << "Function " << F.getName() << " will not have an unwinder\n";
     F.addFnAttr(Attribute::NoUnwindPath);
   }
 
@@ -4053,7 +3890,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
       }
     }
   }
-
   for(auto ii : taskframe2delete) {
     ii->eraseFromParent();
   }
@@ -4081,12 +3917,12 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
           if(fcn && fcn->getFnAttribute("poll-at-loop").getValueAsString()=="true"){
             bHavePforHelper=true;
           }
-
         }
       }
     }
   }
 
+  // Attempt to optimize frame pointer, turn of currently
 #ifdef OPTIMIZE_FP
   if(bHaveFork || bHaveCallFcn6Args) {
 #else
@@ -4097,13 +3933,14 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     F.addFnAttr("no-realign-stack");
   }
 
-  // If function does not have a fork and instruction is less than 50
+  // If function does not have a fork and instruction is less than MaxInstPoll
+  // Default value of MaxInstPoll=1
   if(!bHaveFork && getInstructionCount(F) <= MaxInstPoll)
     F.addFnAttr(Attribute::ULINoPolling);
 
   // Do not process function that have the nounwindpath attribute
   if(F.hasFnAttribute(Attribute::NoUnwindPath)) {
-    // Lower tapir grainsize if it has any
+    // Before simply returning, lower tapir grainsize if it has any
     SmallVector<IntrinsicInst*, 4 > ii2delete;
     for(auto &BB : F) {
       for(auto &II : BB) {
@@ -4122,8 +3959,9 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     return false;
   }
 
-  bool bNotProcess = true;
   // If function does not return (simply abort), do not process
+  // Are there such cases?
+  bool bNotProcess = true;
   for(auto &BB : F) {
     if (isa<ReturnInst>(BB.getTerminator())) {
       bNotProcess = false;
@@ -4131,6 +3969,8 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   }
   if(bNotProcess) return false;
 
+
+  // Perform static analysis on the Detach-Reattach IR
   LiveVariable LV;
   ReachingDetachInst RDI;
   ReachingStoreReachableLoad RSI;
@@ -4147,7 +3987,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   auto  &MapBB2InVal = RDI.getMapBB2InVal();
 
   auto  &RDIBB = RDI.getReachingDetachBBMap();
-
   auto  &RSBB = RSI.getReachingStore();
 
   // Get order of update. SeqOrder and looporder contains the Detach's Parent (detach's basic block)
@@ -4156,7 +3995,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
 
   // The phi node needed in the continuation in slow path (Key: Detach inst. Value: Live variables defined in between detach inst).
-  //DenseMap <DetachInst*, SmallPtrSet<Instruction*, 8>> RequiredPhiNode;
   SmallPtrSet<Instruction*, 8> RequiredPhiNode;
   SmallPtrSet<Instruction*, 8> PhiNodeInserted;
 
@@ -4178,11 +4016,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   // Store all the multiretcall that can be transformed into branch based on path
   SmallPtrSet<MultiRetCallInst*, 8> MultiRetCallPathSet;
 
-  // Similar to ReachingAllocSet but for gotstolen handler
-  // TODO: May need to remove both of this since no longer needed
-  DenseMap <BasicBlock*, SmallPtrSet<AllocaInst*, 8>> ReachingAllocToGotstolenSet;
-  DenseMap <BasicBlock*, DenseMap <AllocaInst*, StoreInst*>> LatestStoreForGotStolen;
-
   // Key detachInst (or its gotstolen handler) + any alloca inst reaching to it
   // Value = The latest store to that alloca inst that is executed before the detach inst (or its gotstolen handler)
   DenseMap <DetachInst*, DenseMap <AllocaInst*, StoreInst*>> LatestStoreForDetach;
@@ -4193,9 +4026,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     bb2clones.push_back(&BB);
   }
 
-  // Store the basic blocks that holds the sync instruction
-
-  // TODO: Change this to Instruction instead of Basic block
+  // Store the Instruction and BB that represent the sync instruction
   SmallVector<BasicBlock*, 8> syncBBs;
   SmallVector<SyncInst*, 8> syncInsts;
   for( auto pBB : bb2clones ) {
@@ -4205,20 +4036,16 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     }
   }
 
-  if(true) {
-    //if(!EnableStoreLoadForkStorage) {
-    for (auto pBB : bb2clones){
-      if (DetachInst * DI = dyn_cast<DetachInst>(pBB->getTerminator())){
-        F.addFnAttr(Attribute::Stealable);
-        F.addFnAttr(Attribute::Forkable);
-        BasicBlock * detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
-        for( Instruction &II : *detachBlock ) {
-          if( isa<CallInst>(&II) ) {
-            dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);
-            dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::ReturnsTwice);
-            //dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Stealable);
-          }
-        }
+  for (auto pBB : bb2clones){
+    if (DetachInst * DI = dyn_cast<DetachInst>(pBB->getTerminator())){
+      F.addFnAttr(Attribute::Stealable);
+      F.addFnAttr(Attribute::Forkable);
+      BasicBlock * detachBlock = dyn_cast<DetachInst>(DI)->getDetached();
+      for( Instruction &II : *detachBlock ) {
+	if( isa<CallInst>(&II) ) {
+	  dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::Forkable);
+	  dyn_cast<CallInst>(&II)->getCalledFunction()->addFnAttr(Attribute::ReturnsTwice);
+	}
       }
     }
   }
@@ -4407,17 +4234,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
 #endif
 
-
-#if 0
-  // Move alloca to entry
-  for(auto ai : AllocaSet) {
-    ai->dump();
-    ai->removeFromParent();
-    //ai->insertAfter(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
-    insertPoint = B.Insert(ai);
-  }
-#endif
-
   // Stores the workcontext value from the slow path entry and will be used to rematerialze the work context in the slowpath
   SSAUpdater SSAUpdateWorkContext;
 
@@ -4428,12 +4244,10 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     //-------------------------------------------------------------------------------------------------
     // If the detach inst has the function inlined, create a wrapper function for it.
     generateWrapperFuncForDetached(F, seqOrder, loopOrder, locAlloc, ownerAlloc, LVout, LVin, VMapSlowPath, VMapGotStolenPath,
-                                   GotstolenSet, ReachingAllocSet, ReachingAllocToGotstolenSet, LatestStoreForDetach, LatestStoreForGotStolen);
+                                   GotstolenSet, ReachingAllocSet, LatestStoreForDetach);
 
     //-------------------------------------------------------------------------------------------------
-    // If there is recursive sync, create a wrapper for each sync. Doest not work, to complicated, might as well create a new pass before this.
-    // TODO: Currently, not used. Need to be deleted along with any function that is only use by this function
-    //generateWrapperFuncForRecursiveSync(F, DT, seqOrder, loopOrder, LVout, LVin, syncInsts);
+    // TODO: If there is recursive sync, create a wrapper for each sync. Doest not work, to complicated, might as well create a new pass before this.
 
     //-------------------------------------------------------------------------------------------------
     // Find the live varaible required in each slow path-continuation to construct the phi nodes needed
@@ -4468,14 +4282,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
       if(!syncBB2syncPred.count(syncSucc)) {
         BasicBlock* syncSuccPre = BasicBlock::Create(C, "pre.sync", &F);
         B.SetInsertPoint(syncSuccPre);
-
-#if 0
-        // Debug purpose
-        Value * locVal = B.CreateLoad(Int32Ty, locAlloc, 1, "locVal");
-        FunctionCallee measure_resume_parent = Get_measure_resume_parent(*M);
-        B.CreateCall(measure_resume_parent, {locVal});
-#endif
-
         B.CreateStore(B.getInt1(0), bHaveUnwindAlloc);
         B.CreateBr(syncSucc);
         syncBB2syncPred[syncSucc] = syncSuccPre;
@@ -4505,15 +4311,10 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
       syncInstSlow->setSuccessor(0, syncBB2syncPred[syncSucc]);
     }
 
-    // TODO: Remove this as it is no needed
-    // Insert a check in the slow path's continue block to check if a thread enters the block from a jump to runtime or from the slowpath's detached block
-#if 0
-    insertCheckInContBlock(F, seqOrder, loopOrder, VMapSlowPath, fromSlowPathAlloc, RDIBB, SSAUpdateWorkContext);
-#endif
     //-------------------------------------------------------------------------------------------------
     // Create the gotstolen handler
     createGotStolenHandler(seqOrder, loopOrder, locAlloc, ownerAlloc, LVout, LVin, VMapSlowPath, VMapGotStolenPath,
-                           GotstolenSet, ReachingAllocSet, ReachingAllocToGotstolenSet, LatestStoreForDetach, LatestStoreForGotStolen);
+                           GotstolenSet, ReachingAllocSet, LatestStoreForDetach);
 
     //====================================================================================================
     if(!EnableMultiRetIR) {
@@ -4686,7 +4487,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
     LLVM_DEBUG(dbgs() << F.getName() << " : Polling at prologue\n");
   }
 
-#if 1
   // Polling @epilogue
   for (auto pBB : bb2clones){
     Instruction * termInst = pBB->getTerminator();
@@ -4704,7 +4504,6 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
       }
     }
   }
-#endif
 
   // Polling @loop
   if( (!DisableUnwindPoll && !F.hasFnAttribute(Attribute::ULINoPolling)) ) {
@@ -4725,13 +4524,14 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   RSIPath.clear();
   PhiNodeInserted.clear();
 
-  // Convert DetachInst, ReattachInst, SyncInst to branch
+  // Convert DetachInst, ReattachInst, and SyncInst in the fast path to branch
   convertTapirIrToBr(F);
 
   //-------------------------------------------------------------------------------------------------
   // Post process: Simplify CFG and verify function
-  postProcessCfg(F, AM, DT, AllocaSet, GotstolenSet, ReachingAllocToGotstolenSet, LatestStoreForGotStolen);
+  postProcessCfg(F, AM, DT, AllocaSet, GotstolenSet);
 
+  // Lower the grainsize or unwind poll pfor
   SmallVector<IntrinsicInst*, 4 > ii2delete;
   for(auto &BB : F) {
     for(auto &II : BB) {
@@ -4750,7 +4550,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
       }
     }
   }
-
+  // Delete the intrinsics
   for(auto ii : ii2delete) {
     ii->eraseFromParent();
   }

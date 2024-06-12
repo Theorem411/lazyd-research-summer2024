@@ -201,8 +201,7 @@ namespace llvm {
 
 
     void postProcessCfg(Function &F, FunctionAnalysisManager &AM, DominatorTree &DT, SmallPtrSet<AllocaInst*, 8>& AllocaSet,
-                        SmallPtrSet<BasicBlock*, 8>& GotstolenSet, DenseMap <BasicBlock*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocToGotstolenSet,
-                        DenseMap <BasicBlock*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForGotStolen);
+                        SmallPtrSet<BasicBlock*, 8>& GotstolenSet);
 
     /// Copied from CilkABI.cpp
     /// \brief Lower a call to get the grainsize of this Tapir loop.
@@ -231,9 +230,7 @@ namespace llvm {
                                 ValueToValueMapTy& VMapGotStolenPath,
                                 SmallPtrSet<BasicBlock*, 8>& GotstolenSet,
                                 DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet,
-                                DenseMap <BasicBlock*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocToGotstolenSet,
-                                DenseMap <DetachInst*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForDetach,
-                                DenseMap <BasicBlock*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForGotStolen
+                                DenseMap <DetachInst*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForDetach
                                 );
 
     BasicBlock * createGotStolenHandlerBB(DetachInst& Detach, BasicBlock* contBB, Value* locAlloc, Value* ownerAlloc,  DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet);
