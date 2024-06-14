@@ -46,10 +46,26 @@
 #include <iostream>
 
 // Can this cause performance improvemetn on classify kddcup?
+// OPTIMIZE_FP: Used for removing FP
 //#define OPTIMIZE_FP
+
+// STICK_STACKXCGH_FUNC: Allow calling a function in the backtrack routine
 #define STICK_STACKXCGH_FUNC
+
+// OPTIMIZE_UNWIND: Only save the neccessary information during backtrack (doesn't seem to improve performance)
 #define OPTIMIZE_UNWIND
+
+// Enable the optimization above
 #define OPTIMIZE_UNWIND_FUNC
+
+// NO_UNWIND_POLLPFOR: Do not used a specialized polling for parallel-for (have not been tested)
+#define NO_UNWIND_POLLPFOR
+
+// UI_REGION is needed if you wan to use label to create a critical section in parallel-for
+//#define UI_REGION
+
+// PRL_LATER is used to parallelize parallel-ready loop only after all the DAC has been parallelized.
+//#define PRL_LATER
 
 #define STEALENTRY_INDEX 1
 #define GOTSTOLEN_INDEX 2
@@ -229,11 +245,10 @@ namespace llvm {
                                 ValueToValueMapTy& VMapSlowPath,
                                 ValueToValueMapTy& VMapGotStolenPath,
                                 SmallPtrSet<BasicBlock*, 8>& GotstolenSet,
-                                DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet,
                                 DenseMap <DetachInst*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForDetach
                                 );
 
-    BasicBlock * createGotStolenHandlerBB(DetachInst& Detach, BasicBlock* contBB, Value* locAlloc, Value* ownerAlloc,  DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet);
+    BasicBlock * createGotStolenHandlerBB(DetachInst& Detach, BasicBlock* contBB, Value* locAlloc, Value* ownerAlloc);
 
     void instrumentPushPop(Function& F, SmallVector<BasicBlock*, 8>& bb2clones);
 
