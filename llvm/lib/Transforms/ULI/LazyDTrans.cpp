@@ -71,11 +71,6 @@ static cl::opt<bool> EnableUnwindOnce(
 "lazy-enable-unwind-once", cl::init(true), cl::NotHidden,
   cl::desc("Enable unwind once for each stack frame (default = on)"));
 
-// Use the new IR and constant to see if it is working
-static cl::opt<bool> EnableMultiRetIR(
-"lazy-enable-multiretir", cl::init(true), cl::NotHidden,
-  cl::desc("Use new ir to represent fork'ed function  (default = on)"));
-
 // Copied from CilkABI.cpp
 /// Helper methods for storing to and loading from struct fields.
 static Value *GEP(IRBuilder<> &B, Value *Base, int Field) {
@@ -1638,162 +1633,131 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
       LLVM_DEBUG(dbgs() << "II: " << *ii << "\n");
       if ((isa<CallInst>(ii) || isa<InvokeInst>(ii)) && isNonPHIOrDbgOrLifetime(ii) ) {
         // Add a potential jump to slow path
-        //B.SetInsertPoint(ii);
-        if(EnableMultiRetIR) {
+	BasicBlock * continueSlowPathBB = dyn_cast<BasicBlock>(VMapSlowPath[continueBB]);
 
-          BasicBlock * continueSlowPathBB = dyn_cast<BasicBlock>(VMapSlowPath[continueBB]);
+	assert(isa<CallInst>(ii) && "Only supporting call instruction for now");
+	auto mrc = replaceCallWithMultiRetCall(dyn_cast<CallInst>(ii), 2, F);
 
-          assert(isa<CallInst>(ii) && "Only supporting call instruction for now");
-          auto mrc = replaceCallWithMultiRetCall(dyn_cast<CallInst>(ii), 2, F);
+	// Perform a branch to continueslowpath bb
+	auto bb1 = mrc->getIndirectDest(0);
+	B.SetInsertPoint(bb1);
 
-          // Perform a branch to continueslowpath bb
-          auto bb1 = mrc->getIndirectDest(0);
-          B.SetInsertPoint(bb1);
+	auto insertPt = dyn_cast<Instruction>(B.CreateBr(continueSlowPathBB));
 
-          auto insertPt = dyn_cast<Instruction>(B.CreateBr(continueSlowPathBB));
+	if(IntrinsicsArgs.size() != 0) {
+	  // Copy the uli_lazyd_inst in the
+	  DT.recalculate(F);
+	  // Look for uli_lazyd_inst and copy it to the slow path entry
+	  Function* LazyDInstrumentation = Intrinsic::getDeclaration(M, Intrinsic::uli_lazyd_inst);
+	  //B.SetInsertPoint(insertPt);
 
-	  if(IntrinsicsArgs.size() != 0) {
-	    // Copy the uli_lazyd_inst in the
-	    DT.recalculate(F);
-	    // Look for uli_lazyd_inst and copy it to the slow path entry
-	    Function* LazyDInstrumentation = Intrinsic::getDeclaration(M, Intrinsic::uli_lazyd_inst);
-	    //B.SetInsertPoint(insertPt);
+	  Instruction* insertPtOld = insertPt;
 
-	    Instruction* insertPtOld = insertPt;
+	  SmallVector<Value*, 5> Args;
+	  for(int i=0; i<IntrinsicsArgs.size(); i++) {
+	    Value* arg = nullptr;
+	    if (i == 1) {
+	      auto TWO = ConstantInt::get(IntegerType::getInt32Ty(C), 2, false);
+	      auto TWOPTR = ConstantExpr::getIntToPtr(TWO, IntegerType::getInt8Ty(C)->getPointerTo(), false);
+	      arg = TWOPTR;
+	      //IntrinsicsArgs[i-1];
+	    } else {
+	      arg = IntrinsicsArgs[i];
+	    }
+	    if(!isa<Argument>(arg)) {
+	      SmallVector<Instruction*, 8> Insts2Clone;
+	      SmallSet<Value*, 4> dsts;
+	      findRootArgument(arg, DT, insertPt, dsts);
 
-	    SmallVector<Value*, 5> Args;
-	    for(int i=0; i<IntrinsicsArgs.size(); i++) {
-	      Value* arg = nullptr;
-	      if (i == 1) {
-		auto TWO = ConstantInt::get(IntegerType::getInt32Ty(C), 2, false);
-		auto TWOPTR = ConstantExpr::getIntToPtr(TWO, IntegerType::getInt8Ty(C)->getPointerTo(), false);
-		arg = TWOPTR;
-		//IntrinsicsArgs[i-1];
-	      } else {
-		arg = IntrinsicsArgs[i];
-	      }
-	      if(!isa<Argument>(arg)) {
-		SmallVector<Instruction*, 8> Insts2Clone;
-		SmallSet<Value*, 4> dsts;
-		findRootArgument(arg, DT, insertPt, dsts);
-
-		// Have a for loop that loops the dst
-		if(dsts.size() > 0) {
-		  for(auto dst : dsts) {
-		    SmallSet<Instruction*, 8> InstsSet;
-		    findPathToDst(arg, dst, Insts2Clone, InstsSet);
-		    if (Insts2Clone.size() == 0)
-		      Args.push_back(dst);
-		  }
-		} else {
-		  Args.push_back(arg);
+	      // Have a for loop that loops the dst
+	      if(dsts.size() > 0) {
+		for(auto dst : dsts) {
+		  SmallSet<Instruction*, 8> InstsSet;
+		  findPathToDst(arg, dst, Insts2Clone, InstsSet);
+		  if (Insts2Clone.size() == 0)
+		    Args.push_back(dst);
 		}
-
-		// Insert the cloned instruction
-		ValueToValueMapTy VMapClone;
-		if(Insts2Clone.size() > 0) {
-		  int i=0;
-		  for(auto ii: Insts2Clone) {
-		    // If the instruction already dominate insertPt, then there is no need to clone, and just break
-		    if(DT.dominates(ii, insertPtOld)) {
-		      if(i == 0)
-			Args.push_back(ii);
-		      continue;
-		    }
-
-		    Instruction * iiClone = ii->clone();
-		    iiClone->insertBefore(insertPt);
-		    VMapClone[ii] = iiClone;
-		    insertPt = iiClone;
-		    if(i == 0)
-		      Args.push_back(iiClone);
-		    i++;
-		  }
-		  //insertPt = dyn_cast<Instruction>(VMapClone[Insts2Clone[0]]);
-		  insertPt = insertPtOld;
-		}
-		// Update the use def of the cloned instruction
-		SmallVector< Use*, 4 >  useNeed2Update;
-		for(auto ii: Insts2Clone) {
-		  useNeed2Update.clear();
-		  if(!VMapClone[ii]) {
-		    continue;
-		  }
-
-		  Instruction * clonedII = dyn_cast<Instruction>(VMapClone[ii]);
-
-		  for (auto &use : ii->uses()) {
-		    auto * user = dyn_cast<Instruction>(use.getUser());
-		    if(user->getParent() == insertPt->getParent()) {
-		      useNeed2Update.push_back(&use);
-		    }
-		  }
-		  for( auto U : useNeed2Update ){
-		    U->set(clonedII);
-		  }
-
-		  // If it is a phi node, change the predecessor to the precedecessor of the slowpathentry
-		  if(isa<PHINode>(clonedII)) {
-		    PHINode* phiNode = dyn_cast<PHINode>(clonedII);
-		    if(phiNode->getNumIncomingValues() == 1) {
-		      // If only have one predecessor
-		      phiNode->replaceIncomingBlockWith(phiNode->getIncomingBlock(0), detachInst->getDetached());
-		    } else {
-		      // If only have two or more predecessor
-		      // Delete value not from the same basic block
-		      unsigned incomingPair = phiNode->getNumIncomingValues();
-		      for(unsigned i = 0; i<incomingPair; i++)  {
-			//Instruction* incomingVal = dyn_cast<Instruction>(phiNode->getIncomingValue(i));
-			auto incomingVal = (phiNode->getIncomingValue(i));
-			if(!DT.dominates(incomingVal, clonedII)) {
-			  // Remove the incoming block and its value
-			} else {
-			}
-		      }
-		      phiNode->replaceIncomingBlockWith(phiNode->getIncomingBlock(0), detachInst->getDetached());
-		    }
-		  }
-		}
-
 	      } else {
 		Args.push_back(arg);
 	      }
+
+	      // Insert the cloned instruction
+	      ValueToValueMapTy VMapClone;
+	      if(Insts2Clone.size() > 0) {
+		int i=0;
+		for(auto ii: Insts2Clone) {
+		  // If the instruction already dominate insertPt, then there is no need to clone, and just break
+		  if(DT.dominates(ii, insertPtOld)) {
+		    if(i == 0)
+		      Args.push_back(ii);
+		    continue;
+		  }
+
+		  Instruction * iiClone = ii->clone();
+		  iiClone->insertBefore(insertPt);
+		  VMapClone[ii] = iiClone;
+		  insertPt = iiClone;
+		  if(i == 0)
+		    Args.push_back(iiClone);
+		  i++;
+		}
+		//insertPt = dyn_cast<Instruction>(VMapClone[Insts2Clone[0]]);
+		insertPt = insertPtOld;
+	      }
+	      // Update the use def of the cloned instruction
+	      SmallVector< Use*, 4 >  useNeed2Update;
+	      for(auto ii: Insts2Clone) {
+		useNeed2Update.clear();
+		if(!VMapClone[ii]) {
+		  continue;
+		}
+
+		Instruction * clonedII = dyn_cast<Instruction>(VMapClone[ii]);
+
+		for (auto &use : ii->uses()) {
+		  auto * user = dyn_cast<Instruction>(use.getUser());
+		  if(user->getParent() == insertPt->getParent()) {
+		    useNeed2Update.push_back(&use);
+		  }
+		}
+		for( auto U : useNeed2Update ){
+		  U->set(clonedII);
+		}
+
+		// If it is a phi node, change the predecessor to the precedecessor of the slowpathentry
+		if(isa<PHINode>(clonedII)) {
+		  PHINode* phiNode = dyn_cast<PHINode>(clonedII);
+		  if(phiNode->getNumIncomingValues() == 1) {
+		    // If only have one predecessor
+		    phiNode->replaceIncomingBlockWith(phiNode->getIncomingBlock(0), detachInst->getDetached());
+		  } else {
+		    // If only have two or more predecessor
+		    // Delete value not from the same basic block
+		    unsigned incomingPair = phiNode->getNumIncomingValues();
+		    for(unsigned i = 0; i<incomingPair; i++)  {
+		      //Instruction* incomingVal = dyn_cast<Instruction>(phiNode->getIncomingValue(i));
+		      auto incomingVal = (phiNode->getIncomingValue(i));
+		      if(!DT.dominates(incomingVal, clonedII)) {
+			// Remove the incoming block and its value
+		      } else {
+		      }
+		    }
+		    phiNode->replaceIncomingBlockWith(phiNode->getIncomingBlock(0), detachInst->getDetached());
+		  }
+		}
+	      }
+
+	    } else {
+	      Args.push_back(arg);
 	    }
-	    B.SetInsertPoint(insertPt->getParent()->getTerminator());
-	    auto res = B.CreateCall(LazyDInstrumentation, Args);
-	    if(res->getPrevNode())
-	      res->setDebugLoc(res->getPrevNode()->getDebugLoc());
-	    else
-	      res->setDebugLoc(detachInst->getDebugLoc());
 	  }
-
-        } else {
-          B.SetInsertPoint(ii->getNextNode());
-          BasicBlock * continueSlowPathBB = dyn_cast<BasicBlock>(VMapSlowPath[continueBB]);
-          B.CreateCall(potentialJump, {BlockAddress::get( continueSlowPathBB )});
-
-#if 1
-          B.SetInsertPoint(continueSlowPathBB->getFirstNonPHIOrDbgOrLifetime());
-          //using AsmTypeCallee = void (void);
-          Type* VoidTy = Type::getVoidTy(C);
-          FunctionType *reloadCaller = FunctionType::get(VoidTy, {VoidTy}, false);
-          Value *Asm = InlineAsm::get(reloadCaller, "", "~{rdi},~{rsi},~{r8},~{r9},~{r10},~{r11},~{rdx},~{rcx},~{rax},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
-          //???
-          Asm = InlineAsm::get(reloadCaller, "", "~{rbx},~{r12},~{r13},~{r14},~{r15},~{dirflag},~{fpsr},~{flags}",/*sideeffects*/ true);
-
-          // Create a variable annotation indicating that this either a slow path
-          Function*  annotateFcn = Intrinsic::getDeclaration(M, Intrinsic::var_annotation);
-          auto parentSpawn = ii->getParent();
-          auto parentBA = BlockAddress::get( parentSpawn );
-          auto two = B.getInt32(2);
-          auto stringptr = B.CreateGlobalStringPtr("test", "slowpath");
-          CallInst* res = B.CreateCall(annotateFcn, {parentBA, stringptr, stringptr, two, stringptr});
-          // Somehow need to set this to true to avoid cloberring with the alloca for fork result (analysis restul from MemoryDependency analysis)
-          res->setTailCall(true);
-          // -----------------------------------------------------------------------------------------
-#endif
-        }
-
+	  B.SetInsertPoint(insertPt->getParent()->getTerminator());
+	  auto res = B.CreateCall(LazyDInstrumentation, Args);
+	  if(res->getPrevNode())
+	    res->setDebugLoc(res->getPrevNode()->getDebugLoc());
+	  else
+	    res->setDebugLoc(detachInst->getDebugLoc());
+	}
       }
     }
   }
