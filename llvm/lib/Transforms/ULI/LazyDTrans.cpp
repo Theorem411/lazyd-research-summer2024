@@ -791,6 +791,7 @@ namespace {
   // Used to create a function wrapper for forks that have been inlined
   // First argument (I): detach basic block (det.achd)
   // Second argument (O) : Basic block to clones. Used to create a function wrapper for forks that have been inlined.
+  // Basic block consists a path from detach to reattach
   void traverseDetach(BasicBlock* detachBB, SmallVector<BasicBlock*, 4>& bb2clones) {
     SmallVector<BasicBlock*, 4> bbList;
     ValueMap<BasicBlock*, bool> haveVisited;
@@ -875,88 +876,7 @@ namespace {
     return resBB;
   }
 
-  // Handle Potential Jump: Convert a potential jump intrinsic into a multiretcall IR
-  // First Argument : Basic block that contains the potential jump intrinsic
-  void handlePotentialJump(BasicBlock &BB) {
-    auto &C = BB.getParent()->getContext();
-    auto BoolTy = Type::getInt1Ty(C);
-
-    // Traverse the instruction in that basic block
-    for (auto it = BB.begin(); it != BB.end(); ++it) {
-      // Search for the potential jump intrinsics
-      auto &instr = *it;
-      auto call = dyn_cast<CallInst>(&instr);
-      if (!call) continue;
-      auto fn = call->getCalledFunction();
-      if (!fn) continue;
-      if (fn->getIntrinsicID() != Intrinsic::uli_potential_jump) continue;
-      auto afterPotentialJump = it; afterPotentialJump++;
-
-      // Get the alternative basic block to jump
-      auto BA = dyn_cast<BlockAddress>(call->getArgOperand(0));
-      assert(BA);
-      auto InletBlock = BA->getBasicBlock();
-      it->eraseFromParent();
-      auto afterBB = BB.splitBasicBlock(afterPotentialJump);
-
-      auto terminator = BB.getTerminator();
-
-      auto OpaqueTrueTy = FunctionType::get(BoolTy, false);
-      auto OpaqueTrue = InlineAsm::get(OpaqueTrueTy, "xor $0, $0",  "=r,~{dirflag},~{fpsr},~{flags}", false);
-
-      auto cond = CallInst::Create(OpaqueTrue, "", terminator);
-      // Somehow need to set this to true to avoid cloberring with the alloca for fork result (analysis restul from MemoryDependency analysis)
-      cond->setTailCall(true);
-      auto branch = BranchInst::Create(InletBlock, afterBB, cond);
-
-      branch->setMetadata(LLVMContext::MD_prof, MDBuilder(branch->getContext()).createBranchWeights(0, 100));
-
-      ReplaceInstWithInst(terminator, branch);
-
-      // Create a variable annotation indicating that this potential jump, may not be used
-      // FIXME: Somehow does not work when BB is entry
-      if(BB.getName() != "entry") {
-        auto bbIter = &BB;
-        BasicBlock* oriBB = nullptr;
-        bool bFindBB = false;
-        // Look for the basic block that contains the actual call inst that call the function that have stealable continuation
-        while ( !bFindBB ) {
-          assert(bbIter);
-          auto call = dyn_cast<CallInst>(bbIter->getFirstNonPHIOrDbgOrLifetime());
-          if (call) {
-            auto fn = call->getCalledFunction();
-            // Skip basic block if the first inst. is var_annotation or potential jump
-            if(fn && (fn->getIntrinsicID() == Intrinsic::var_annotation || fn->getIntrinsicID() == Intrinsic::uli_potential_jump) ) {
-              bbIter = bbIter->getUniquePredecessor();
-              continue;
-            }
-          }
-          // If the first inst. is the opaque xor
-          if(bbIter->getFirstNonPHIOrDbgOrLifetime() == cond) {
-            bbIter = bbIter->getUniquePredecessor();
-            continue;
-          }
-          // Find that basic block that contains the call inst.
-          bFindBB = true;
-          oriBB = bbIter;
-        }
-        // Create the var annotation
-        auto annotateFcn = Intrinsic::getDeclaration(BB.getModule(), Intrinsic::var_annotation);
-        IRBuilder<> B (cond);
-        auto one = B.getInt32(1); // Indicate that this is a potential jump
-        auto stringptr = B.CreateGlobalStringPtr("test", "potentialjump");
-        CallInst* res = B.CreateCall(annotateFcn, {BlockAddress::get( oriBB ), stringptr, stringptr, one, stringptr});
-        // Somehow need to set this to true to avoid cloberring with the alloca for fork result (analysis restul from MemoryDependency analysis)
-        res->setTailCall(true);
-      }
-      // -----------------------------------------------------------------------------------------------
-
-      handlePotentialJump(*afterBB);
-      return;
-    }
-    return;
-  }
-
+  // Check if instruction is not a phi instruction, or dbginfo instruction, or lifetime instruction, or sync start instruction
   bool isNonPHIOrDbgOrLifetime(Instruction * I) {
     if (isa<PHINode>(I) || isa<DbgInfoIntrinsic>(I))
       return false;
@@ -969,6 +889,9 @@ namespace {
   }
 
   // Add potentialJump using multiretcall
+  // Instuction* insertPoint: Is the point of insertion
+  // SmallVector<BasicBlock*, 4> &indirectBBs : List of indirect basic block where multiretcall can return to
+  // Return the default continuation
   BasicBlock* insertPotentialJump(Instruction *insertPoint, SmallVector<BasicBlock*, 4> &indirectBBs){
     BasicBlock* bb = insertPoint->getParent();
     Function* F = bb->getParent();
@@ -976,42 +899,47 @@ namespace {
     LLVMContext& C = M->getContext();
     IRBuilder<> B(C);
 
+    // Split the basic block, afterBB is the default continuation of multiretcall
     auto afterBB = bb->splitBasicBlock(insertPoint->getNextNode());
     auto terminator = bb->getTerminator();
     auto donothingFcn = Intrinsic::getDeclaration(M, Intrinsic::donothing);
 
-    // Create MultiRetCall
+    // Replace the terminator with the MultiRetCall
     B.SetInsertPoint(bb);
     auto res = B.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), afterBB, indirectBBs, {});
 
     // delete the call instruction
     terminator->eraseFromParent();
 
+    // return default continuation
     return afterBB;
   }
 
-  // Replace Call with MultiRetCall function
-  MultiRetCallInst* replaceCallWithMultiRetCall(CallInst *ci, int nIndirectBlock, Function& F) {
+  // Replace a fork with MultiRetCall function that has new two indirect bb: slowpathentry and gotstolenhandler
+  // CallInst* ci: The fork instruction to convert to multiretcall IR
+  // Function& F: The function where ci resides (redundant?)
+  // Return the multiretcallinst
+  MultiRetCallInst* replaceForkWithMultiRetCall(CallInst *ci, Function& F) {
     Module* M = F.getParent();
     LLVMContext& C = M->getContext();
     IRBuilder<> B(C);
 
-    auto bb = ci->getParent();
     // Split basic block
+    auto bb = ci->getParent();
     auto afterBB = bb->splitBasicBlock(ci->getNextNode());
     auto terminator = bb->getTerminator();
 
-    SmallVector<BasicBlock *, 4> indirectDests;
+    // Prepare the argument
     SmallVector<Value *, 4> args;
-
     unsigned nArgs = ci->arg_size ();
     for(unsigned i=0; i<nArgs; i++){
       args.push_back(ci->getArgOperand(i));
     }
 
+    // Prepare the indirect destinations
+    SmallVector<BasicBlock *, 4> indirectDests;
     std::vector<string> nameBB = {"slowPathEntry", "gotstolenhandlerEntry"};
-
-    for(int i=0; i<nIndirectBlock; i++){
+    for(int i=0; i<nameBB.size(); i++){
       BasicBlock * bb = BasicBlock::Create(C, nameBB.at(i), &F);
       indirectDests.push_back(bb);
     }
@@ -1020,9 +948,11 @@ namespace {
     MultiRetCallInst* mrc = MultiRetCallInst::Create(ci->getCalledFunction(), afterBB, indirectDests, args);
     mrc->setCallingConv(ci->getCallingConv());
 
+    // Replace the fork with multiretcall
     ReplaceInstWithInst(ci, mrc);
-    B.SetInsertPoint(afterBB->getFirstNonPHIOrDbgOrLifetime());
 
+    // Add retpad to the default continuation
+    B.SetInsertPoint(afterBB->getFirstNonPHIOrDbgOrLifetime());
     auto newCall = B.CreateRetPad(mrc);
 
     // delete the call instruction
@@ -1031,6 +961,12 @@ namespace {
     return mrc;
   }
 
+  // Convert a basic block into a function
+  // Function& F : Function of the bb2clones
+  // BasicBlock* mainBB : Use as the name of the Fcn
+  // bb2clones: Basic blocks that is used to construct the wrapper function
+  // fcnArgs: Arguments for the new wrapper function
+  // Return the wrapper function.
   Function* convertBBtoFcn (Function& F, BasicBlock* mainBB, SmallVector<BasicBlock*, 4>& bb2clones, SmallPtrSet<Value*, 4>& fcnArgs) {
     Module* M = F.getParent();
     LLVMContext& C = M->getContext();
@@ -1038,14 +974,14 @@ namespace {
     const DataLayout &DL = M->getDataLayout();
     auto InternalLinkage = Function::LinkageTypes::InternalLinkage;
 
-    ValueToValueMapTy VMapGotStolenI;
-
+    // Check if function is already created
     auto Name = mainBB->getName() + F.getName()  + "_W";
     auto NameStr = Name.str().substr(0,255);
     auto Fn = M->getFunction(NameStr);
     if (Fn)
       return Fn;
 
+    // Function return void and usses fcnArgs as the argument type
     Type *VoidTy = Type::getVoidTy(C);
     SmallVector<Type *, 8> WrapperParamTys;
     for(auto fcnArg: fcnArgs) {
@@ -1053,14 +989,12 @@ namespace {
     }
 
     FunctionType *WrapperFTy = FunctionType::get(VoidTy, WrapperParamTys, /*isVarArg=*/false);
-
     Function *Wrapper = Function::Create(WrapperFTy, InternalLinkage, NameStr, M);
-    //BasicBlock *Entry = BasicBlock::Create(C, "entry", Wrapper);
 
     ValueToValueMapTy VMapSlowPath;
     ValueToValueMapTy VMapSlowPathReverse;
 
-
+    // Used for debugging, still not exactly sure how it works
     DebugInfoFinder DIFinder;
     DISubprogram *SP = F.getSubprogram();
 #if 1
@@ -1098,27 +1032,30 @@ namespace {
                                         nullptr, nullptr));
     }
 #endif
-    // Perform the actual cloning
+
+    // Clone bb2clones to create function body
     for (auto pBB : bb2clones){
       VMapSlowPath[pBB] = CloneBasicBlock(pBB, VMapSlowPath, ".wrapper", Wrapper, nullptr, &DIFinder);
       VMapSlowPathReverse[VMapSlowPath[pBB]] = pBB;
     }
 
     int argCnt = 0;
-    // Iterate through the live variables
+
+    // Iterate through the fcnargs
     for(auto fcnArg: fcnArgs) {
+      // Get the wrapper's argument
       Function::arg_iterator args = Wrapper->arg_begin()+argCnt;
       Argument* fcnArgIWrapper =  &*args;
       auto fcnArgI = dyn_cast<Value>(fcnArg);
 
-      // Replace live with argument
+      // Replace variables define outside bb2clones with argument
       fcnArgI->replaceUsesWithIf(fcnArgIWrapper, [&](Use &U) {
           auto *I = dyn_cast<Instruction>(U.getUser());
           // Replace if it's an instruction inside the wrapper.
           return !I || I->getParent()->getParent() == Wrapper;
         });
 
-      // Debug instruction need to be replaced
+      // Replace / udpate the Debug instruction inside the wrapper
       SmallVector<DbgVariableIntrinsic *> DbgUsers;
       findDbgUsers(DbgUsers, fcnArgI);
       for (auto *DVI : DbgUsers) {
@@ -1129,24 +1066,26 @@ namespace {
     }
 
     // --------------------------------------------------------------
+    // Update instruction inside the wrapper
     for(auto pBB : bb2clones) {
       BasicBlock * ClonedBB = dyn_cast<BasicBlock>(VMapSlowPath[pBB]);
 
+      // Replace the reattach with a return instruction
       Instruction * termInst = ClonedBB->getTerminator();
       if(isa<ReattachInst>(termInst) ){
-        // Create return
         Instruction* returnInst = ReturnInst::Create(C);
         ReplaceInstWithInst(termInst, returnInst);
       }
 
+      // Remap the cloned instruction
       for (Instruction &II : *ClonedBB) {
-        // Remap the cloned instruction
         //auto remapFlag = RF_NullMapMissingGlobalValues| RF_ReuseAndMutateDistinctMDs;
         auto remapFlag = RF_IgnoreMissingLocals | RF_ReuseAndMutateDistinctMDs;
         RemapInstruction(&II, VMapSlowPath, F.getSubprogram() != nullptr? RF_None | remapFlag  : RF_NoModuleLevelChanges | remapFlag, nullptr, nullptr);
       }
     }
 
+    // Not excalty sure how this works
     // Register all DICompileUnits of the old parent module in the new parent
     // module
     auto *OldModule = F.getParent();
@@ -1164,19 +1103,16 @@ namespace {
           NMD->addOperand(Unit);
     }
 
+    // Return wrapper
     return Wrapper;
   }
 
 
+  // Gernerate wrapper function for a inlined fork inside a det.achd block
 
   void generateWrapperFuncForDetached (Function &F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder,
-                                       Value* locAlloc, Value* ownerAlloc,
                                        DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>& LVout,
-                                       DenseMap<BasicBlock *, DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>>& LVin,
-                                       ValueToValueMapTy& VMapSlowPath,
-                                       ValueToValueMapTy& VMapGotStolenPath,
-                                       SmallPtrSet<BasicBlock*, 8>& GotstolenSet,
-                                       DenseMap <DetachInst*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForDetach) {
+                                       DenseMap<BasicBlock *, DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>>& LVin) {
     // Locate the detach instruct
     Module* M = F.getParent();
     LLVMContext& C = M->getContext();
@@ -1186,14 +1122,15 @@ namespace {
     bbOrder.append(seqOrder.begin(), seqOrder.end());
     bbOrder.append(loopOrder.begin(), loopOrder.end());
 
+    // Process the detachInst in certain order
     for (auto detachInst: bbOrder) {
       BasicBlock* pBB = detachInst->getParent();
       assert(pBB);
-      BasicBlock* detachBBori = detachInst->getDetached();
-
-      auto detachBB = getBBContainReattached(detachBBori);
-
+      BasicBlock* detachBBOri = detachInst->getDetached();
+      auto detachBB = getBBContainReattached(detachBBOri);
       BasicBlock* continueBB  = detachInst->getContinue();
+
+      // Store the instruction inside detachBB in a vector
       SmallVector<Instruction *, 4> instsVec;
       for ( auto &II : *detachBB ) {
         instsVec.push_back(&II);
@@ -1204,123 +1141,125 @@ namespace {
       for (auto ii : instsVec) {
         LLVM_DEBUG(dbgs() << "II: " << *ii << "\n");
         if ((isa<CallInst>(ii) || isa<InvokeInst>(ii)) && isNonPHIOrDbgOrLifetime(ii) ) {
-          // Find multiple call inst, need to create wrapper
+          // If we found multiple call inst, need to create wrapper
           if(!bFailToLocateSpawnFunction || isa<IntrinsicInst>(ii)) {
             bFailToLocateSpawnFunction = true;
             break;
           }
+
+	  // If we found a call inst
           bFailToLocateSpawnFunction = false;
         }
       }
 
-      // If we fail to locate a spawn instruction, create a function wrapper.
-      if(bFailToLocateSpawnFunction) {
-        LLVM_DEBUG(dbgs() << "Need to generate function for inst: " << *detachInst << "\n");
+      // If we are able to locate a spawn instruction, process the next detach instruction.
+      if(!bFailToLocateSpawnFunction) continue;
 
-        // Find the basicBlock needed to clone
-        SmallVector<BasicBlock*, 4> bb2clones;
-        SmallPtrSet<Value*, 4> setBb2clones;
-        SmallPtrSet<Value*, 4> fcnArgs;
+      // If we are unable to locate a spawn instruction, create a wrapper
+      LLVM_DEBUG(dbgs() << "Need to generate function for inst: " << *detachInst << "\n");
 
-        BasicBlock* detachBB = detachInst->getDetached();
+      // Find the basicBlock needed to clone
+      SmallVector<BasicBlock*, 4> bb2clones;
+      SmallPtrSet<Value*, 4> setBb2clones;
+      SmallPtrSet<Value*, 4> fcnArgs;
 
-        // Clone the basic block one at a time
-        traverseDetach(detachBB, bb2clones);
-
-        for(auto bb2clone: bb2clones) {
-          setBb2clones.insert(bb2clone);
-        }
-
-        // LiveInVar determines the function argument
-        // Find live instruction into the basic block of the first detach function, create arguments for this live variable
-        auto liveOutVars = LVout[detachBB];
-        auto liveInVars = LVin[detachBB][detachBB->getUniquePredecessor()];
-
-        LLVM_DEBUG(dbgs() << "For basic block " << detachBB->getName() << " live variables in: \n");
-        // Since in cilk, the return variable is immediately stored in memory, there should be no live variables
-        // Look for live variables inside
-
-        for (auto liveInVar : liveInVars) {
-          if(liveInVar->getType()->isTokenTy()) {
-            LLVM_DEBUG(dbgs() << "Ignore token:" << *liveInVar << "\n");
-            continue;
-          }
-
-          for (auto &use : liveInVar->uses()) {
-            auto * user = dyn_cast<Instruction>(use.getUser());
-            if(setBb2clones.find(user->getParent()) != setBb2clones.end()) {
-              LLVM_DEBUG(dbgs() << *liveInVar << "\n");
-              fcnArgs.insert(liveInVar);
-            }
-          }
-        }
-
-        // Also take into account function arguments
-        for(auto it = F.arg_begin(); it != F.arg_end(); it++) {
-          for (auto &use : it->uses()) {
-            auto * user = dyn_cast<Instruction>(use.getUser());
-            if(setBb2clones.find(user->getParent()) != setBb2clones.end()) {
-              LLVM_DEBUG(dbgs() << *it << "\n");
-              fcnArgs.insert(it);
-            }
-          }
-
-          SmallVector<DbgVariableIntrinsic *> DbgUsers;
-          findDbgUsers(DbgUsers, it);
-          for (auto *DVI : DbgUsers) {
-            if ( setBb2clones.find(DVI->getParent()) != setBb2clones.end() ) {
-              fcnArgs.insert(it);
-            }
-          }
-        }
-
-        LLVM_DEBUG(dbgs() << "Basicblock to clone: " << "\n");
-        for(auto bb2clone: bb2clones) {
-          LLVM_DEBUG(dbgs() << "BB : " << bb2clone->getName() << "\n");
-
-          // Find debug variable that uses variable that do not belong to live variable or inside wrapper
-          for(auto &ii: *bb2clone) {
-            if(isa<DbgInfoIntrinsic>(&ii)) {
-              auto dbgInst = dyn_cast<DbgVariableIntrinsic>(&ii);
-              auto dbgArg = dbgInst->getVariableLocationOp(0);
-              bool shouldInsertVal = isa<Argument>(dbgArg) && fcnArgs.find(dbgArg) == fcnArgs.end();
-              shouldInsertVal = shouldInsertVal || (isa<Instruction>(dbgArg) &&
-                                                    fcnArgs.find(dbgArg) == fcnArgs.end() &&
-                                                    setBb2clones.find(dyn_cast<Instruction>(dbgArg)->getParent()) ==  setBb2clones.end());
-
-              if(shouldInsertVal) {
-                fcnArgs.insert(dbgArg);
-              }
-            }
-          }
-        }
-
-        // Create the function
-        Function* wrapper = convertBBtoFcn(F, detachBB , bb2clones, fcnArgs);
-        wrapper->addFnAttr(Attribute::NoInline);
-        wrapper->addFnAttr("no-frame-pointer-elim");
-        auto bbContainReattach = getBBContainReattached(detachBB);
-
-        // Erase all instruction except reattach
-        SmallVector<Instruction *, 4> inst2delete;
-        for(auto &ii : *bbContainReattach) {
-          if(isa<ReattachInst>(&ii))
-            break;
-
-          inst2delete.push_back(&ii);
-        }
-        for(auto it = inst2delete.rbegin(); it != inst2delete.rend(); it++){
-          (*it)->eraseFromParent();
-        }
-
-        B.SetInsertPoint(bbContainReattach->getTerminator());
-
-        SmallVector<Value*, 4> fcnArgVectors(fcnArgs.begin(), fcnArgs.end());
-
-        B.CreateCall(wrapper, fcnArgVectors);
-        detachInst->setSuccessor(0, bbContainReattach);
-
+      // Clone the basic block one at a time
+      traverseDetach(detachBBOri, bb2clones);
+      for(auto bb2clone: bb2clones) {
+	setBb2clones.insert(bb2clone);
       }
+
+      // LiveInVar determines the function argument
+      // Find live instruction into the basic block of the first detach function, create arguments for this live variable
+      auto liveOutVars = LVout[detachBBOri];
+      auto liveInVars = LVin[detachBBOri][detachBBOri->getUniquePredecessor()];
+
+      LLVM_DEBUG(dbgs() << "For basic block " << detachBBOri->getName() << " live variables in: \n");
+
+      // Since in cilk, the return variable is immediately stored in memory, there should be no live variables
+      // Look for live variables inside
+      for (auto liveInVar : liveInVars) {
+	if(liveInVar->getType()->isTokenTy()) {
+	  LLVM_DEBUG(dbgs() << "Ignore token:" << *liveInVar << "\n");
+	  continue;
+	}
+
+	for (auto &use : liveInVar->uses()) {
+	  auto * user = dyn_cast<Instruction>(use.getUser());
+	  if(setBb2clones.find(user->getParent()) != setBb2clones.end()) {
+	    LLVM_DEBUG(dbgs() << *liveInVar << "\n");
+	    fcnArgs.insert(liveInVar);
+	  }
+	}
+      }
+
+      // Also take into account function arguments
+      for(auto it = F.arg_begin(); it != F.arg_end(); it++) {
+	for (auto &use : it->uses()) {
+	  auto * user = dyn_cast<Instruction>(use.getUser());
+	  if(setBb2clones.find(user->getParent()) != setBb2clones.end()) {
+	    LLVM_DEBUG(dbgs() << *it << "\n");
+	    fcnArgs.insert(it);
+	  }
+	}
+
+	// Update debug instruction
+	SmallVector<DbgVariableIntrinsic *> DbgUsers;
+	findDbgUsers(DbgUsers, it);
+	for (auto *DVI : DbgUsers) {
+	  if ( setBb2clones.find(DVI->getParent()) != setBb2clones.end() ) {
+	    fcnArgs.insert(it);
+	  }
+	}
+      }
+
+      LLVM_DEBUG(dbgs() << "Basicblock to clone: " << "\n");
+      for(auto bb2clone: bb2clones) {
+	LLVM_DEBUG(dbgs() << "BB : " << bb2clone->getName() << "\n");
+
+	// Find debug variable that uses variable that do not belong to live variable or inside wrapper
+	for(auto &ii: *bb2clone) {
+	  if(isa<DbgInfoIntrinsic>(&ii)) {
+	    auto dbgInst = dyn_cast<DbgVariableIntrinsic>(&ii);
+	    auto dbgArg = dbgInst->getVariableLocationOp(0);
+	    bool shouldInsertVal = isa<Argument>(dbgArg) && fcnArgs.find(dbgArg) == fcnArgs.end();
+	    shouldInsertVal = shouldInsertVal || (isa<Instruction>(dbgArg) &&
+						  fcnArgs.find(dbgArg) == fcnArgs.end() &&
+						  setBb2clones.find(dyn_cast<Instruction>(dbgArg)->getParent()) ==  setBb2clones.end());
+
+	    if(shouldInsertVal) {
+	      fcnArgs.insert(dbgArg);
+	    }
+	  }
+	}
+      }
+
+      // Create the function
+      Function* wrapper = convertBBtoFcn(F, detachBBOri , bb2clones, fcnArgs);
+      wrapper->addFnAttr(Attribute::NoInline);
+      wrapper->addFnAttr("no-frame-pointer-elim");
+      auto bbContainReattach = getBBContainReattached(detachBBOri);
+
+      // Erase all instruction except reattach
+      SmallVector<Instruction *, 4> inst2delete;
+      for(auto &ii : *bbContainReattach) {
+	if(isa<ReattachInst>(&ii))
+	  break;
+
+	inst2delete.push_back(&ii);
+      }
+      for(auto it = inst2delete.rbegin(); it != inst2delete.rend(); it++){
+	(*it)->eraseFromParent();
+      }
+
+
+      // Replace the reattach with a call to the wrapper
+      B.SetInsertPoint(bbContainReattach->getTerminator());
+      SmallVector<Value*, 4> fcnArgVectors(fcnArgs.begin(), fcnArgs.end());
+      B.CreateCall(wrapper, fcnArgVectors);
+
+      // Update detach instruction
+      detachInst->setSuccessor(0, bbContainReattach);
 
     }
     return ;
@@ -1356,11 +1295,10 @@ namespace {
       br i1 %exitcond.not.ls1, label %pfor.cond.cleanup.ls1, label %pfor.inc.ls1, !llvm.loop !11
 
     pfor.cond.cleanup.ls1:                            ; preds = %8
-      ....
+    ....
 
     }
-   */
-
+  */
   void instrumentLoop (Function *F, Loop* CurrentLoop, Value* bHaveUnwindAlloc) {
     Module *M = F->getParent();
     LLVMContext& C = M->getContext();
@@ -1636,7 +1574,7 @@ void LazyDTransPass::addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& 
 	BasicBlock * continueSlowPathBB = dyn_cast<BasicBlock>(VMapSlowPath[continueBB]);
 
 	assert(isa<CallInst>(ii) && "Only supporting call instruction for now");
-	auto mrc = replaceCallWithMultiRetCall(dyn_cast<CallInst>(ii), 2, F);
+	auto mrc = replaceForkWithMultiRetCall(dyn_cast<CallInst>(ii), F);
 
 	// Perform a branch to continueslowpath bb
 	auto bb1 = mrc->getIndirectDest(0);
@@ -1898,58 +1836,6 @@ void LazyDTransPass::updateSSA(SSAUpdater& SSAUpdate, Instruction* inst2replace)
     SSAUpdate.RewriteUse(*use);
     //SSAUpdate.RewriteUseAfterInsertions(*use);
   }
-}
-
-
-// Find the exact clone of the fast inst in the slow path
-Instruction* LazyDTransPass::findSlowInst(Instruction *fastInst, Instruction *initialSlowInst, BasicBlock *slowBB) {
-  // If slowLiveVar is a phi look for phi located in slowBB
-  bool bFoundClone = false;
-  ValueMap<Instruction*, bool> haveVisited;
-
-  SmallVector<Instruction*, 4> slowInstList;
-  if(isa<PHINode>(initialSlowInst))
-    slowInstList.push_back(initialSlowInst);
-
-  Instruction* slowInstFound = initialSlowInst;
-
-  // Visit basic block
-  while(!slowInstList.empty()) {
-    auto slowInst = slowInstList.back();
-    slowInstList.pop_back();
-
-    //auto phiInst = dyn_cast<PHINode>(slowInst);
-    if(slowInst->getParent() == slowBB)  {
-      bFoundClone=true;
-      slowInstFound = slowInst;
-      break;
-    }
-
-    auto phiInst = dyn_cast<PHINode>(slowInst);
-    if(!phiInst) continue;
-
-    if(haveVisited.lookup(slowInst)){
-      continue;
-    }
-    haveVisited[slowInst] = true;
-
-    unsigned incomingPair = phiInst->getNumIncomingValues();
-    for(unsigned i = 0; i<incomingPair; i++)  {
-      Instruction * incomingInst = dyn_cast<Instruction>(phiInst->getIncomingValue(i));
-      if(incomingInst == fastInst)
-        continue;
-#if 0
-      slowInst = incomingInst;
-      break;
-#else
-      slowInstList.push_back(incomingInst);
-#endif
-    }
-
-    if(bFoundClone)
-      break;
-  }
-  return slowInstFound;
 }
 
 // For instruction in the fast path that always dominate the slow path (does not need a slow path),
@@ -2482,8 +2368,7 @@ void LazyDTransPass::cloneBasicBlock(Function &F, SmallVector<BasicBlock*, 8>& b
 }
 
 
-void LazyDTransPass::postProcessCfg(Function &F, FunctionAnalysisManager &AM, DominatorTree &DT, SmallPtrSet<AllocaInst*, 8>& AllocaSet,
-                    SmallPtrSet<BasicBlock*, 8>& GotstolenSets) {
+void LazyDTransPass::postProcessCfg(Function &F, FunctionAnalysisManager &AM, DominatorTree &DT, SmallPtrSet<AllocaInst*, 8>& AllocaSet) {
   // Desirable to  verify the IR before running simplify
   simplifyFcn(F, AM, DT);
 
@@ -3164,13 +3049,6 @@ BasicBlock* LazyDTransPass::createUnwindHandler(Function &F, Value* locAlloc, Va
 
   }
   //====================================================================================================
-
-  if(DisablePushPopSeed) {
-    // Inline the query unwind address from return address
-    //llvm::InlineFunctionInfo ifi;
-    //llvm::InlineFunction(dyn_cast<CallInst>(unwindAddrRes), ifi, nullptr, true);
-  }
-
   return unwindPathEntry;
 }
 
@@ -3183,9 +3061,7 @@ void LazyDTransPass::createGotStolenHandler(SmallVector<DetachInst*, 4>& seqOrde
                             DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>& LVout,
                             DenseMap<BasicBlock *, DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>>& LVin,
                             ValueToValueMapTy& VMapSlowPath,
-                            ValueToValueMapTy& VMapGotStolenPath,
-                            SmallPtrSet<BasicBlock*, 8>& GotstolenSet,
-                            DenseMap <DetachInst*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForDetach) {
+                            ValueToValueMapTy& VMapGotStolenPath) {
   SmallVector<DetachInst*, 4> bbOrder;
   bbOrder.append(seqOrder.begin(), seqOrder.end());
   bbOrder.append(loopOrder.begin(), loopOrder.end());
@@ -3225,9 +3101,6 @@ void LazyDTransPass::createGotStolenHandler(SmallVector<DetachInst*, 4>& seqOrde
     // For each detach instruction, create a gotstolen handler
     auto gotStolenHandler = createGotStolenHandlerBB(*detachInst, continueBB, locAlloc, ownerAlloc);
     VMapGotStolenPath[detachBB] = gotStolenHandler;
-
-    // Keep record of the got stolen handler basic block
-    GotstolenSet.insert(gotStolenHandler);
   }
 }
 
@@ -3979,14 +3852,8 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
   DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>> ReachingAllocSet;
   // Store all the alloca that stores the fork result
   SmallPtrSet<AllocaInst*, 8> AllocaSet;
-  // Store all the gotstolen handler
-  SmallPtrSet<BasicBlock*, 8> GotstolenSet;
   // Store all the multiretcall that can be transformed into branch based on path
   SmallPtrSet<MultiRetCallInst*, 8> MultiRetCallPathSet;
-
-  // Key detachInst (or its gotstolen handler) + any alloca inst reaching to it
-  // Value = The latest store to that alloca inst that is executed before the detach inst (or its gotstolen handler)
-  DenseMap <DetachInst*, DenseMap <AllocaInst*, StoreInst*>> LatestStoreForDetach;
 
   // The original basic block that needs to be cloned.
   SmallVector<BasicBlock*, 8> bb2clones;
@@ -4213,8 +4080,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
     //-------------------------------------------------------------------------------------------------
     // If the detach inst has the function inlined, create a wrapper function for it.
-    generateWrapperFuncForDetached(F, seqOrder, loopOrder, locAlloc, ownerAlloc, LVout, LVin, VMapSlowPath, VMapGotStolenPath,
-                                   GotstolenSet, LatestStoreForDetach);
+    generateWrapperFuncForDetached(F, seqOrder, loopOrder, LVout, LVin);
 
     //-------------------------------------------------------------------------------------------------
     // TODO: If there is recursive sync, create a wrapper for each sync. Doest not work, to complicated, might as well create a new pass before this.
@@ -4283,8 +4149,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
     //-------------------------------------------------------------------------------------------------
     // Create the gotstolen handler
-    createGotStolenHandler(seqOrder, loopOrder, locAlloc, ownerAlloc, LVout, LVin, VMapSlowPath, VMapGotStolenPath,
-                           GotstolenSet, LatestStoreForDetach);
+    createGotStolenHandler(seqOrder, loopOrder, locAlloc, ownerAlloc, LVout, LVin, VMapSlowPath, VMapGotStolenPath);
 
     //====================================================================================================
 
@@ -4450,7 +4315,7 @@ bool LazyDTransPass::runImpl(Function &F, FunctionAnalysisManager &AM, Dominator
 
   //-------------------------------------------------------------------------------------------------
   // Post process: Simplify CFG and verify function
-  postProcessCfg(F, AM, DT, AllocaSet, GotstolenSet);
+  postProcessCfg(F, AM, DT, AllocaSet);
 
   // Lower the grainsize or unwind poll pfor
   SmallVector<IntrinsicInst*, 4 > ii2delete;

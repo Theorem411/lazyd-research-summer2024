@@ -166,9 +166,6 @@ namespace llvm {
 
     void updateSSA(SSAUpdater& SSAUpdate, Instruction* inst2replace);
 
-    // Find the exact clone of the fast inst in the slow path
-    Instruction* findSlowInst(Instruction *fastInst, Instruction *initialSlowInst, BasicBlock *slowBB);
-
     // Merge slow path back to fast path
     void mergeSlowPathToFastPath(Function& F, SmallVector<SyncInst*, 8>& syncInsts, DenseMap<BasicBlock *, DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>>& LVin,
                                  ValueToValueMapTy& VMapSlowPath, DenseMap<BasicBlock*, BasicBlock*>& syncBB2syncPred);
@@ -216,8 +213,7 @@ namespace llvm {
                          SmallPtrSet<AllocaInst*, 8>& AllocaSet );
 
 
-    void postProcessCfg(Function &F, FunctionAnalysisManager &AM, DominatorTree &DT, SmallPtrSet<AllocaInst*, 8>& AllocaSet,
-                        SmallPtrSet<BasicBlock*, 8>& GotstolenSet);
+    void postProcessCfg(Function &F, FunctionAnalysisManager &AM, DominatorTree &DT, SmallPtrSet<AllocaInst*, 8>& AllocaSet);
 
     /// Copied from CilkABI.cpp
     /// \brief Lower a call to get the grainsize of this Tapir loop.
@@ -243,9 +239,7 @@ namespace llvm {
                                 DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>& LVout,
                                 DenseMap<BasicBlock *, DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>>& LVin,
                                 ValueToValueMapTy& VMapSlowPath,
-                                ValueToValueMapTy& VMapGotStolenPath,
-                                SmallPtrSet<BasicBlock*, 8>& GotstolenSet,
-                                DenseMap <DetachInst*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForDetach
+                                ValueToValueMapTy& VMapGotStolenPath
                                 );
 
     BasicBlock * createGotStolenHandlerBB(DetachInst& Detach, BasicBlock* contBB, Value* locAlloc, Value* ownerAlloc);
