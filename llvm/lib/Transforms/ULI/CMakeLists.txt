@@ -1,4 +1,5 @@
 add_llvm_component_library(LLVMULI
+  ULI.cpp
   ULIPollingInsertion.cpp
   ULIIntrinsicToExternCall.cpp
   SendUli.cpp
@@ -15,6 +16,7 @@ add_llvm_component_library(LLVMULI
   InsertLazyDPolling.cpp
   InsertLazyDEnDisUI.cpp
   InstrumentPfor.cpp
+  ParallelRegion.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/

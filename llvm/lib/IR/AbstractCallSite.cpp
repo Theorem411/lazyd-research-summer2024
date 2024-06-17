@@ -71,6 +71,7 @@ AbstractCallSite::AbstractCallSite(const Use *U)
 
     if (!CB) {
       NumInvalidAbstractCallSitesUnknownUse++;
+      LLVM_DEBUG(dbgs() << "  ACS: invalid acs unknown use!\n");
       return;
     }
   }
@@ -79,6 +80,7 @@ AbstractCallSite::AbstractCallSite(const Use *U)
   // call site CB it is not a callback and we are done.
   if (CB->isCallee(U)) {
     NumDirectAbstractCallSites++;
+    LLVM_DEBUG(dbgs() << "  ACS: direct callsite!\n");
     return;
   }
 
@@ -88,6 +90,7 @@ AbstractCallSite::AbstractCallSite(const Use *U)
   if (!Callee) {
     NumInvalidAbstractCallSitesUnknownCallee++;
     CB = nullptr;
+    LLVM_DEBUG(dbgs() << "  ACS: cannot identify broker function for callback call\n");
     return;
   }
 
@@ -95,6 +98,7 @@ AbstractCallSite::AbstractCallSite(const Use *U)
   if (!CallbackMD) {
     NumInvalidAbstractCallSitesNoCallback++;
     CB = nullptr;
+    LLVM_DEBUG(dbgs() << "  ACS: cannot get callee " << Callee->getName() << " callback metadata!\n");
     return;
   }
 
@@ -114,6 +118,7 @@ AbstractCallSite::AbstractCallSite(const Use *U)
   if (!CallbackEncMD) {
     NumInvalidAbstractCallSitesNoCallback++;
     CB = nullptr;
+    LLVM_DEBUG(dbgs() << "  ACS: cannot get callback enc metadata for callback!\n");
     return;
   }
 

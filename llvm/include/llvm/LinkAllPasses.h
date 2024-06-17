@@ -62,6 +62,7 @@
 #include "llvm/Transforms/ULI/HandleUnwindPoll.h"
 #include "llvm/Transforms/ULI/LazyDTrans.h"
 #include "llvm/Transforms/ULI/EagerDTrans.h"
+#include "llvm/Transforms/ULI/ParallelRegion.h"
 #include "llvm/Transforms/Tapir.h"
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
 #include "llvm/Transforms/Utils/UnifyFunctionExitNodes.h"
@@ -264,6 +265,8 @@ namespace {
       (void) llvm::createHandleUnwindPollPass();
       (void) llvm::createLazyDTransPass();
       (void) llvm::createEagerDTransPass();
+      // debug
+      (void) llvm::createParallelRegionWrapperPass();
 #if 0
       (void) llvm::createTaskSimplifyPass();
 #endif

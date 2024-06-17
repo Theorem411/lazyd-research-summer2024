@@ -2195,6 +2195,9 @@ BUILTIN(__builtin_ui_senduipi, "vULLi", "")
 // Fifth argument: int (depth)
 BUILTIN(__builtin_uli_lazyd_inst, "vv*v*ULLiLLii", "")
 
+// Use for choosing LazyD parallel_for option
+BUILTIN(__builtin_uli_lazyd_perf, "vv*iULLiLLii", "")
+
 // Builtin to expose multiretcall. Return void, first paramter: number of arguments, second paramater: number of indirect destination, third parameter: function name
 // Remaning args: arguments to function and indirect destination
 

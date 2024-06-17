@@ -125,6 +125,7 @@
 #include "llvm/Transforms/ULI/ULIIntrinsicToExternCall.h"
 #include "llvm/Transforms/ULI/HandleLazyDIntrinsics.h"
 #include "llvm/Transforms/ULI/HandleLazyDInstrumentation.h"
+#include "llvm/Transforms/ULI/ParallelRegion.h"
 #include "llvm/Transforms/Utils/AddDiscriminators.h"
 #include "llvm/Transforms/Utils/AssumeBundleBuilder.h"
 #include "llvm/Transforms/Utils/CanonicalizeAliases.h"

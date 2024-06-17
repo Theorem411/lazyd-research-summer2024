@@ -45,7 +45,7 @@ FunctionCallee RuntimeCilkFor::Get__cilkrts_cilk_for_32() {
   Type *VoidPtrTy = Type::getInt8PtrTy(C);
   Type *CountTy = Type::getInt32Ty(C);
   FunctionType *BodyTy = FunctionType::get(VoidTy,
-                                           {VoidPtrTy, CountTy, CountTy},
+                                           {VoidPtrTy, CountTy, CountTy, CountTy},
                                            false);
   FunctionType *FTy =
     FunctionType::get(VoidTy,
@@ -65,7 +65,7 @@ FunctionCallee RuntimeCilkFor::Get__cilkrts_cilk_for_64() {
   Type *VoidPtrTy = Type::getInt8PtrTy(C);
   Type *CountTy = Type::getInt64Ty(C);
   FunctionType *BodyTy = FunctionType::get(VoidTy,
-                                           {VoidPtrTy, CountTy, CountTy},
+                                           {VoidPtrTy, CountTy, CountTy, CountTy},
                                            false);
   FunctionType *FTy =
     FunctionType::get(VoidTy,
@@ -157,8 +157,11 @@ void RuntimeCilkFor::processOutlinedLoopCall(TapirLoopInfo &TL,
   Value *GrainsizeInput;
   {
     IRBuilder<> B(ReplCall);
+    //GrainsizeVal = ConstantInt::get(GrainsizeType, 1);
+    //GrainsizeInput = B.CreateIntCast(GrainsizeVal, GrainsizeType,
+    //                                 /*isSigned*/ false);
     GrainsizeInput = B.CreateIntCast(GrainsizeVal, GrainsizeType,
-                                     /*isSigned*/ false);
+                             /*isSigned*/ false);
   }
 
   // Split the basic block containing the detach replacement just before the
@@ -173,12 +176,15 @@ void RuntimeCilkFor::processOutlinedLoopCall(TapirLoopInfo &TL,
   IRBuilder<> B(ReplCall);
   Type *FPtrTy = PointerType::getUnqual(
       FunctionType::get(Type::getVoidTy(C),
-                        { Type::getInt8PtrTy(C), PrimaryIVTy, PrimaryIVTy },
+                        { Type::getInt8PtrTy(C), PrimaryIVTy, PrimaryIVTy, PrimaryIVTy },
                         false));
+
+  // How to pass a function as a pointer
   Value *OutlinedFnPtr = B.CreatePointerBitCastOrAddrSpaceCast(Outlined,
                                                                FPtrTy);
   AllocaInst *ArgStruct = cast<AllocaInst>(CB->getArgOperand(0));
   Value *ArgStructPtr = B.CreateBitCast(ArgStruct, Type::getInt8PtrTy(C));
+  //void (i8*, i64, i64)*
   if (UnwindDest) {
     InvokeInst *Invoke = InvokeInst::Create(CilkForABI, CallCont, UnwindDest,
                                             { OutlinedFnPtr, ArgStructPtr,

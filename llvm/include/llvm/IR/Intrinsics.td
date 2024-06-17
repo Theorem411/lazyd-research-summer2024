@@ -2162,6 +2162,9 @@ def int_ui_enable_region : GCCBuiltin<"__builtin_ui_enable_region">,
 def int_uli_lazyd_inst: GCCBuiltin<"__builtin_uli_lazyd_inst">,
        Intrinsic<[], [llvm_ptr_ty,llvm_ptr_ty,llvm_i64_ty,llvm_i64_ty,llvm_i32_ty], []>;
 
+def int_uli_lazyd_perf: GCCBuiltin<"__builtin_uli_lazyd_perf">,
+       Intrinsic<[], [llvm_ptr_ty,llvm_i32_ty,llvm_i64_ty,llvm_i64_ty, llvm_i32_ty], []>;
+       
 //===----------------------------------------------------------------------===//
 
 //===----------------------------------------------------------------------===//
