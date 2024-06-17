@@ -18,29 +18,41 @@ static cl::opt<std::string> PrrVerbose(
 PRState joinState(PRState s1, PRState s2) {
     switch (s1) {
     case PRState::Both: {
-        return s1;
+        return PRState::Both;
     }
     case PRState::DefinitelyDAC: {
         switch (s2) {
-        case PRState::DefinitelyDAC: {
-        return s2;
-        }
-        default: {
-        return PRState::Both;
-        }
+            case PRState::Untouched: {
+                return PRState::DefinitelyDAC;
+            }
+            case PRState::DefinitelyEF: {
+                return PRState::Both;
+            }
+            case PRState::DefinitelyDAC: {
+                return PRState::DefinitelyDAC;
+            }
+            case PRState::Both: {
+                return PRState::Both;
+            }
         }
     }
     case PRState::DefinitelyEF: {
         switch (s2) {
-        case PRState::DefinitelyEF: {
-        return s2;
-        }
-        default: {
-        return PRState::Both;
-        }
+            case PRState::Untouched: {
+                return PRState::DefinitelyEF;
+            }
+            case PRState::DefinitelyEF: {
+                return PRState::DefinitelyEF;
+            }
+            case PRState::DefinitelyDAC: {
+                return PRState::Both;
+            }
+            case PRState::Both: {
+                return PRState::Both;
+            }
         }
     }
-    default: {
+    case PRState::Untouched: {
         return s2;
     }
     };
@@ -82,7 +94,27 @@ void LocalDataflow::reduceInLFS(BasicBlock *BB, TaskInfo &TI) {
     const Task *T = TI[BB];
     if (T->getDetach() && TI.isTaskEntry(BB)) {
         // exception: for task entry block, set in[BB] = dac
-        inLFS[BB] = PRState::DefinitelyDAC;
+
+        /** DBEUG: incorrect way to handle prr state propagation
+         * ignore function's entry prr state altogether 
+         * this bug is due to the detach terminator doesn't propagate prr evenly
+         * i.e. for the continuation it should propgate the out state as normal
+         *      but for the spawn it should propagate DAC, indicating the start of parallel region
+         * this can't be solved by regular dataflow, so the patch is to propagate by states
+         *      out[detach_block]   in[task_entry_block]
+         *          untouched           untouched
+         *          both                both
+         *          ef                  dac (!)
+         *          dac                 dac
+         */
+        // inLFS[BB] = PRState::DefinitelyDAC;
+        for (BasicBlock *Pred : predecessors(BB)) {
+            if (outLFS[Pred] == PRState::DefinitelyEF) {
+                inLFS[BB] = joinState(inLFS[BB], PRState::DefinitelyDAC);
+            } else {
+                inLFS[BB] = joinState(inLFS[BB], outLFS[Pred]);
+            }
+        }
     } else {
         // not task entry block, reduce by joining out[pred]
         for (BasicBlock *Pred : predecessors(BB)) {
@@ -123,13 +155,15 @@ void LocalDataflow::transferPRState(const BasicBlock *BB, TaskInfo &TI) {
                     // would mean the termination of parallel region
                     if (T->isTaskExiting(BB)) {
                         // BB is the task exit into a serial region 
-                        if (outLFS[T->getDetach()->getParent()] == PRState::Untouched) {
-                            /// BUG: during initial phases, when func entrance has untouched state, the output should propgate DefEF; Untouched states should not be propagate to callsites within func body
-                            outLFS[BB] = PRState::DefinitelyEF;
-                        } else {
-                            ///BUG: exit state should be ambient task boundary in-state
-                            outLFS[BB] = outLFS[T->getDetach()->getParent()]; // PRState::DefinitelyEF;
-                        }
+                        ///DEBUG: exit state should be ambient task boundary in-state
+                        outLFS[BB] = outLFS[T->getDetach()->getParent()]; // PRState::DefinitelyEF;
+
+                        // if (outLFS[T->getDetach()->getParent()] == PRState::Untouched) {
+                        //     /// BUG: during initial phases, when func entrance has untouched state, the output should propgate DefEF; Untouched states should not be propagate to callsites within func body
+                        //     outLFS[BB] = PRState::DefinitelyEF;
+                        // } else {
+                        //     outLFS[BB] = outLFS[T->getDetach()->getParent()];
+                        // }
                     } else {
                         // BB not task exit, still inside a parallel region
                         outLFS[BB] = PRState::DefinitelyDAC;
@@ -137,14 +171,13 @@ void LocalDataflow::transferPRState(const BasicBlock *BB, TaskInfo &TI) {
                 }
             } else {
                 // BB is in serial region
-                /// BUG: exit state should be ambient func in-state
-                if (inLFS[BB] == PRState::Untouched) {
-                    /// BUG: during initial phases, when func entrance has untouched state, the output should propgate DefEF; Untouched states should not be propagate to callsites within func body
-                    outLFS[BB] = PRState::DefinitelyEF;
-                } else {
-                    /// BUG: exit state should be ambient func state
-                    outLFS[BB] = inLFS[BB]; // PRState::DefinitelyEF;
-                }
+                /// DEBUG: exit state should be ambient func in-state
+                outLFS[BB] = inLFS[BB]; // PRState::DefinitelyEF;
+                /// DEBUG: propagate Untouched as well
+                // if (inLFS[BB] == PRState::Untouched) {
+                //     /// BUG: during initial phases, when func entrance has untouched state, the output should propgate DefEF; Untouched states should not be propagate to callsites within func body
+                //     outLFS[BB] = PRState::DefinitelyEF;
+                // }
             }
             break;
         }
@@ -171,18 +204,19 @@ bool LocalDataflow::run(PRState initFS, TaskInfo &TI) {
         LLVM_DEBUG(dbgs() << "    " << BB->getName() << ": in=" << printPRState(inLFS[BB]) << ", out=" << printPRState(outLFS[BB]));
         
         // update inLFS of BB from outLFS of predecessors of BB
+        PRState inOld = inLFS[BB];
         reduceInLFS(BB, TI);
-
+        PRState inNew = inLFS[BB];
         // transfer function: 
         // if BB is inside a parallel region, udpate with DefinitelyDAC
         // if BB is inside a serial region, update with DefinitelyEF
-        PRState sOld = outLFS[BB];
+        PRState outOld = outLFS[BB];
         transferPRState(BB, TI);
-        PRState sNew = outLFS[BB];
+        PRState outNew = outLFS[BB];
         LLVM_DEBUG(dbgs() << "-> in=" << printPRState(inLFS[BB]) << ", out=" << printPRState(outLFS[BB]) << "\n");
 
         // if local state changed, push successors back to the worklist
-        if (sOld != sNew) {
+        if (outOld != outNew) {
             // Out state changed! Push successors back onto the workList
             for (BasicBlock *Succ : successors(BB)) {
                 // ensure no-duplicate workList at any time
@@ -199,7 +233,7 @@ bool LocalDataflow::run(PRState initFS, TaskInfo &TI) {
 
 bool LocalDataflow::postProcess(CallGraphNode *CGN, FuncMapTy &FuncPRState,
                    SmallVector<CallGraphNode *, 8> &globalWorkList) {
-    // LLVM_DEBUG(dbgs() << "  postProcess(" << Caller->getName() << ")...\n");
+    LLVM_DEBUG(dbgs() << "  postProcess(" << CGN->getFunction()->getName() << ")...\n");
     bool Changed = false;
     // for each callee/callsite inside the callnode, update FuncPRState & globalWorkList
     for (CallGraphNode::CallRecord &CallRecord : *CGN) {
@@ -221,18 +255,31 @@ bool LocalDataflow::postProcess(CallGraphNode *CGN, FuncMapTy &FuncPRState,
         assert(CallSite &&
                 "CallRecord doesn't have CallBase callsite instruction!");
 
-        //   LLVM_DEBUG(dbgs() << "    examing callsite at " << CallSite->getParent()->getName() << ":");
+        LLVM_DEBUG(dbgs() << "    examing callsite at " << CallSite->getParent()->getName() << ":");
         //   CallSite->dump();
-        //   LLVM_DEBUG(dbgs() << "\n");
+        std::string CallSiteStr;
+        raw_string_ostream ros(CallSiteStr);
+        CallSite->print(ros);
+        ros.flush();
+        
+        LLVM_DEBUG(dbgs() << StringRef(CallSiteStr) << "\n");
 
         // update state of callee node based on local pass results
         PRState sOld = FuncPRState[Callee];
         PRState sNew = joinState(sOld, inLFS[CallSite->getParent()]);
         FuncPRState[Callee] = sNew;
 
+        ///DEBUG: ///
+        // if (Callee->getName() == "_ZN7simplexI7point2dIdEE4flipEv") {
+        //     outs() << "target function transition from " << printPRState(sOld) << " + " << printPRState(inLFS[CallSite->getParent()]) << " -> " << printPRState(sNew) << " by caller: " << CallSite->getFunction()->getName() << '\n';
+        //     outs() << "\t" << CallSite->getParent()->getName() << ":" << printPRState(inLFS[CallSite->getParent()]) << "\n";
+        //     // CallSite->dump();
+        // }
+        /////////
+
         // push Callee back on to worklist because of state change
         if (sOld != sNew) {
-            // LLVM_DEBUG(dbgs() << "  <!> state change " << printPRState(sOld) << "-->" << printPRState(sNew) << "\n");
+            LLVM_DEBUG(dbgs() << "  <!> state change " << printPRState(sOld) << "-->" << printPRState(sNew)  << " for " << Callee->getName() << "\n");
             globalWorkList.push_back(CallRecord.second);
             Changed = true;
         }
@@ -274,9 +321,11 @@ void ParallelRegion::initializeFuncPRState(CallGraph &CG,
                     if (PointerType *ptrTy = dyn_cast<PointerType>(arg->getType())) {
                         if (ptrTy->getElementType()->isFunctionTy()) {
                             ConstantExpr *BitCast = dyn_cast<ConstantExpr>(arg);
-                            assert(BitCast && BitCast->isCast() && "function pointer argument is not a bitcast!");
-                            Function *Callee = dyn_cast<Function>(BitCast->getOperand(0));
-                            FunInFunArgs.insert(Callee);
+                            if (BitCast && BitCast->isCast()) {
+                                Function *Callee = dyn_cast<Function>(BitCast->getOperand(0));
+                                FunInFunArgs.insert(Callee);
+                            }
+                            // assert(BitCast && BitCast->isCast() && "function pointer argument is not a bitcast!");
                         }
                     }
                 }
@@ -289,6 +338,12 @@ void ParallelRegion::initializeFuncPRState(CallGraph &CG,
         Function *F = it.second->getFunction();
         if (!F) 
             continue;
+        ///DEBUG: initialize main to have DefinitelyEF entry state
+        if (F->getName() == "main") {
+            FuncPRState[F] = PRState::DefinitelyEF;
+            continue;
+        }
+        // if function taken as pointer somewhere, init Both; else Untouched
         if (FunInFunArgs.find(F) == FunInFunArgs.end()) {
             FuncPRState[F] = PRState::Untouched;
         } else {
@@ -299,15 +354,23 @@ void ParallelRegion::initializeFuncPRState(CallGraph &CG,
 
 void ParallelRegion::initializeWorkList(CallGraph &CG, SmallVector<CallGraphNode *, 8> &workList) {
     LLVM_DEBUG(dbgs() << "initializeWorkList...\n");
-    for (auto &it : CG) {
-        const Function *F = it.first;
-        CallGraphNode *CGN = it.second.get();
-        assert(CGN && "encounter null call graph node");
-        if (!F)
-            continue;
+    // scc_iterator uses reverse topological order; we want to process main before anything else
+    std::vector<CallGraphNode *> postOrderList;
+    for (auto SccI = scc_begin(&CG), SccE = scc_end(&CG); SccI != SccE; ++SccI) {
+        for (CallGraphNode *CGN : *SccI) {
+            Function *F = CGN->getFunction();
+            if (!F) 
+                continue;
+            postOrderList.push_back(CGN);
+        }
+    }
+    std::reverse(postOrderList.begin(), postOrderList.end());
+
+    for (CallGraphNode *CGN : postOrderList) {
+        Function *F = CGN->getFunction();
         workList.push_back(CGN);
 
-        //   LLVM_DEBUG(dbgs() << "Function " << F->getName() << " pushed onto workList!\n");
+        LLVM_DEBUG(dbgs() << "Function " << F->getName() << " pushed onto workList!\n");
     }
 }
 
@@ -376,17 +439,6 @@ void ParallelRegion::populateLoopPRState(Function *F, TaskInfo &TI, LoopInfo &LI
                 //     LoopPRState[F][L] = PRState::DefinitelyDAC;
                 // }
                 LoopPRState[F][L] = LDF[F]->getIn(L->getHeader()); // DEBUG: original implementation used getOut!
-                
-                // DEBUG 
-                // if (F->getName() == "test_correctness") {
-                //     assert(L->getHeader()->getName() == "pfor.cond.us.i" && "what?");
-                //     if (L == TopLevelLoop) {
-                //         outs() << "pfor.cond.us.i was a top level pfor!\n";
-                //     } else {
-                //         outs() << "pfor.cond.us.i is nested in " << TopLevelLoop->getHeader()->getName() << "!\n";
-                //     }
-                // }
-                ////////
             }
         }
     }
