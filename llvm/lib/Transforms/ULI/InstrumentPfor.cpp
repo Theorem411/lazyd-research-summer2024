@@ -63,11 +63,8 @@ namespace {
 namespace {
 
   // Copied from CilkABI.cpp
-
   /// Helper methods for storing to and loading from struct fields.
   static Value *GEP(IRBuilder<> &B, Value *Base, int Field) {
-    // return B.CreateStructGEP(cast<PointerType>(Base->getType()),
-    //                          Base, field);
     return B.CreateConstInBoundsGEP2_32(
 					Base->getType()->getScalarType()->getPointerElementType(), Base, 0,
 					Field);
@@ -107,7 +104,6 @@ namespace {
 
       auto scevExpr = SE->getSCEV(PhiVar);
       assert(scevExpr);
-      //scevExpr->dump();
       const SCEVAddRecExpr *AddRec =  dyn_cast<SCEVAddRecExpr>(scevExpr);
       if (!AddRec || !AddRec->isAffine()) {
 	if(!AddRec) {
@@ -159,6 +155,30 @@ namespace {
 
 }
 
+//
+
+/*
+  define private fastcc void @foo.outline_pfor.cond.ls1.1par-for-seq(i32 %__begin.0.start.ls1, i32 %end.ls1, i32* align 8 %ivStorage.ls1) unnamed_addr #4 {
+  pfor.cond.preheader.ls1:
+    br label %pfor.inc.ls1
+
+  pfor.inc.ls1:                                     ; preds = %pfor.inc.ls1, %pfor.cond.preheader.ls1
+    %__begin.0.ls1 = phi i32 [ %0, %pfor.inc.ls1 ], [ %__begin.0.start.ls1, %pfor.cond.preheader.ls1 ]
+    store i8 1, i8* getelementptr inbounds (%struct._request_channel, %struct._request_channel* @req_local, i64 0, i32 2), align 2
+    %0 = add i32 %__begin.0.ls1, 1
+    store volatile i32 %0, i32* %ivStorage.ls1, align 8
+
+    //....Loop body..........
+
+    %exitcond.not.ls1 = icmp eq i32 %0, %end.ls1
+    br i1 %exitcond.not.ls1, label %pfor.cond.cleanup.ls1, label %pfor.inc.ls1, !llvm.loop !10
+
+  pfor.cond.cleanup.ls1:                            ; preds = %pfor.inc.ls1
+    ret void
+  }
+
+*/
+
 void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* L) {
   auto M = F.getParent();
   const DataLayout &DL = M->getDataLayout();
@@ -172,33 +192,39 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
   //assert(Preheader && "Preheader does not exists");
   assert(Latch && "Latch does not exists");
 
+  // Unused code (for debugging purpose)
   const SCEV *Limit = SE.getExitCount(L, Latch);
   LLVM_DEBUG(dbgs() << "LS Loop limit: " << *Limit << "\n");
 
+  // Get the induction variable
   PHINode *CanonicalIV = getInductionVariable(L, &SE);//Exp.getOrInsertCanonicalInductionVariable(L, CanonicalIVTy);
   assert(CanonicalIV && "Canonical Ind. variable cannot be nulled\n");
   LLVM_DEBUG(dbgs() << "Induction variable: " << *CanonicalIV <<"\n");
 
+  // Get the constant step
   const SCEVAddRecExpr *PNSCEV = dyn_cast<const SCEVAddRecExpr>(SE.getSCEV(CanonicalIV));
   auto constStep = dyn_cast<SCEVConstant>(PNSCEV->getStepRecurrence(SE));
   assert(constStep && "Recurrence step must be constant");
   LLVM_DEBUG(dbgs() << "Step: " << *constStep << "\n");
 
-  IRBuilder<> B (Header->getFirstNonPHIOrDbgOrLifetime());
 
+  // Skip argument of type sret
+  IRBuilder<> B (Header->getFirstNonPHIOrDbgOrLifetime());
   unsigned loc = 0;
   for (Function::const_arg_iterator J = F.arg_begin(); J != F.arg_end(); ++J) {
-    // If argument is sret, skip
     if(J->getType()->isPointerTy() && !J->hasStructRetAttr()){
       break;
     }
     loc++;
   }
 
+  // Locate the storage to store the next iteration passed from parent to child
   Function::arg_iterator args = F.arg_begin() + loc;
   Value* argsCtx = &*args;
   args = F.arg_begin();
   Value* argsStart = &*args;
+
+  // FIXME: Used for to disable and enable interrupt (currently not used in ULI-PRL)
   GlobalVariable* guiOn = GetGlobalVariable("uiOn", Type::getInt8Ty(C), *M, true);
   Value* ONE = B.getInt8(1);
   Value* ZERO = B.getInt8(0);
@@ -207,25 +233,29 @@ void InstrumentPforPass::instrumentLoop(Function &F, ScalarEvolution& SE, Loop* 
 
 #define NO_UNWIND_POLLPFOR
 #ifdef NO_UNWIND_POLLPFOR
+  // nextIteration = currentIteration+1
   auto nextIteration = B.CreateAdd(CanonicalIV, constStep->getValue());
   // If iv starts at zero, add the first argument (start variable)
+  // May not be needed?
   if(PNSCEV->getStart()->isZero())
     nextIteration = B.CreateAdd(nextIteration, argsStart);
-  //B.CreateStore(nextIteration, argsCtx, true);
 #else
+  assert(false && "Currently not working");
   Function* pollFcn = Intrinsic::getDeclaration(M, Intrinsic::x86_uli_unwind_poll_pfor);
   B.CreateCall(pollFcn, {CanonicalIV ,constStep->getValue(), argsCtx});
-
 #endif
 
-
+  // Store the next iteration to the ivStorage passed by the parent
   B.CreateStore(nextIteration, argsCtx, true);
+
+  // FIXME: Have not been tested, used to disable the reception of interrupt using a local thread variable
   //B.CreateStore(ONE, guiOn, true);
   //B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
   //B.CreateStore(ZERO, guiOn, true);
   //B.SetInsertPoint(Preheader->getFirstNonPHIOrDbgOrLifetime());
   B.SetInsertPoint(Latch->getFirstNonPHIOrDbgOrLifetime());
 
+  // Store potential work at the latch
   GlobalVariable* reqlocal = GetGlobalVariable("req_local", RequestChannelTy, *M, true);
   if(!DisableUnwindPoll2)
     StoreSTyField(B, DL, RequestChannelTy,
@@ -241,17 +271,19 @@ bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)
   const DataLayout &DL = M->getDataLayout();
   LLVMContext& C = M->getContext();
 
+  bool Changed=false;
+
   GlobalVariable* reqlocal = GetGlobalVariable("req_local", RequestChannelTy, *M, true);
   IRBuilder<> B(F.getContext());
   Value* L_ONE = B.getInt64(1);
   //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   // If Detach exists, set request_cell[0] to 1
   bool bDetachExists= detachExists(F);
-  //if(bDetachExists || F.getFnAttribute("poll-at-loop").getValueAsString()=="true") {
   if(bDetachExists) {
     B.SetInsertPoint(F.getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
 
-
+    // Store potential parallel task at the beginning of the function if it contains detach
+    // Is this needed?
     if(!DisableUnwindPoll2)
       StoreSTyField(B, DL, RequestChannelTy,
 		    B.getInt8(1),
@@ -259,14 +291,19 @@ bool InstrumentPforPass::runImpl(Function &F, ScalarEvolution& SE, LoopInfo& LI)
 		    AtomicOrdering::NotAtomic);
   }
 
+  // If it is a not a parallel-loop.
   if(!(F.getFnAttribute("poll-at-loop").getValueAsString()=="true")) return false;
 
   LLVM_DEBUG(dbgs() << "Analyzed function: " << F.getName() << "\n");
+
+  // Instrument loop to store next iteration and set potential parallel task
+  // Potentially, it can be used to disable and enable UI when using PRL
   for (Loop *L : LI) {
     SmallVector<Loop *, 8> VisitStack = {L};
     instrumentLoop(F, SE, L);
+    Changed=true;
   }
-  return true;
+  return Changed;
 }
 
 bool InstrumentPforPass::runInitialization(Module &M) {
@@ -313,7 +350,6 @@ PreservedAnalyses InstrumentPforPass::run(Function &F,
   // Get required analysis.
   auto &SE = AM.getResult<ScalarEvolutionAnalysis>(F);
   auto &LI = AM.getResult<LoopAnalysis>(F);
-
   runInitialization(*F.getParent());
 
   // Run on function.
@@ -327,11 +363,8 @@ PreservedAnalyses InstrumentPforPass::run(Function &F,
   return PA;
 }
 
-
 char InstrumentPfor::ID = 0;
-
 static const char lv_name[] = "LazyD store the next iteration in the header of the loop";
-
 Pass *llvm::createInstrumentPforPass() {
   return new InstrumentPfor();
 }

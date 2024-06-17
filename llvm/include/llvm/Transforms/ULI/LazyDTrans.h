@@ -46,10 +46,26 @@
 #include <iostream>
 
 // Can this cause performance improvemetn on classify kddcup?
+// OPTIMIZE_FP: Used for removing FP
 //#define OPTIMIZE_FP
+
+// STICK_STACKXCGH_FUNC: Allow calling a function in the backtrack routine
 #define STICK_STACKXCGH_FUNC
+
+// OPTIMIZE_UNWIND: Only save the neccessary information during backtrack (doesn't seem to improve performance)
 #define OPTIMIZE_UNWIND
+
+// Enable the optimization above
 #define OPTIMIZE_UNWIND_FUNC
+
+// NO_UNWIND_POLLPFOR: Do not used a specialized polling for parallel-for (have not been tested)
+#define NO_UNWIND_POLLPFOR
+
+// UI_REGION is needed if you wan to use label to create a critical section in parallel-for
+//#define UI_REGION
+
+// PRL_LATER is used to parallelize parallel-ready loop only after all the DAC has been parallelized.
+//#define PRL_LATER
 
 #define STEALENTRY_INDEX 1
 #define GOTSTOLEN_INDEX 2
@@ -102,7 +118,7 @@ namespace llvm {
     bool bHaveCallFcn6Args;
 
     // Create the multiretcall from fast path to slow path
-    void addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder, ValueToValueMapTy& VMapSlowPath, Value* fromSlowPathAlloc, SSAUpdater& SSAUpdateWorkContext, DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet);
+    void addPotentialJump(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder, ValueToValueMapTy& VMapSlowPath, Value* fromSlowPathAlloc, SSAUpdater& SSAUpdateWorkContext, DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet, DominatorTree& DT);
 
     void insertCheckInContBlock(Function& F, SmallVector<DetachInst*, 4>& seqOrder, SmallVector<DetachInst*, 4>& loopOrder, ValueToValueMapTy& VMapSlowPath, Value* fromSlowPathAlloc,
                                 DenseMap<DetachInst *, SmallPtrSet<BasicBlock*, 8>>& RDIBB, SSAUpdater& SSAUpdateWorkContext);
@@ -149,9 +165,6 @@ namespace llvm {
     void replaceUses(Instruction *liveVar, Instruction *slowLiveVar);
 
     void updateSSA(SSAUpdater& SSAUpdate, Instruction* inst2replace);
-
-    // Find the exact clone of the fast inst in the slow path
-    Instruction* findSlowInst(Instruction *fastInst, Instruction *initialSlowInst, BasicBlock *slowBB);
 
     // Merge slow path back to fast path
     void mergeSlowPathToFastPath(Function& F, SmallVector<SyncInst*, 8>& syncInsts, DenseMap<BasicBlock *, DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>>& LVin,
@@ -200,9 +213,7 @@ namespace llvm {
                          SmallPtrSet<AllocaInst*, 8>& AllocaSet );
 
 
-    void postProcessCfg(Function &F, FunctionAnalysisManager &AM, DominatorTree &DT, SmallPtrSet<AllocaInst*, 8>& AllocaSet,
-                        SmallPtrSet<BasicBlock*, 8>& GotstolenSet, DenseMap <BasicBlock*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocToGotstolenSet,
-                        DenseMap <BasicBlock*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForGotStolen);
+    void postProcessCfg(Function &F, FunctionAnalysisManager &AM, DominatorTree &DT, SmallPtrSet<AllocaInst*, 8>& AllocaSet);
 
     /// Copied from CilkABI.cpp
     /// \brief Lower a call to get the grainsize of this Tapir loop.
@@ -228,15 +239,10 @@ namespace llvm {
                                 DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>& LVout,
                                 DenseMap<BasicBlock *, DenseMap<BasicBlock*, SmallPtrSet<Value*, 8>>>& LVin,
                                 ValueToValueMapTy& VMapSlowPath,
-                                ValueToValueMapTy& VMapGotStolenPath,
-                                SmallPtrSet<BasicBlock*, 8>& GotstolenSet,
-                                DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet,
-                                DenseMap <BasicBlock*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocToGotstolenSet,
-                                DenseMap <DetachInst*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForDetach,
-                                DenseMap <BasicBlock*, DenseMap <AllocaInst*, StoreInst*>>& LatestStoreForGotStolen
+                                ValueToValueMapTy& VMapGotStolenPath
                                 );
 
-    BasicBlock * createGotStolenHandlerBB(DetachInst& Detach, BasicBlock* contBB, Value* locAlloc, Value* ownerAlloc,  DenseMap <DetachInst*, SmallPtrSet<AllocaInst*, 8>>& ReachingAllocSet);
+    BasicBlock * createGotStolenHandlerBB(DetachInst& Detach, BasicBlock* contBB, Value* locAlloc, Value* ownerAlloc);
 
     void instrumentPushPop(Function& F, SmallVector<BasicBlock*, 8>& bb2clones);
 

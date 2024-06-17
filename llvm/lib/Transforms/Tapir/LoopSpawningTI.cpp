@@ -408,6 +408,18 @@ static void moveInstrumentation(StringRef Name, BasicBlock &From,
   }
 }
 
+static GlobalVariable* GetGlobalVariable(const char* GlobalName, Type* GlobalType, Module& M, bool localThread=false){
+  GlobalVariable* globalVar = M.getNamedGlobal(GlobalName);
+  if(globalVar){
+    return globalVar;
+  }
+  globalVar = dyn_cast<GlobalVariable>(M.getOrInsertGlobal(GlobalName, GlobalType));
+  globalVar->setLinkage(GlobalValue::ExternalLinkage);
+  if(localThread)
+    globalVar->setThreadLocal(true);
+  return globalVar;
+}
+
 void LoopOutlineProcessor::moveCilksanInstrumentation(TapirLoopInfo &TL,
                                                       TaskOutlineInfo &Out,
                                                       ValueToValueMapTy &VMap) {
@@ -1024,16 +1036,43 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL,
   DebugLoc TLDebugLoc = cast<Instruction>(VMap[T->getDetach()])->getDebugLoc();
   Value *SyncRegion = cast<Value>(VMap[T->getDetach()->getSyncRegion()]);
 
-  // CNP: Helper function
+  // Helper function
   Function *Helper = Out.Outline;
   BasicBlock *Preheader = cast<BasicBlock>(VMap[L->getLoopPreheader()]);
   BasicBlock *Header = cast<BasicBlock>(VMap[L->getHeader()]);
   Module *M = Helper->getParent();
   const DataLayout &DL = M->getDataLayout();
 
-  Function *SeqLoopSpawnFcn = CloneFunction(Helper, VMap);
-  SeqLoopSpawnFcn->setName(SeqLoopSpawnFcn->getName() + "_helper_loop");
+  // Get the Instrumentation Intrinsic if it exists
+  Function* OriF = L->getLoopPreheader()->getParent();
+  Value* fcn = nullptr;
+  for(auto &BB : *OriF) {
+    for (auto &II : BB) {
+      auto CI = dyn_cast<CallInst>(&II);
+      Function *Intrinsic = nullptr;
+      if(CI)  {
+	Intrinsic = CI->getCalledFunction();
+      }
+      if (Intrinsic && Intrinsic->getIntrinsicID() == Intrinsic::uli_lazyd_inst) {
+	Constant *Message= dyn_cast<Constant>(CI->getArgOperand(1));
+	int messageVal = 0;
+	if(isa<ConstantExpr>(Message)) {
+	  Instruction * i = (dyn_cast<ConstantExpr>(Message))->getAsInstruction();
+	  if(i) {
+	    auto res = i->getOperand(0);
+	    if(isa<ConstantInt>(res))
+	      messageVal = dyn_cast<ConstantInt>(res)->getSExtValue();
+	  }
+	}
+	if(messageVal != 1)
+	  fcn = CI->getArgOperand(0);
+      }
+    }
+  }
 
+  // Creating the parallel-for-seq
+  Function* SeqLoopSpawnFcn = CloneFunction(Helper, VMap);
+  SeqLoopSpawnFcn->setName(SeqLoopSpawnFcn->getName() + "par-for-seq");
 
   Helper->addFnAttr("par-for-par", "true");
   SeqLoopSpawnFcn->addFnAttr("poll-at-loop", "true");
@@ -1052,9 +1091,40 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL,
   assert(PrimaryIV->getParent()->getParent() == Helper &&
          "PrimaryIV does not belong to header");
 
+
+  /*
+    define private fastcc void @foo.outline_pfor.cond.ls1(i32 %__begin.0.start.ls1, i32 %end.ls1, i32 %grainsize.ls1, i32* align 8 %ivStorage.ls1) unnamed_addr #4 {
+    pfor.cond.preheader.ls1:
+      %0 = tail call token @llvm.syncregion.start()
+
+      // Create a split here
+      br label %pfor.cond.preheader.ls1.split
+
+    pfor.cond.preheader.ls1.split:                    ; preds = %pfor.cond.preheader.ls1
+      br label %pfor.cond.ls1
+
+    pfor.cond.ls1:                                    ; preds = %pfor.cond.preheader.ls1.split, %pfor.inc.ls1
+      %__begin.0.ls1 = phi i32 [ %inc.ls1, %pfor.inc.ls1 ], [ %__begin.0.start.ls1, %pfor.cond.preheader.ls1.split ]
+      br label %pfor.body.entry.ls1
+
+    pfor.body.entry.ls1:                              ; preds = %pfor.cond.ls1
+      // Loop body
+      br label %pfor.inc.ls1
+
+    pfor.inc.ls1:                                     ; preds = %pfor.body.entry.ls1
+      %inc.ls1 = add nuw nsw i32 %__begin.0.ls1, 1
+      %exitcond.not.ls1 = icmp eq i32 %inc.ls1, %end.ls1
+      br i1 %exitcond.not.ls1, label %pfor.cond.cleanup.ls1, label %pfor.cond.ls1, !llvm.loop !9
+
+    pfor.cond.cleanup.ls1:                            ; preds = %pfor.inc.ls1
+      ret void
+    }
+   */
+
   IRBuilder<> Builder(Helper->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
-  // Get end and grainsize arguments
+  // Get the argument from the function
   Argument *End, *Grainsize;
+  Value* OriLen;
   {
     auto OutlineArgsIter = Helper->arg_begin();
     if (Helper->hasParamAttribute(0, Attribute::StructRet))
@@ -1063,6 +1133,12 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL,
     End = &*++OutlineArgsIter;
     // Grainsize argument is third LC input.
     Grainsize = &*++OutlineArgsIter;
+#if 0
+    // ivstorage
+    ++OutlineArgsIter;
+    // Orignal Len
+    OriLen = &*++OutlineArgsIter;
+#endif
   }
 
   BasicBlock *DACHead = Preheader;
@@ -1098,98 +1174,70 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL,
   Value *PrimaryIVInc = PrimaryIV->getIncomingValueForBlock(
       cast<BasicBlock>(VMap[L->getLoopLatch()]));
 
-  //---------------------------------------------------------------------------
-  // TODO: Comment below is wrong, need to update
-  // At this point, DACHead is the preheader to the loop and is guaranteed to
-  // not be the function entry:
-  //
-  /// Example: Suppose that Helper contains the following Tapir loop:
-  ///
-  /// Helper(iter_t start, iter_t end, iter_t grain, ...) {
-  ///   iter_t i = start;
-  ///   ... Other loop setup ...
-  ///   do {
-  ///     spawn { ... loop body ... };
-  ///   } while (i++ < end);
-  ///   sync;
-  /// }
-  ///
-  /// Then this method transforms Helper into the following form:
-  ///
-  /// Attribute:Inline
-  /// Helper_new(iter_t start, iter_t end, iter_t grain, ...) {
-  /// recur:
-  ///   spawn loopfcn(start, end, grain, ...) {
-  ///     iter_t i = start;
-  ///     ... Other loop setup ...
-  ///     do {
-  ///       ... Loop Body ...
-  ///     } while (i++ < end);
-  ///   }
-  ///   multiretcall default, rundac // Slow path goes to runloop, fast path
-  ///   goes to default
-  /// default:
-  ///   sync;
-  ///   return;
-  ///
-  /// rundac:
-  ///   call Helper(start, end, grain, ...);
-  ///   goto default;
-  /// }
-  ///
-  /// Helper(iter_t start, iter_t end, iter_t grain, ...) {
-  /// recur:
-  ///   iter_t itercount = end - start;
-  ///   if (itercount > grain) {
-  ///     // Invariant: itercount >= 2
-  ///     count_t miditer = start + itercount / 2;
-  ///     spawn Helper(start, miditer, grain, ...);
-  ///     start = miditer + 1;
-  ///     goto recur;
-  ///   }
-  ///
-  ///   iter_t i = start;
-  ///   ... Other loop setup ...
-  ///   do {
-  ///     ... Loop Body ...
-  ///   } while (i++ < end);
-  ///   sync;
-  /// }
+
+  /// TODO: Show what the generated code look like
 
   BasicBlock *RecurHead, *RecurDet, *RecurCont;
   Value *IterCount;
   PHINode *PrimaryIVStart;
   Value *Start;
 
-  // TODO: CNP Implement the PRL spawning here
-  BasicBlock *DetachedBB =
-      BasicBlock::Create(Preheader->getParent()->getContext(), "detach.bb",
-                         Preheader->getParent());
-  BasicBlock *DACBB = BasicBlock::Create(Preheader->getParent()->getContext(),
-                                         "dac.bb", Preheader->getParent());
-  BasicBlock *DACCallBB =
-      BasicBlock::Create(Preheader->getParent()->getContext(), "dac.call.bb",
-                         Preheader->getParent());
-  BasicBlock *DACCallCheckBB =
-      BasicBlock::Create(Preheader->getParent()->getContext(),
-                         "dac.callcheck.bb", Preheader->getParent());
-  BasicBlock *DACRetBB =
-      BasicBlock::Create(Preheader->getParent()->getContext(), "dac.return.bb",
-                         Preheader->getParent());
-  BasicBlock *ContBB = BasicBlock::Create(Preheader->getParent()->getContext(),
-                                          "cont.bb", Preheader->getParent());
-  BasicBlock *SyncBB = BasicBlock::Create(Preheader->getParent()->getContext(),
-                                          "sync.bb", Preheader->getParent());
-  BasicBlock *RetBB = BasicBlock::Create(Preheader->getParent()->getContext(),
-                                         "return.bb", Preheader->getParent());
-  BasicBlock *DetachedBBSlow =
-      BasicBlock::Create(Preheader->getParent()->getContext(), "detach.bb",
-                         Preheader->getParent());
-  BasicBlock *ContBBSlow = BasicBlock::Create(
-      Preheader->getParent()->getContext(), "cont.bb", Preheader->getParent());
+  // Redirect control flow to the that routine.
+  // Manage ivStorage, call par-for-seq
+  /*
+    define private fastcc void @foo.outline_pfor.cond.ls1(i32 %__begin.0.start.ls1, i32 %end.ls1, i32 %grainsize.ls1, i32* align 8 %ivStorage.ls1) unnamed_addr #4 {
+    pfor.cond.preheader.ls1:
+      %0 = tail call token @llvm.syncregion.start()
+      %ivStorage = alloca i32, align 8
+      // Redirect control flow to detach.bb
+      detach within %0, label %detach.bb, label %cont.bb
 
-  for (succ_iterator SI = succ_begin(Preheader); SI != succ_end(Preheader);
-       SI++) {
+    pfor.cond.preheader.ls1.split:                    ; No predecessors!
+      ...
+
+    pfor.cond.cleanup.ls1:                            ; preds = %pfor.inc.ls1
+      ret void
+
+    detach.bb:                                        ; preds = %pfor.cond.preheader.ls1
+      store i32 %__begin.0.start.ls1, i32* %ivStorage, align 4
+      // Par-for-seq
+      call void @foo.outline_pfor.cond.ls1.1par-for-seq(i32 %__begin.0.start.ls1, i32 %end.ls1, i32 %grainsize.ls1, i32* %ivStorage)
+
+    dac.bb:                                           ; No predecessors!
+
+    dac.call.bb:                                      ; No predecessors!
+
+    dac.callcheck.bb:                                 ; No predecessors!
+
+    dac.return.bb:                                    ; No predecessors!
+
+    cont.bb:                                          ; preds = %pfor.cond.preheader.ls1
+
+    sync.bb:                                          ; No predecessors!
+      sync within %0, label %return.bb
+
+    return.bb:                                        ; preds = %sync.bb
+      ret void
+
+    detach.bb1:                                       ; No predecessors!
+
+    cont.bb2:                                         ; No predecessors!
+    }
+   */
+
+  // Basic block for parallel-for-par
+  BasicBlock *DetachedBB = BasicBlock::Create(Preheader->getParent()->getContext(), "detach.bb", Preheader->getParent());
+  BasicBlock *DACBB = BasicBlock::Create(Preheader->getParent()->getContext(), "dac.bb", Preheader->getParent());
+  BasicBlock *DACCallBB = BasicBlock::Create(Preheader->getParent()->getContext(), "dac.call.bb", Preheader->getParent());
+  BasicBlock *DACCallCheckBB = BasicBlock::Create(Preheader->getParent()->getContext(), "dac.callcheck.bb", Preheader->getParent());
+  BasicBlock *DACRetBB = BasicBlock::Create(Preheader->getParent()->getContext(), "dac.return.bb", Preheader->getParent());
+  BasicBlock *ContBB = BasicBlock::Create(Preheader->getParent()->getContext(), "cont.bb", Preheader->getParent());
+  BasicBlock *SyncBB = BasicBlock::Create(Preheader->getParent()->getContext(), "sync.bb", Preheader->getParent());
+  BasicBlock *RetBB = BasicBlock::Create(Preheader->getParent()->getContext(), "return.bb", Preheader->getParent());
+  BasicBlock *DetachedBBSlow = BasicBlock::Create(Preheader->getParent()->getContext(), "detach.bb", Preheader->getParent());
+  BasicBlock *ContBBSlow = BasicBlock::Create(Preheader->getParent()->getContext(), "cont.bb", Preheader->getParent());
+
+  for ( succ_iterator SI = succ_begin(Preheader); SI != succ_end(Preheader); SI++ ) {
     auto succBB = *SI;
     // Look for phi node in contBB, and remove any incoming value from BB(parent
     // of detach inst)
@@ -1216,20 +1264,7 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL,
   ReplaceInstWithInst(Preheader->getTerminator(), DI2);
 
   Builder.SetInsertPoint(Preheader->getTerminator());
-  AllocaInst *ivStorage = Builder.CreateAlloca(
-      PrimaryIV->getType(), DL.getAllocaAddrSpace(), nullptr, "ivStorage");
-  ivStorage->setAlignment(Align(8));
 
-  Builder.SetInsertPoint(RetBB);
-  Builder.CreateRetVoid();
-
-  Builder.SetInsertPoint(SyncBB);
-  Builder.CreateSync(RetBB, SyncRegion);
-
-  Builder.SetInsertPoint(DetachedBB);
-  // Store before executing fast path
-  // Builder.CreateStore(ConstantInt::get(CanonicalIV->getType(), Helper->),
-  // ivStorage);
   // Setup arguments for call.
   SmallVector<Value *, 4> TopCallArgs;
 
@@ -1243,22 +1278,53 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL,
   // first parameter.
   if (Helper->hasParamAttribute(0, Attribute::StructRet))
     RecurInputs.insert(&*AI++);
-  // assert(cast<Argument>(CanonicalIVInput) == &*AI &&
-  //	 "First non-sret argument does not match original input to canonical
-  //IV."); RecurInputs.insert(CanonicalIV);
+
+  //assert(cast<Argument>(CanonicalIVInput) == &*AI &&
+  //	 "First non-sret argument does not match original input to canonical IV.");
+  //RecurInputs.insert(CanonicalIV);
   //++AI;
 
   auto startVar = &*AI++;
-  RecurInputs.insert(startVar);
-  //++AI;
 
-  assert(End == &*AI && "Second non-sret argument does not match original "
-                        "input to the loop limit.");
+  if(fcn) {
+    // Create the call to the instrumentation function
+    Function* LazyDInstrumentation = Intrinsic::getDeclaration(M, Intrinsic::uli_lazyd_inst);
+    SmallVector<Value*, 8> Args;
+    Type *Int32Ty = Type::getInt32Ty(M->getContext());
+    // Function to call
+    assert(fcn && "Cannot be nulled");
+    Value* NULL8 = ConstantPointerNull::get(IntegerType::getInt8Ty(M->getContext())->getPointerTo());
+    Args.push_back(fcn);
+    Args.push_back(NULL8);
+    //Args.push_back(Builder.CreateSub(End, startVar));
+    Args.push_back(OriLen);
+    Args.push_back(Grainsize);
+    GlobalVariable* delegate_work = GetGlobalVariable("delegate_work", Int32Ty, *M, true);
+    Args.push_back(Builder.CreateLoad(Int32Ty, delegate_work));
+    auto res = Builder.CreateCall(LazyDInstrumentation, Args);
+    res->setDebugLoc(DI2->getDebugLoc());
+  }
+
+  // Create the ivStorage
+  AllocaInst* ivStorage = Builder.CreateAlloca(PrimaryIV->getType(), DL.getAllocaAddrSpace(), nullptr, "ivStorage");
+  ivStorage->setAlignment(Align(8));
+
+  // Create the return point
+  Builder.SetInsertPoint(RetBB);
+  Builder.CreateRetVoid();
+
+  Builder.SetInsertPoint(SyncBB);
+  Builder.CreateSync(RetBB, SyncRegion);
+
+  Builder.SetInsertPoint(DetachedBB);
+  // Store before executing fast path
+  //Builder.CreateStore(ConstantInt::get(CanonicalIV->getType(), Helper->), ivStorage);
+  RecurInputs.insert(startVar);
+  assert(End == &*AI &&
+	 "Second non-sret argument does not match original input to the loop limit.");
   RecurInputs.insert(End);
   ++AI;
-
   RecurInputs.insert(&*AI++);
-
   RecurInputs.insert(ivStorage);
   ++AI;
 
@@ -1268,26 +1334,70 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL,
   // Store before executing fast path
   Builder.CreateStore(startVar, ivStorage);
 
-  CallInst *TopLoop =
-      Builder.CreateCall(SeqLoopSpawnFcn, RecurInputs.getArrayRef());
+  // Call the parallel-for-seq with the fast calling conention
+  CallInst *TopLoop = Builder.CreateCall(SeqLoopSpawnFcn, RecurInputs.getArrayRef());
+
+  // Add routine to parallelize par-for-seq and its continuation.
+  // The continuation is a fork-join of the remaining iteration (first half and second half)
+  /*
+    define private fastcc void @foo.outline_pfor.cond.ls1(i32 %__begin.0.start.ls1, i32 %end.ls1, i32 %grainsize.ls1, i32* align 8 %ivStorage.ls1) unnamed_addr #4 {
+     ....
+    detach.bb:                                        ; preds = %pfor.cond.preheader.ls1
+      store i32 %__begin.0.start.ls1, i32* %ivStorage, align 4
+      call fastcc void @foo.outline_pfor.cond.ls1.1par-for-seq(i32 %__begin.0.start.ls1, i32 %end.ls1, i32 %grainsize.ls1, i32* %ivStorage)
+      reattach within %0, label %cont.bb
+
+    dac.bb:                                           ; preds = %cont.bb
+      %3 = load i32, i32* %ivStorage, align 4
+      %4 = icmp slt i32 %3, %end.ls1
+      br i1 %4, label %dac.callcheck.bb, label %dac.return.bb
+
+    dac.call.bb:                                      ; preds = %dac.callcheck.bb
+      detach within %0, label %detach.bb1, label %cont.bb2
+
+    dac.callcheck.bb:                                 ; preds = %dac.bb
+      %itercount = sub i32 %end.ls1, %3
+      %halfcount = lshr i32 %itercount, 1
+      %miditer = add i32 %3, %halfcount
+      %miditerplusone = add i32 %miditer, 1
+      %5 = icmp slt i32 %3, %miditer
+      br i1 %5, label %dac.call.bb, label %cont.bb2
+
+    dac.return.bb:                                    ; preds = %dac.bb
+
+    cont.bb:                                          ; preds = %detach.bb, %pfor.cond.preheader.ls1
+      multiretcall void @llvm.donothing()
+       to label %sync.bb [label %dac.bb ]
+
+    sync.bb:                                          ; preds = %cont.bb
+      sync within %0, label %return.bb
+
+    return.bb:                                        ; preds = %sync.bb
+      ret void
+
+    detach.bb1:                                       ; preds = %dac.call.bb
+      call fastcc void @foo.outline_pfor.cond.ls1(i32 %3, i32 %miditer, i32 %grainsize.ls1, i32* %ivStorage)
+      reattach within %0, label %cont.bb2
+
+    cont.bb2:                                         ; preds = %detach.bb1, %dac.call.bb, %dac.callcheck.bb
+      %6 = icmp slt i32 %miditer, %end.ls1
+      br i1 %6, label %dac.call.bb.slow, label %dac.return.bb.slow
+
+    dac.call.bb.slow:                                 ; preds = %cont.bb2
+      call fastcc void @foo.outline_pfor.cond.ls1(i32 %miditer, i32 %end.ls1, i32 %grainsize.ls1, i32* %ivStorage)
+
+    dac.return.bb.slow:                               ; preds = %cont.bb2
+    }
+  */
+
+  // Create the fork-join for the parallel-for-seq and its continution
   TopLoop->setDebugLoc(Header->getTerminator()->getDebugLoc());
-  // Use a fast calling convention for the helper.
   TopLoop->setCallingConv(CallingConv::Fast);
   Builder.CreateReattach(ContBB, SyncRegion);
 
   Builder.SetInsertPoint(ContBB);
   auto donothingFcn = Intrinsic::getDeclaration(M, Intrinsic::donothing);
-  // MultiRetCallInst* mrc =
-  // MultiRetCallInst::Create(dyn_cast<Function>(donothingFcn),
-  // LoopSync->getParent(), {DACBB}, {});
-  // Builder.CreateMultiRetCall(dyn_cast<Function>(donothingFcn),
-  // LoopSync->getParent(), {DACBB}, {});
-
-  // MultiRetCallInst* mrc =
-  // MultiRetCallInst::Create(dyn_cast<Function>(donothingFcn), SyncBB, {DACBB},
-  // {});
-  Builder.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), SyncBB, {DACBB},
-                             {});
+  Builder.CreateMultiRetCall(dyn_cast<Function>(donothingFcn), SyncBB, {DACBB}, {});
 
   Builder.SetInsertPoint(DACBB);
   // Use the remaining itereation + step as the start of the iteration.
@@ -1302,14 +1412,11 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL,
   // "Recurrence step must be constant");
 
   // Check if ivVal < End
-  // auto isLT = Builder.CreateICmpSLE(ivVal, End);
   auto isLT = Builder.CreateICmpSLT(ivVal, End);
   Builder.CreateCondBr(isLT, DACCallCheckBB, DACRetBB);
   Builder.SetInsertPoint(DACCallCheckBB);
 
   IterCount = Builder.CreateSub(End, ivVal, "itercount");
-  // IterCount = Builder.CreateSub(IterCount, ConstantInt::get(End->getType(),
-  // 1), "itercountmin1", false, false);
   Value *MidIter, *MidIterPlusOne;
   MidIter =
       Builder.CreateAdd(ivVal, Builder.CreateLShr(IterCount, 1, "halfcount"),
@@ -1322,9 +1429,11 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL,
   auto isLT3 = Builder.CreateICmpSLT(ivVal, MidIter);
   Builder.CreateCondBr(isLT3, DACCallBB, ContBBSlow);
 
+
   Builder.SetInsertPoint(DACCallBB);
   SetVector<Value *> RecurInputsSlow1;
   AI = Helper->arg_begin();
+  // Prepare the argument
   // Handle an initial sret argument, if necessary.  Based on how
   // the Helper function is created, any sret parameter will be the
   // first parameter.
@@ -1337,6 +1446,9 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL,
   RecurInputsSlow1.insert(&*AI++);
   RecurInputsSlow1.insert(ivStorage);
   ++AI;
+#if 0
+  RecurInputsSlow1.insert(&*AI++);
+#endif
   for (Function::arg_iterator AE = Helper->arg_end(); AI != AE; ++AI)
     RecurInputsSlow1.insert(&*AI);
 
@@ -1347,7 +1459,6 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL,
   // first parameter.
   if (Helper->hasParamAttribute(0, Attribute::StructRet))
     RecurInputsSlow2.insert(&*AI++);
-  // RecurInputsSlow2.insert(MidIterPlusOne);
   RecurInputsSlow2.insert(MidIter);
   ++AI;
   RecurInputsSlow2.insert(End);
@@ -1355,52 +1466,67 @@ void PRLSpawning::implementPRLIterSpawnOnHelper(TapirLoopInfo &TL,
   RecurInputsSlow2.insert(&*AI++);
   RecurInputsSlow2.insert(ivStorage);
   ++AI;
+#if 0
+  RecurInputsSlow2.insert(&*AI++);
+#endif
   for (Function::arg_iterator AE = Helper->arg_end(); AI != AE; ++AI)
     RecurInputsSlow2.insert(&*AI);
 
+  // Create the fork join between the first child and the second child
   Builder.CreateDetach(DetachedBBSlow, ContBBSlow, SyncRegion);
   Builder.SetInsertPoint(DetachedBBSlow);
-  // Builder.SetInsertPoint(ContBB->getTerminator());
 
-  CallInst *TopCall1 =
-      Builder.CreateCall(Helper, RecurInputsSlow1.getArrayRef());
-  Builder.CreateReattach(ContBBSlow, SyncRegion);
-
-  Builder.SetInsertPoint(ContBBSlow);
-  BasicBlock *DACCallBBSlow =
-      BasicBlock::Create(Preheader->getParent()->getContext(),
-                         "dac.call.bb.slow", Preheader->getParent());
-  BasicBlock *DACRetBBSlow =
-      BasicBlock::Create(Preheader->getParent()->getContext(),
-                         "dac.return.bb.slow", Preheader->getParent());
-  // auto isLT2 = Builder.CreateICmpSLE(MidIterPlusOne, End);
-  auto isLT2 = Builder.CreateICmpSLT(MidIter, End);
-  Builder.CreateCondBr(isLT2, DACCallBBSlow, DACRetBBSlow);
-  Builder.SetInsertPoint(DACCallBBSlow);
-
-  CallInst *TopCall2 =
-      Builder.CreateCall(Helper, RecurInputsSlow2.getArrayRef());
+  // Call the first parallel task (first half of the iterations)
+  CallInst *TopCall1 = Builder.CreateCall(Helper, RecurInputsSlow1.getArrayRef());
   // Use a fast calling convention for the helper.
   TopCall1->setCallingConv(CallingConv::Fast);
   // TopCall->setCallingConv(Helper->getCallingConv());
   TopCall1->setDebugLoc(Header->getTerminator()->getDebugLoc());
 
+  Builder.CreateReattach(ContBBSlow, SyncRegion);
+
+  Builder.SetInsertPoint(ContBBSlow);
+  BasicBlock *DACCallBBSlow = BasicBlock::Create(Preheader->getParent()->getContext(), "dac.call.bb.slow", Preheader->getParent());
+  BasicBlock *DACRetBBSlow = BasicBlock::Create(Preheader->getParent()->getContext(), "dac.return.bb.slow", Preheader->getParent());
+  auto isLT2 = Builder.CreateICmpSLT(MidIter, End);
+  Builder.CreateCondBr(isLT2, DACCallBBSlow, DACRetBBSlow);
+  Builder.SetInsertPoint(DACCallBBSlow);
+
+  // Call the second parallel task (second half of the iterations)
+  CallInst *TopCall2 = Builder.CreateCall(Helper, RecurInputsSlow2.getArrayRef());
   // Use a fast calling convention for the helper.
   TopCall2->setCallingConv(CallingConv::Fast);
   // TopCall->setCallingConv(Helper->getCallingConv());
   TopCall2->setDebugLoc(Header->getTerminator()->getDebugLoc());
 
-  Helper->addFnAttr(Attribute::NoInline);
+  // Insert the code to exit
+  /*
+    define private fastcc void @foo.outline_pfor.cond.ls1(i32 %__begin.0.start.ls1, i32 %end.ls1, i32 %grainsize.ls1, i32* align 8 %ivStorage.ls1) unnamed_addr #4 {
+     ....
+
+    dac.return.bb:                                    ; preds = %dac.return.bb.slow, %dac.bb
+      br label %sync.bb
+
+     ....
+    dac.return.bb.slow:                               ; preds = %dac.call.bb.slow, %cont.bb2
+      br label %dac.return.bb
+
+     ....
+    sync.bb:                                          ; preds = %cont.bb
+      sync within %0, label %return.bb
+
+    return.bb:                                        ; preds = %sync.bb
+      ret void
+
+    }
+   */
   Builder.CreateBr(DACRetBBSlow);
 
   Builder.SetInsertPoint(DACRetBBSlow);
   Builder.CreateBr(DACRetBB);
 
   Builder.SetInsertPoint(DACRetBB);
-  // Builder.CreateBr(LoopSync->getParent() );
-  // Builder.CreateBr(exitingblock);
   Builder.CreateBr(SyncBB);
-  ///----------------------------------------------
 }
 
 // Function* Get__parallel_for_static(Module& M)
@@ -2832,27 +2958,65 @@ static void getLoopControlInputs(TapirLoopInfo *TL,
 
   if (Hints.getStrategy() == TapirLoopHints::ST_HYBRID) {
     // Add an argument to store the iv storage
-    LCInputs.push_back(ConstantInt::get(GrainsizeVal->getType(), 2));
+    // Get the 4th argument
+#if 0
+    auto parentFcn = TL->getLoop()->getHeader()->getParent();
+    size_t lastArg = parentFcn->arg_size()-1;
+    if(parentFcn->getArg(lastArg)->getType()->isIntegerTy(64)) {
+      if(parentFcn->getArg(lastArg-1)->getType()->isIntegerTy(64)) {
+	LCInputs.push_back(parentFcn->getArg(lastArg-1));
+      } else {
+	LCInputs.push_back( ConstantInt::get(GrainsizeVal->getType(), 1));
+      }
+    } else {
+      if(parentFcn->getArg(lastArg-2)->getType()->isIntegerTy(64)) {
+	LCInputs.push_back(parentFcn->getArg(lastArg-2));
+      } else {
+	LCInputs.push_back( ConstantInt::get(GrainsizeVal->getType(), 1));
+      }
+    }
+#else
+    LCInputs.push_back( ConstantInt::get(GrainsizeVal->getType(), 1));
+#endif
   } else {
     LCInputs.push_back(GrainsizeVal);
   }
   if (Hints.getStrategy() == TapirLoopHints::ST_HYBRID) {
     // Add an argument to store the iv storage
-    IRBuilder<> Builder(TL->getLoop()
-                            ->getHeader()
-                            ->getParent()
-                            ->getEntryBlock()
-                            .getFirstNonPHIOrDbgOrLifetime());
-    const DataLayout &DL =
-        TL->getLoop()->getHeader()->getParent()->getParent()->getDataLayout();
-    AllocaInst *CurrIterVal = Builder.CreateAlloca(
-        PrimaryPhi->getType(), DL.getAllocaAddrSpace(), nullptr, "ivStorage");
+    auto parentFcn = TL->getLoop()->getHeader()->getParent();
+    LLVMContext& C = parentFcn->getParent()->getContext();
+    IRBuilder<> Builder(parentFcn->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+    const DataLayout &DL = parentFcn->getParent()->getDataLayout();
+    AllocaInst* CurrIterVal = Builder.CreateAlloca(PrimaryPhi->getType(), DL.getAllocaAddrSpace(), nullptr, "ivStorage");
     CurrIterVal->setAlignment(Align(8));
-    TL->CurrIterArg = new Argument(CurrIterVal->getType(), "currIter");
-    // TL->CurrIterArg->addAttr(Attribute::getWithAlignment(TL->CurrIterArg->getContext(),
-    // llvm::Align(8))); LCArgs.push_back(TL->CurrIterArg);
+    //TL->CurrIterArg = new Argument(CurrIterVal->getType(), "currIter");
+    //TL->CurrIterArg->addAttr(Attribute::getWithAlignment(TL->CurrIterArg->getContext(), llvm::Align(8)));
+    //LCArgs.push_back(TL->CurrIterArg);
     LCArgs.push_back(CurrIterVal);
     LCInputs.push_back(CurrIterVal);
+
+#if 0
+    // Add an argument to store the original length of the iteration
+    // Get the 5th argument
+    size_t lastArg = parentFcn->arg_size()-1;
+    Argument* OriLensArg = nullptr;
+    if(parentFcn->getArg(lastArg)->getType()->isIntegerTy(64) && !parentFcn->getArg(lastArg)->getType()->isPointerTy()) {
+      OriLensArg = new Argument(parentFcn->getArg(lastArg)->getType(), "originalsize");
+      //LCArgs.push_back(parentFcn->getArg(lastArg));
+      LCInputs.push_back(parentFcn->getArg(lastArg));
+    } else if(!parentFcn->getArg(lastArg-1)->getType()->isPointerTy()) {
+      OriLensArg = new Argument(parentFcn->getArg(lastArg-1)->getType(), "originalsize");
+      //LCArgs.push_back(parentFcn->getArg(lastArg-1));
+      LCInputs.push_back(parentFcn->getArg(lastArg-1));
+    } else {
+      OriLensArg = new Argument(IntegerType::getInt64Ty(C), "originalsize");
+      //LCArgs.push_back(parentFcn->getArg(lastArg-1));
+      LCInputs.push_back(ConstantInt::get(IntegerType::getInt64Ty(C), 0));
+    }
+    //OriLensArg->addAttr(Attribute::getWithAlignment(OriLensArg->getContext(), Align(8)));
+    LCArgs.push_back(OriLensArg);
+#endif
+
   }
 
   assert(TL->getInductionVars()->size() == 1 &&
